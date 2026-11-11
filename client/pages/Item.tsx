@@ -252,7 +252,7 @@ function AskEntry({ ask }: { ask: ListAsk }) {
   );
 }
 
-function Asks({ asks, disclosed }: { asks: ListAsk[]; disclosed: boolean }) {
+function Asks({ asks }: { asks: ListAsk[] }) {
   const { open, closed } = asksForItem(asks);
   return (
     <Section
@@ -270,9 +270,6 @@ function Asks({ asks, disclosed }: { asks: ListAsk[]; disclosed: boolean }) {
           </ul>
         )}
       </Box>
-      {!disclosed && asks.length > 0 ? (
-        <p className={cx("mt-2 text-xs", TEXT_MUTED)}>What each ask is about is withheld with the rest of the details.</p>
-      ) : null}
     </Section>
   );
 }
@@ -381,7 +378,6 @@ function Undisclosed({ detail }: { detail: Detail }) {
           </Facts>
         </Box>
       </Section>
-      <Asks asks={detail.asks} disclosed={false} />
     </>
   );
 }
@@ -476,7 +472,7 @@ function Disclosed({ detail }: { detail: Detail }) {
         </Box>
       </Section>
 
-      <Asks asks={detail.asks} disclosed />
+      <Asks asks={detail.asks} />
 
       <Section title="Details">
         <Box>

@@ -233,6 +233,8 @@ export async function readOverview(db: PublicDb, full: boolean): Promise<Overvie
   for (const ask of openAskRows) {
     const item = byId.get(ask.itemId);
     if (!item) continue;
+    // An ask on a non-public item is not shown at all: its kind and age say something about the item.
+    if (!full && !item.isPublic) continue;
     openAsks.push(askView(ask, item, full));
     keptRows.push(ask);
   }
@@ -334,15 +336,15 @@ export async function readItemDetail(db: PublicDb, ref: string, full: boolean): 
     return null;
   }
   const disclosed = full || row.isPublic;
+  if (!disclosed) {
+    // Links, asks and events of an undisclosed item are not read at all.
+    return { row, links: [], asks: [], events: [] };
+  }
   // Newest first, so a cap drops the oldest history, never a new open ask.
   const asks = await db.asks
     .withIndex("by_item", (q) => q.eq("itemId", row.id))
     .order("desc")
     .take(MAX_ASKS_PER_ITEM);
-  if (!disclosed) {
-    // Links and events of an undisclosed item are not read at all.
-    return { row, links: [], asks, events: [] };
-  }
   const links = await db.links.withIndex("by_item", (q) => q.eq("itemId", row.id)).take(LIMITS.linksPerItem);
   // The public reader asks the index for public events, so private ones cannot crowd them out of the cap.
   const events = full
