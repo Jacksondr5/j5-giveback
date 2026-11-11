@@ -18,21 +18,23 @@ export type LinkTarget = { repo: string; number: number; kind: string };
 
 const ACTOR = "author{login __typename}";
 
-const FRAGMENTS = `
+const PR_FRAGMENT = `
 fragment PrFields on PullRequest {
-  title state isDraft mergedAt closedAt updatedAt headRefOid reviewDecision
+  title prState: state isDraft mergedAt closedAt updatedAt headRefOid reviewDecision
   mergedBy{login __typename}
   labels(first:20){nodes{name}}
   commits(last:1){nodes{commit{statusCheckRollup{state}}}}
   firstComments: comments(first:${FIRST_COMMENTS}){nodes{${ACTOR} createdAt body}}
   comments(last:${RECENT}){nodes{${ACTOR} createdAt}}
   reviews(last:${RECENT}){nodes{${ACTOR} submittedAt}}
-}
+}`;
+const ISSUE_FRAGMENT = `
 fragment IssueFields on Issue {
-  title state closedAt updatedAt
+  title issueState: state closedAt updatedAt
   labels(first:20){nodes{name}}
   comments(last:${RECENT}){nodes{${ACTOR} createdAt}}
-}
+}`;
+const DISCUSSION_FRAGMENT = `
 fragment DiscussionFields on Discussion {
   title closed closedAt updatedAt
   labels(first:20){nodes{name}}
@@ -56,7 +58,13 @@ export function buildQuery(targets: LinkTarget[]): string {
         : `node: issueOrPullRequest(number:${number}){__typename ...PrFields ...IssueFields}`;
     return `${aliasFor(index)}: repository(owner:${owner},name:${name}){${selection}}`;
   });
-  return `query{rateLimit{remaining}\n${parts.join("\n")}\n}${FRAGMENTS}`;
+  // GitHub rejects a document that defines a fragment it does not use, so only
+  // the fragments this batch needs are sent. The two `state` fields have different
+  // enum types, so each is aliased.
+  const hasDiscussion = targets.some((target) => target.kind === "discussion");
+  const hasOther = targets.some((target) => target.kind !== "discussion");
+  const fragments = `${hasOther ? PR_FRAGMENT + ISSUE_FRAGMENT : ""}${hasDiscussion ? DISCUSSION_FRAGMENT : ""}`;
+  return `query{rateLimit{remaining}\n${parts.join("\n")}\n}${fragments}`;
 }
 
 export type Snapshot = {
@@ -150,9 +158,9 @@ export function snapshotFrom(node: unknown, selfLogin: string): Snapshot | null 
 
   let state: GhState;
   if (typename === "PullRequest") {
-    state = node.state === "MERGED" ? "merged" : node.state === "CLOSED" ? "closed" : "open";
+    state = node.prState === "MERGED" ? "merged" : node.prState === "CLOSED" ? "closed" : "open";
   } else if (typename === "Issue") {
-    state = node.state === "CLOSED" ? "closed" : "open";
+    state = node.issueState === "CLOSED" ? "closed" : "open";
   } else if (typename === "Discussion") {
     state = node.closed === true ? "closed" : "open";
   } else {

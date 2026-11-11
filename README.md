@@ -38,7 +38,7 @@ The server is built. `client/index.tsx` is a placeholder that prints the overvie
 
 Private data is in two tables, `itemPrivate` and `askPrivate`. The public queries get a database type (`PublicDb`) that does not contain those tables, so a public query that reads them is a TypeScript error. Lakebed's build does not run the type checker, so that guard holds only when the code is checked with `tsc`. The check that runs against real responses is `scripts/privacy-check`.
 
-An item with `isPublic: false` is counted everywhere and shown as "Undisclosed candidate" with its stage, what it waits on, and its dates. Its only public handle is its row id, a random UUID. `item(ref)` finds it by that id and returns the redacted form; it does not find it by slug, so a guessed slug confirms nothing. Its links and events are not read at all, and its asks show their kind and age but no label.
+An item with `isPublic: false` is counted in the totals, the stage counts and the waiting-on counts (never in outcome, follow-up or upstream-change counts, which would reveal its state) and shown as "Undisclosed candidate" with its stage, what it waits on, and its dates. Its only public handle is its row id, a random UUID. `item(ref)` finds it by that id and returns the redacted form; it does not find it by slug, so a guessed slug confirms nothing. Its links and events are not read at all, and its asks show their kind and age but no label.
 
 `scripts/privacy-check` checks all of this against a running dev server: it collects every private value from the full export, runs every public query as an anonymous guest, and fails if any of those values comes back.
 

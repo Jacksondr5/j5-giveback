@@ -205,16 +205,19 @@ export async function readOverview(db: PublicDb, full: boolean): Promise<Overvie
   for (const item of items) {
     byId.set(item.id, item);
     stageCounts.set(item.stage, (stageCounts.get(item.stage) ?? 0) + 1);
+    // Stage and waiting-on are countable for every item. Outcome, follow-up and the
+    // upstream marker are not: for a non-public item they would reveal hidden state.
+    const countable = full || item.isPublic;
     if (item.stage === "closed") {
-      if (item.outcome) {
+      if (item.outcome && countable) {
         outcomeCounts.set(item.outcome, (outcomeCounts.get(item.outcome) ?? 0) + 1);
       }
     } else {
       waitingCounts.set(item.waitingOn, (waitingCounts.get(item.waitingOn) ?? 0) + 1);
     }
     if (!item.isPublic) undisclosed += 1;
-    if (item.followUpState === "owed") followUpsOwed += 1;
-    if (item.upstreamChangedAt !== undefined) upstreamChanged += 1;
+    if (countable && item.followUpState === "owed") followUpsOwed += 1;
+    if (countable && item.upstreamChangedAt !== undefined) upstreamChanged += 1;
   }
 
   const openAsks: AskView[] = [];
@@ -304,16 +307,25 @@ export async function readItemDetail(db: PublicDb, ref: string, full: boolean): 
     return null;
   }
   const disclosed = full || row.isPublic;
-  const asks = await db.asks.withIndex("by_item", (q) => q.eq("itemId", row.id)).take(MAX_ASKS_PER_ITEM);
+  // Newest first, so a cap drops the oldest history, never a new open ask.
+  const asks = await db.asks
+    .withIndex("by_item", (q) => q.eq("itemId", row.id))
+    .order("desc")
+    .take(MAX_ASKS_PER_ITEM);
   if (!disclosed) {
     // Links and events of an undisclosed item are not read at all.
     return { row, links: [], asks, events: [] };
   }
   const links = await db.links.withIndex("by_item", (q) => q.eq("itemId", row.id)).take(LIMITS.linksPerItem);
-  const allEvents = await db.events
-    .withIndex("by_item", (q) => q.eq("itemId", row.id))
-    .order("desc")
-    .take(MAX_EVENTS_PER_ITEM);
-  const events = full ? allEvents : allEvents.filter((event) => event.isPublic);
+  // The public reader asks the index for public events, so private ones cannot crowd them out of the cap.
+  const events = full
+    ? await db.events
+        .withIndex("by_item", (q) => q.eq("itemId", row.id))
+        .order("desc")
+        .take(MAX_EVENTS_PER_ITEM)
+    : await db.events
+        .withIndex("by_item_public", (q) => q.eq("itemId", row.id).eq("isPublic", true))
+        .order("desc")
+        .take(MAX_EVENTS_PER_ITEM);
   return { row, links, asks, events };
 }

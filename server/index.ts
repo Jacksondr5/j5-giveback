@@ -8,7 +8,7 @@ import type {
   OwnerOverviewView,
   ViewerView
 } from "../shared/api";
-import { handleAsks, handleEvents, handleExport, handleItems } from "./agent";
+import { handleAsks, handleDeleteItem, handleEvents, handleExport, handleItems } from "./agent";
 import { isOwner, requireOwner } from "./auth";
 import { ownerItemDetail, ownerItems, ownerOverview } from "./owner";
 import { askView, eventView, itemView, linkView, readItemDetail, readItemList, readOverview } from "./read";
@@ -86,6 +86,7 @@ export default capsule({
 
   endpoints: {
     agentItems: endpoint({ method: "POST", path: "/api/agent/items" }, handleItems),
+    agentDeleteItem: endpoint({ method: "POST", path: "/api/agent/items/delete" }, handleDeleteItem),
     agentAsks: endpoint({ method: "POST", path: "/api/agent/asks" }, handleAsks),
     agentEvents: endpoint({ method: "POST", path: "/api/agent/events" }, handleEvents),
     agentExport: endpoint({ method: "GET", path: "/api/agent/export", readOnly: true }, handleExport),

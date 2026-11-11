@@ -29,6 +29,8 @@ export const LIMITS = {
   // 1,000 writes and 1,000 rows returned, so batches are small.
   itemsPerBatch: 25,
   linksPerItem: 20,
+  // Replacing a link costs a delete and an insert, and a transaction may write 1,000 rows.
+  linksPerBatch: 200,
   asksPerBatch: 30,
   eventsPerBatch: 40,
   exportRowsPerPage: 500,

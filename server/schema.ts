@@ -98,7 +98,8 @@ export const schema = {
     isPublic: boolean()
   })
     .index("by_key", ["key"])
-    .index("by_item", ["itemId", "at"]),
+    .index("by_item", ["itemId", "at"])
+    .index("by_item_public", ["itemId", "isPublic", "at"]),
 
   itemPrivate: table({
     itemId: id("items"),
@@ -118,6 +119,8 @@ export const schema = {
     lastGithubSyncAt: number().optional(),
     lastGithubOkAt: number().optional(),
     lastAgentPushAt: number().optional(),
+    // Goes up by one on every agent write. An export whose pages disagree on it is not a consistent copy.
+    revision: number().default(0),
     lastError: string().optional(),
     lastErrorAt: number().optional(),
     // True when a batch of the refresh run in progress failed.

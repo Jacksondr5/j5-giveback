@@ -506,6 +506,13 @@ export function parseItemsRequest(body: unknown, now: number): { items: ParsedIt
     seen.add(item.slug);
     items.push(item);
   });
+  const linkTotal = items.reduce((sum, item) => sum + (item.links?.length ?? 0), 0);
+  if (linkTotal > LIMITS.linksPerBatch) {
+    issues.push({
+      path: "items",
+      message: `A request may carry at most ${LIMITS.linksPerBatch} links across all its items (got ${linkTotal}). Split the batch into several requests.`
+    });
+  }
   return { items, issues };
 }
 
