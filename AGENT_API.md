@@ -194,7 +194,7 @@ Full example:
 | `followUpNote` | string or null | Up to 300 |
 | `isPublic` | boolean | Required on create |
 | `stageNote` | string | Up to 280. Public text for the stage-change event this request causes. Ignored when it causes none. |
-| `stageEventAt` | time | When the stage change happened: the time of the `stage_changed` event this request causes. Defaults to now. Must not be later than the server's clock; a future time is refused with a 400. Ignored, without an error, when the request causes no such event. It applies to this request only and is not stored on the item. |
+| `stageEventAt` | time | When the stage change happened: the time of the `stage_changed` event this request causes. Defaults to now. Must be a valid time not later than the server's clock; anything else is refused with a 400 whether or not an event is recorded. A valid value has no effect when the request causes no such event. It applies to this request only and is not stored on the item. |
 | `clearUpstreamChange` | boolean | `true` clears the "state changed upstream" marker (see refresh) |
 | `links` | link[] | Up to 20. At most one with role `primary`. |
 | `private` | object | `notes` (up to 2,000, may have line breaks), `impact` (up to 2,000), `preparedBranch` (up to 200). Each may be null to clear it. |
