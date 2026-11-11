@@ -266,9 +266,7 @@ export type ItemListData = {
   dependenciesByItem: Map<string, LinkRow[]>;
 };
 
-// Base and covering links are rare: a few per hundred items. The cap keeps the
-// list inside the handler's row budget whatever the data.
-const MAX_DEPENDENCY_LINKS = 200;
+
 
 export async function readItemRows(db: PublicDb): Promise<ItemListData> {
   const rows = await db.items.withIndex("by_creation").take(LIMITS.maxItems);
@@ -280,7 +278,11 @@ export async function readItemRows(db: PublicDb): Promise<ItemListData> {
   }
   const dependenciesByItem = new Map<string, LinkRow[]>();
   for (const role of ["base", "covering"] as const) {
-    const links = await db.links.withIndex("by_role", (q) => q.eq("role", role)).take(MAX_DEPENDENCY_LINKS);
+    // Only links on items that are not closed. A closed item's dependencies are
+    // history, shown on its own page, and would otherwise fill the cap over time.
+    const links = await db.links
+      .withIndex("by_role_active", (q) => q.eq("role", role).eq("active", true))
+      .take(LIMITS.maxOpenDependencyLinksPerRole);
     for (const link of links) {
       const list = dependenciesByItem.get(link.itemId);
       if (list) list.push(link);

@@ -286,7 +286,7 @@ Appends up to 40 events. `key` works as for asks: a retry with the same key adds
 | `actor` | [event actor](#event-actor) | Required |
 | `type` | [event type](#event-type) | Required |
 | `note` | string | Required. Up to 280. |
-| `url` | string or null | An `https://` URL, up to 300 |
+| `url` | string or null | An `https://github.com/` URL, up to 300. The site shows it as "View on GitHub". |
 | `isPublic` | boolean | Required. `false` shows the event to the owner only. |
 
 An event cannot be edited or removed.
@@ -314,7 +314,7 @@ GET /api/agent/export?cursor=<nextCursor from the previous response>
 
 The tables are `items`, `links`, `asks`, `events`, `itemPrivate`, `askPrivate` and `syncState`. A table can be split across two responses; concatenate its rows. Rows join on `links.itemId`, `asks.itemId`, `events.itemId`, `itemPrivate.itemId` and `askPrivate.askId`.
 
-Each response is a separate read. `revision` goes up on every agent write, so if two pages of one export carry different values, a write landed between them and the copy is not consistent: start again. `scripts/giveback export` does this for you.
+Each response is a separate read. `revision` goes up on every agent write and every refresh, so if two pages of one export carry different values, a write landed between them and the copy is not consistent: start again. `scripts/giveback export` does this for you.
 
 `scripts/giveback export` follows the cursors and nests the result: each item carries its `links`, `private`, `asks` (each with its `private`) and `events`. `--raw` gives the tables instead.
 
@@ -446,7 +446,7 @@ The numbers are in `shared/limits.ts`.
 | Events per `POST /api/agent/events` | 40 |
 | Rows per export response | 500 |
 | Links per refresh call | 20 |
-| Items in the dashboard | 400 |
+| Items in the dashboard | 350 |
 | Summary | 300 characters |
 | Event note | 280 characters |
 | Private notes | 2,000 characters |

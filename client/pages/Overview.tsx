@@ -383,8 +383,14 @@ function OfferedRow({ item, owner, asks }: { item: ListItem; owner: boolean; ask
         <Age
           at={quiet.since}
           className={quietLong ? "font-semibold" : undefined}
-          label={quiet.replied ? `Last heard from ${quiet.by ?? "someone else"}` : "No reply yet. Waiting since"}
-          suffix={quiet.replied ? "quiet" : "no reply"}
+          label={
+            quiet.replied
+              ? `Last heard from ${quiet.by ?? "someone else"}`
+              : quiet.synced
+                ? "No reply yet. Waiting since"
+                : "Upstream activity has not been read yet. Waiting since"
+          }
+          suffix={quiet.replied ? "quiet" : quiet.synced ? "no reply" : "waiting"}
         />
       }
     >

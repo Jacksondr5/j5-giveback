@@ -72,7 +72,8 @@ export const schema = {
   })
     .index("by_item", ["itemId"])
     .index("by_sync_due", ["syncDue"])
-    .index("by_role", ["role"]),
+    .index("by_role", ["role"])
+    .index("by_role_active", ["role", "active"]),
 
   asks: table({
     key: string(),
@@ -120,7 +121,7 @@ export const schema = {
     lastGithubSyncAt: number().optional(),
     lastGithubOkAt: number().optional(),
     lastAgentPushAt: number().optional(),
-    // Goes up by one on every agent write. An export whose pages disagree on it is not a consistent copy.
+    // Goes up by one on every agent write and every refresh batch. An export whose pages disagree on it is not a consistent copy.
     revision: number().default(0),
     lastError: string().optional(),
     lastErrorAt: number().optional(),

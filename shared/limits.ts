@@ -38,7 +38,10 @@ export const LIMITS = {
 
   // The public list query returns every item and its primary link in one handler
   // (1,000 rows returned at most), so the item count is capped.
-  maxItems: 400
+  // A handler may read back 1,000 rows in all: items, one primary link each, and the
+  // dependency links of open items (2 x maxOpenDependencyLinksPerRole). 350 + 350 + 200 = 900.
+  maxItems: 350,
+  maxOpenDependencyLinksPerRole: 100
 } as const;
 
 /** Substrings that mark a local filesystem path. No stored string may contain one. */

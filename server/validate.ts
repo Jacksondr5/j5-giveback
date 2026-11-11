@@ -648,8 +648,9 @@ function parseEvent(issues: Issues, value: unknown, path: string, now: number): 
   if (value.url !== undefined && value.url !== null) {
     const text = checkText(issues, value.url, `${path}.url`, { max: LIMITS.url });
     if (text !== undefined) {
-      if (!text.startsWith("https://") || /\s/.test(text)) {
-        issues.push({ path: `${path}.url`, message: "Must be an https:// URL." });
+      // The site labels this link "View on GitHub", so it must lead there.
+      if (!text.startsWith("https://github.com/") || /\s/.test(text)) {
+        issues.push({ path: `${path}.url`, message: "Must be an https://github.com/ URL." });
       } else {
         url = text;
       }

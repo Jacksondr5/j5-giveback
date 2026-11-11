@@ -169,7 +169,21 @@ const offered = [
   item("candidate", { stage: "deciding" })
 ];
 equal(ids(offeredQuietestFirst(offered)), ["silent", "quiet", "recent"], "quietest first");
-equal(quietState(offered[1] as ListItem), { since: NOW - 9 * DAY, replied: false, by: null }, "no reply yet");
+equal(
+  quietState(offered[1] as ListItem),
+  { since: NOW - 9 * DAY, synced: false, replied: false, by: null },
+  "no primary link: upstream activity unknown"
+);
+equal(
+  quietState(item("unsynced", { waitingSince: NOW - 2 * DAY, primaryLink: link() })),
+  { since: NOW - 2 * DAY, synced: false, replied: false, by: null },
+  "never synced: upstream activity unknown"
+);
+equal(
+  quietState(item("noreply", { waitingSince: NOW - 2 * DAY, primaryLink: link({ syncedAt: NOW }) })),
+  { since: NOW - 2 * DAY, synced: true, replied: false, by: null },
+  "synced with no reply"
+);
 equal(quietState(offered[0] as ListItem).replied, true, "replied");
 console.log("ok  quietest-first sort");
 

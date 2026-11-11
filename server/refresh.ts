@@ -188,7 +188,12 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
   const runFailed = earlierBatchFailed || batchFailed;
   const done = nextCursor === null;
   const first = failed[0];
-  const patch: Parameters<typeof touchSyncState>[1] = { lastGithubSyncAt: now, refreshRunFailed: runFailed };
+  // A refresh changes links, events and items too, so it moves the export revision like an agent write.
+  const patch: Parameters<typeof touchSyncState>[1] & { revision?: number } = {
+    lastGithubSyncAt: now,
+    refreshRunFailed: runFailed,
+    ...(links.length > 0 ? { revision: (state?.revision ?? 0) + 1 } : {})
+  };
   if (batchFailed && first) {
     // This text is public. It must not name a link: the link may belong to a
     // non-public item. Each link's own error is stored on the link row.

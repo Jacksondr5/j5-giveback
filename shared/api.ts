@@ -265,7 +265,10 @@ export type ItemView = {
   upstreamChangeNote: string | null;
   /** The link with role "primary", if any. */
   primaryLink: LinkView | null;
-  /** Links with the role base or covering: what the item waits on or may be made unnecessary by. */
+  /**
+   * Links with the role base or covering: what the item waits on or may be made
+   * unnecessary by. In a list, filled only for items that are not closed.
+   */
   dependencyLinks: LinkView[];
 };
 

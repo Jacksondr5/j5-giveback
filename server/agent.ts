@@ -233,6 +233,7 @@ function stageEventNote(previous: ItemState | null, next: ItemState): string {
 
 const SNAPSHOT_FIELDS = [
   "ghTitle",
+  "ghCreatedAt",
   "ghState",
   "ghIsDraft",
   "ghMergedAt",

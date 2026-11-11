@@ -23,7 +23,9 @@ function stageIndex(stage: Stage): number {
 export type Quiet = {
   /** When the thread last heard from someone other than Jackson, or when the wait began if it never has. */
   since: number;
-  /** False when nobody but Jackson has commented or reviewed yet. */
+  /** False when GitHub has not been read for this item yet, so whether anyone replied is not known. */
+  synced: boolean;
+  /** False when nobody but Jackson has commented or reviewed yet. Meaningful only when `synced`. */
   replied: boolean;
   by: string | null;
 };
@@ -35,10 +37,11 @@ export type Quiet = {
  */
 export function quietState(item: ListItem): Quiet {
   const link = item.primaryLink;
+  const synced = link !== null && link.syncedAt !== null;
   if (link && link.lastOtherActivityAt !== null) {
-    return { since: link.lastOtherActivityAt, replied: true, by: link.lastOtherActivityBy };
+    return { since: link.lastOtherActivityAt, synced, replied: true, by: link.lastOtherActivityBy };
   }
-  return { since: item.waitingSince, replied: false, by: null };
+  return { since: item.waitingSince, synced, replied: false, by: null };
 }
 
 /** Items in the Offered stage, longest-quiet first. Ties keep the older item first. */
