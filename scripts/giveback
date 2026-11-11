@@ -10,6 +10,8 @@ const path = require("node:path");
 const ITEMS_PER_BATCH = 25;
 const ASKS_PER_BATCH = 30;
 const EVENTS_PER_BATCH = 40;
+const EVENT_DELETES_PER_BATCH = 40;
+const LINK_PATCHES_PER_BATCH = 40;
 const MAX_PAGES = 200;
 
 const USAGE = `giveback: read and write the giveback dashboard.
@@ -24,6 +26,13 @@ Usage:
   giveback event add --key K --item SLUG --actor ACTOR --type TYPE --note TEXT
                      (--public | --private) [--url URL] [--at TIME]
   giveback event apply <file|->       JSON: {"events":[...]} or an array.
+  giveback event delete --key K [--key K ...]
+  giveback event delete <file|->      JSON: {"keys":[...]} or an array of keys. Removes events by key,
+                                      the server's own "auto:" events included. The export lists every key.
+  giveback link triage --url URL [--bucket TEXT | --no-bucket] [--rank N | --no-rank]
+                                      Set or clear the triage fields of every link with this URL.
+  giveback link apply <file|->        JSON: {"links":[{"url":...,"triageBucket":...,"triageRank":...}]} or an array.
+  giveback watchlist                  Every link on an item that is not closed, with its item and GitHub state.
   giveback load <file>                JSON: {"items":[...],"asks":[...],"events":[...]}, applied in that order.
   giveback export [--raw] [--out FILE]
                                       Everything, public and private. Default: items with their links,
@@ -33,7 +42,7 @@ Usage:
 Configuration comes from environment variables, or from a file of KEY=VALUE lines.
 It is never read from arguments.
   GIVEBACK_URL             Base URL, such as https://j5-giveback.lakebed.app
-  GIVEBACK_AGENT_SECRET    Bearer secret for upsert, ask, event, load and export
+  GIVEBACK_AGENT_SECRET    Bearer secret for every command except refresh
   GIVEBACK_REFRESH_SECRET  Bearer secret for refresh
   GIVEBACK_ENV_FILE        Path of the file. Default: ~/.config/j5-giveback/env
 In the file, AGENT_SECRET and REFRESH_SECRET are accepted as names too, so a
@@ -162,6 +171,22 @@ async function postBatches(route, field, list, size) {
   return results;
 }
 
+/** Follows `nextCursor` over a paged GET. Returns null when the data changed between two pages. */
+async function getPages(route, onPage) {
+  let revision = null;
+  let cursor = null;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const { status, payload } = await call("GET", `${route}${cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`}`, "agent");
+    if (status !== 200 || payload.ok !== true) reportFailure("GET", route, status, payload);
+    if (revision === null) revision = payload.revision;
+    if (payload.revision !== revision) return null;
+    onPage(payload);
+    cursor = payload.nextCursor;
+    if (cursor === null) return { revision };
+  }
+  return fail(`GET ${route} did not finish within ${MAX_PAGES} pages.`);
+}
+
 // ---------------------------------------------------------------------------
 // Arguments and input
 // ---------------------------------------------------------------------------
@@ -273,10 +298,78 @@ async function event(args) {
     if (o.url !== undefined) entry.url = o.url;
     if (o.at !== undefined) entry.at = timeValue(o.at);
     events = [entry];
+  } else if (action === "delete") {
+    return deleteEvents(rest);
   } else {
-    usageError('use "event add" or "event apply".');
+    usageError('use "event add", "event apply" or "event delete".');
   }
   print({ ok: true, results: await postBatches("/api/agent/events", "events", events, EVENTS_PER_BATCH) });
+  return undefined;
+}
+
+async function deleteEvents(args) {
+  let keys;
+  if (args.length > 0 && args[0].startsWith("--")) {
+    // --key may repeat, which parseOptions does not allow for.
+    keys = [];
+    for (let index = 0; index < args.length; index += 2) {
+      if (args[index] !== "--key") usageError(`unexpected argument "${args[index]}". Use --key K, once per event.`);
+      if (index + 1 >= args.length) usageError("--key needs a value.");
+      keys.push(args[index + 1]);
+    }
+  } else {
+    if (args.length > 1) usageError("event delete takes --key options or one file, not both.");
+    keys = listFrom(readJson(args[0]), "keys");
+  }
+  const results = await postBatches("/api/agent/events/delete", "keys", keys, EVENT_DELETES_PER_BATCH);
+  print({ ok: true, deleted: results.filter((result) => result.status === "deleted").length, results });
+}
+
+async function link(args) {
+  const [action, ...rest] = args;
+  let links;
+  if (action === "apply") {
+    links = listFrom(readJson(rest[0]), "links");
+  } else if (action === "triage") {
+    const o = parseOptions(rest, ["url", "bucket", "rank"], ["no-bucket", "no-rank"]);
+    requireOptions(o, ["url"]);
+    if (o.bucket !== undefined && o["no-bucket"]) usageError("say --bucket or --no-bucket, not both.");
+    if (o.rank !== undefined && o["no-rank"]) usageError("say --rank or --no-rank, not both.");
+    const entry = { url: o.url };
+    if (o.bucket !== undefined) entry.triageBucket = o.bucket;
+    if (o["no-bucket"]) entry.triageBucket = null;
+    if (o.rank !== undefined) {
+      if (!/^\d+$/.test(o.rank)) usageError("--rank must be a positive whole number.");
+      entry.triageRank = Number(o.rank);
+    }
+    if (o["no-rank"]) entry.triageRank = null;
+    if (entry.triageBucket === undefined && entry.triageRank === undefined) {
+      usageError("say at least one of --bucket, --no-bucket, --rank or --no-rank.");
+    }
+    links = [entry];
+  } else {
+    usageError('use "link triage" or "link apply".');
+  }
+  print({ ok: true, results: await postBatches("/api/agent/links", "links", links, LINK_PATCHES_PER_BATCH) });
+}
+
+// Paged like the export, and retried the same way when a write lands between two pages.
+async function watchlist(args) {
+  if (args.length > 0) usageError("watchlist takes no arguments.");
+  for (let attempt = 0; attempt < EXPORT_ATTEMPTS; attempt += 1) {
+    const links = [];
+    let generatedAt = null;
+    const done = await getPages("/api/agent/watchlist", (payload) => {
+      generatedAt = generatedAt ?? payload.generatedAt;
+      links.push(...payload.links);
+    });
+    if (done) {
+      print({ ok: true, generatedAt, revision: done.revision, count: links.length, links });
+      return;
+    }
+    process.stderr.write("giveback: the data changed while the watch list was read; starting it again.\n");
+  }
+  fail(`the data kept changing while the watch list was read (${EXPORT_ATTEMPTS} attempts). Try again when no agent is writing.`);
 }
 
 async function load(args) {
@@ -442,6 +535,10 @@ async function main() {
       return ask(args);
     case "event":
       return event(args);
+    case "link":
+      return link(args);
+    case "watchlist":
+      return watchlist(args);
     case "load":
       return load(args);
     case "export":

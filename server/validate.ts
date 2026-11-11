@@ -232,6 +232,7 @@ export type ParsedItem = {
   slug: string;
   fields: ParsedItemFields;
   stageNote?: string;
+  stageEventAt?: number;
   clearUpstreamChange: boolean;
   links?: ParsedLink[];
   private?: ParsedItemPrivate;
@@ -258,6 +259,7 @@ const ITEM_KEYS = [
   "followUpNote",
   "isPublic",
   "stageNote",
+  "stageEventAt",
   "clearUpstreamChange",
   "links",
   "private"
@@ -265,6 +267,26 @@ const ITEM_KEYS = [
 
 const LINK_KEYS = ["url", "repo", "number", "kind", "ownership", "role", "triageBucket", "triageRank"] as const;
 const ITEM_PRIVATE_KEYS = ["notes", "impact", "preparedBranch"] as const;
+
+/** Reads the two triage fields. Each comes back undefined when absent, null when it is to be cleared. */
+function parseTriage(
+  issues: Issues,
+  value: Obj,
+  path: string
+): { triageBucket: string | null | undefined; triageRank: number | null | undefined } {
+  const triageBucket = nullableText(issues, value, "triageBucket", path, { max: LIMITS.triageBucket });
+  let triageRank: number | null | undefined;
+  if (value.triageRank === null) {
+    triageRank = null;
+  } else if (value.triageRank !== undefined) {
+    if (typeof value.triageRank === "number" && Number.isSafeInteger(value.triageRank) && value.triageRank > 0) {
+      triageRank = value.triageRank;
+    } else {
+      issues.push({ path: `${path}.triageRank`, message: "Must be a positive whole number or null." });
+    }
+  }
+  return { triageBucket, triageRank };
+}
 
 function parseLink(issues: Issues, value: unknown, path: string): ParsedLink | undefined {
   if (!isObject(value)) {
@@ -287,17 +309,7 @@ function parseLink(issues: Issues, value: unknown, path: string): ParsedLink | u
   const kind = checkEnum(issues, value.kind, `${path}.kind`, LINK_KINDS);
   const ownership = checkEnum(issues, value.ownership, `${path}.ownership`, LINK_OWNERSHIPS);
   const role = checkEnum(issues, value.role, `${path}.role`, LINK_ROLES);
-  const triageBucket = nullableText(issues, value, "triageBucket", path, { max: LIMITS.triageBucket });
-  let triageRank: number | null | undefined;
-  if (value.triageRank === null) {
-    triageRank = null;
-  } else if (value.triageRank !== undefined) {
-    if (typeof value.triageRank === "number" && Number.isSafeInteger(value.triageRank) && value.triageRank > 0) {
-      triageRank = value.triageRank;
-    } else {
-      issues.push({ path: `${path}.triageRank`, message: "Must be a positive whole number or null." });
-    }
-  }
+  const { triageBucket, triageRank } = parseTriage(issues, value, path);
   if (issues.length !== before || !url || !repo || !number || !kind || !ownership || !role) {
     return undefined;
   }
@@ -402,6 +414,18 @@ function parseItem(issues: Issues, value: unknown, path: string, now: number): P
   }
 
   const stageNote = optionalText(issues, value, "stageNote", path, { max: LIMITS.eventNote });
+  let stageEventAt: number | undefined;
+  if (value.stageEventAt !== undefined) {
+    stageEventAt = checkTime(issues, value.stageEventAt, `${path}.stageEventAt`, now);
+    // Other times may run a day ahead of the server's clock. This one dates a history entry, so it may not.
+    if (stageEventAt !== undefined && stageEventAt > now) {
+      issues.push({
+        path: `${path}.stageEventAt`,
+        message: "Must not be in the future. Omit it to use the current time."
+      });
+      stageEventAt = undefined;
+    }
+  }
   let clearUpstreamChange = false;
   if (value.clearUpstreamChange !== undefined) {
     clearUpstreamChange = checkBoolean(issues, value.clearUpstreamChange, `${path}.clearUpstreamChange`) ?? false;
@@ -464,6 +488,7 @@ function parseItem(issues: Issues, value: unknown, path: string, now: number): P
   }
   const item: ParsedItem = { slug, fields, clearUpstreamChange };
   if (stageNote !== undefined) item.stageNote = stageNote;
+  if (stageEventAt !== undefined) item.stageEventAt = stageEventAt;
   if (links !== undefined) item.links = links;
   if (privateFields !== undefined) item.private = privateFields;
   return item;
@@ -696,4 +721,80 @@ export function parseEventsRequest(body: unknown, now: number): { events: Parsed
     events.push(event);
   });
   return { events, issues };
+}
+
+// ---------------------------------------------------------------------------
+// Event deletion
+// ---------------------------------------------------------------------------
+
+/**
+ * Keys of events to delete. Looser than the rule for a new key, because the
+ * server's own keys ("auto:...") are deleted through here too.
+ */
+export function parseEventsDeleteRequest(body: unknown): { keys: string[]; issues: Issues } {
+  const issues: Issues = [];
+  const keys: string[] = [];
+  const list = batchOf(issues, body, "keys", LIMITS.eventDeletesPerBatch);
+  if (!list) return { keys, issues };
+  const seen = new Set<string>();
+  list.forEach((entry, index) => {
+    const key = checkText(issues, entry, `keys[${index}]`, { max: 200 });
+    if (key === undefined) return;
+    if (seen.has(key)) {
+      issues.push({ path: `keys[${index}]`, message: `The key "${key}" appears twice in this request.` });
+      return;
+    }
+    seen.add(key);
+    keys.push(key);
+  });
+  return { keys, issues };
+}
+
+// ---------------------------------------------------------------------------
+// Link patches
+// ---------------------------------------------------------------------------
+
+export type ParsedLinkPatch = { url: string; triageBucket?: string | null; triageRank?: number | null };
+
+const LINK_PATCH_KEYS = ["url", "triageBucket", "triageRank"] as const;
+
+function parseLinkPatch(issues: Issues, value: unknown, path: string): ParsedLinkPatch | undefined {
+  if (!isObject(value)) {
+    issues.push({ path, message: "Must be an object." });
+    return undefined;
+  }
+  const before = issues.length;
+  checkUnknownKeys(issues, value, path, LINK_PATCH_KEYS);
+  const url =
+    value.url === undefined || value.url === null
+      ? (issues.push({ path: `${path}.url`, message: "Required." }), undefined)
+      : checkGithubUrl(issues, value.url, `${path}.url`);
+  const { triageBucket, triageRank } = parseTriage(issues, value, path);
+  if (value.triageBucket === undefined && value.triageRank === undefined) {
+    issues.push({ path, message: "Send triageBucket, triageRank or both. Use null to clear one." });
+  }
+  if (issues.length !== before || url === undefined) return undefined;
+  const patch: ParsedLinkPatch = { url };
+  if (triageBucket !== undefined) patch.triageBucket = triageBucket;
+  if (triageRank !== undefined) patch.triageRank = triageRank;
+  return patch;
+}
+
+export function parseLinksPatchRequest(body: unknown): { links: ParsedLinkPatch[]; issues: Issues } {
+  const issues: Issues = [];
+  const links: ParsedLinkPatch[] = [];
+  const list = batchOf(issues, body, "links", LIMITS.linkPatchesPerBatch);
+  if (!list) return { links, issues };
+  const seen = new Set<string>();
+  list.forEach((entry, index) => {
+    const link = parseLinkPatch(issues, entry, `links[${index}]`);
+    if (!link) return;
+    if (seen.has(link.url)) {
+      issues.push({ path: `links[${index}].url`, message: "Appears twice in this request." });
+      return;
+    }
+    seen.add(link.url);
+    links.push(link);
+  });
+  return { links, issues };
 }

@@ -64,6 +64,16 @@ export function candidates(items: readonly ListItem[]): ListItem[] {
     .sort((a, b) => stageIndex(b.stage) - stageIndex(a.stage) || a.foundAt - b.foundAt);
 }
 
+/**
+ * Held items: valid candidates with nothing to offer yet, each waiting on someone
+ * else's upstream change. Longest-waiting first; ties keep the older item first.
+ */
+export function heldItems(items: readonly ListItem[]): ListItem[] {
+  return items
+    .filter((item) => item.stage === "held")
+    .sort((a, b) => a.waitingSince - b.waitingSince || a.foundAt - b.foundAt);
+}
+
 /** When a closed item closed. An undisclosed item hides its close date, so its last update stands in. */
 export function closedTime(item: ListItem): number {
   return item.closedAt ?? item.updatedAt;

@@ -48,6 +48,7 @@ import {
   candidates,
   closedTime,
   dependencyLinks,
+  heldItems,
   medianTimeToMerge,
   offeredQuietestFirst,
   openAsksByItem,
@@ -312,6 +313,7 @@ const STAGE_MOVER: Record<Stage, string> = {
   found: "agent",
   validating: "agent",
   deciding: "Jackson",
+  held: "upstream",
   preparing: "agent",
   approving: "Jackson",
   offered: "upstream",
@@ -321,9 +323,11 @@ const STAGE_MOVER: Record<Stage, string> = {
 function Pipeline({ pipeline }: { pipeline: OverviewView["pipeline"] }) {
   return (
     <Section title="Pipeline">
-      <ol className="grid grid-cols-4 gap-1 md:grid-cols-7">
+      <ol className="grid grid-cols-4 gap-1 md:grid-cols-8">
         {pipeline.map(({ stage, count }) => {
           const hot = stageWaitsOnJackson(stage);
+          // Held is a side stop, not a step on the path: a dashed edge sets it apart.
+          const side = stage === "held";
           return (
             <li key={stage}>
               <Link
@@ -332,7 +336,8 @@ function Pipeline({ pipeline }: { pipeline: OverviewView["pipeline"] }) {
                   "block h-full rounded-md border px-1.5 py-2.5 text-center",
                   hot
                     ? "border-amber-600 bg-amber-100 text-amber-950 hover:border-amber-800 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-100 dark:hover:border-amber-300"
-                    : "border-stone-300 bg-white hover:border-stone-500 dark:border-stone-700 dark:bg-stone-900 dark:hover:border-stone-400"
+                    : "border-stone-300 bg-white hover:border-stone-500 dark:border-stone-700 dark:bg-stone-900 dark:hover:border-stone-400",
+                  side && "border-dashed"
                 )}
                 to={itemsHref({ stage })}
               >
@@ -348,7 +353,8 @@ function Pipeline({ pipeline }: { pipeline: OverviewView["pipeline"] }) {
         })}
       </ol>
       <p className={cx("mt-2 text-xs", TEXT_MUTED)}>
-        Under each stage is who moves an item on from it. The two marked Jackson wait on him. Each stage opens the item
+        Under each stage is who moves an item on from it. The two marked Jackson wait on him. Held is a side stop: a
+        valid candidate with nothing to offer until someone else's upstream change lands. Each stage opens the item
         list filtered to it.
       </p>
     </Section>
@@ -559,6 +565,65 @@ function Candidates({ items }: { items: ListItem[] }) {
 }
 
 // ---------------------------------------------------------------------------
+// Held
+// ---------------------------------------------------------------------------
+
+function HeldRow({ item }: { item: ListItem }) {
+  const links = dependencyLinks(item.dependencyLinks);
+  return (
+    <Row
+      // Plain text, not a chip: the longer phrases would wrap inside a pill in this narrow column.
+      lead={
+        item.waitingOn === "jackson" ? (
+          <WaitingChip waitingOn={item.waitingOn} />
+        ) : (
+          <p className={cx("text-xs", TEXT_MUTED)}>{waitingPhrase(item.waitingOn)}</p>
+        )
+      }
+      trail={<Age at={item.waitingSince} label="Waiting since" prefix="for" />}
+    >
+      <p>
+        <ItemTitleLink item={item} />
+        {item.isPublic === false ? (
+          <>
+            {" "}
+            <NotPublicChip />
+          </>
+        ) : null}
+      </p>
+      {!item.disclosed ? (
+        <RowNote>{UNDISCLOSED_NOTE}</RowNote>
+      ) : links.length === 0 ? (
+        <RowNote>No covering or base thread is recorded for this item.</RowNote>
+      ) : (
+        <ChipList className="mt-1">
+          <SilentBoundary>
+            <Dependencies links={links} />
+          </SilentBoundary>
+        </ChipList>
+      )}
+    </Row>
+  );
+}
+
+/** Shown only when something is held. */
+function Held({ items }: { items: ListItem[] }) {
+  const list = heldItems(items);
+  if (list.length === 0) return null;
+  return (
+    <Section note="valid, with nothing to offer until someone else's upstream change lands" title="Held">
+      <Box>
+        <RowList>
+          {list.map((item) => (
+            <HeldRow item={item} key={item.id} />
+          ))}
+        </RowList>
+      </Box>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Recently closed
 // ---------------------------------------------------------------------------
 
@@ -667,6 +732,7 @@ function OverviewBody({
       <Pipeline pipeline={overview.pipeline} />
       <Offered asks={overview.openAsks} items={items} owner={owner} />
       <Candidates items={items} />
+      <Held items={items} />
       <RecentlyClosed items={items} total={overview.stats.closed} />
     </>
   );

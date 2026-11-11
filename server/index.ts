@@ -8,7 +8,16 @@ import type {
   OwnerOverviewView,
   ViewerView
 } from "../shared/api";
-import { handleAsks, handleDeleteItem, handleEvents, handleExport, handleItems } from "./agent";
+import {
+  handleAsks,
+  handleDeleteEvents,
+  handleDeleteItem,
+  handleEvents,
+  handleExport,
+  handleItems,
+  handlePatchLinks,
+  handleWatchlist
+} from "./agent";
 import { isOwner, requireOwner } from "./auth";
 import { ownerItemDetail, ownerItems, ownerOverview } from "./owner";
 import { askView, dependenciesOf, eventView, itemView, linkView, readItemDetail, readItemList, readOverview } from "./read";
@@ -89,7 +98,10 @@ export default capsule({
     agentDeleteItem: endpoint({ method: "POST", path: "/api/agent/items/delete" }, handleDeleteItem),
     agentAsks: endpoint({ method: "POST", path: "/api/agent/asks" }, handleAsks),
     agentEvents: endpoint({ method: "POST", path: "/api/agent/events" }, handleEvents),
+    agentDeleteEvents: endpoint({ method: "POST", path: "/api/agent/events/delete" }, handleDeleteEvents),
+    agentLinks: endpoint({ method: "POST", path: "/api/agent/links" }, handlePatchLinks),
     agentExport: endpoint({ method: "GET", path: "/api/agent/export", readOnly: true }, handleExport),
+    agentWatchlist: endpoint({ method: "GET", path: "/api/agent/watchlist", readOnly: true }, handleWatchlist),
     refresh: endpoint({ method: "POST", path: "/api/refresh" }, handleRefresh)
   }
 });

@@ -73,7 +73,9 @@ export const schema = {
     .index("by_item", ["itemId"])
     .index("by_sync_due", ["syncDue"])
     .index("by_role", ["role"])
-    .index("by_role_active", ["role", "active"]),
+    .index("by_role_active", ["role", "active"])
+    // A URL can sit on more than one item. POST /api/agent/links finds every copy through this.
+    .index("by_url", ["url"]),
 
   asks: table({
     key: string(),

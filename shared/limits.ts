@@ -33,7 +33,14 @@ export const LIMITS = {
   linksPerBatch: 200,
   asksPerBatch: 30,
   eventsPerBatch: 40,
+  // One index scan per key.
+  eventDeletesPerBatch: 40,
+  // One index scan per URL. Each matching link costs two writes: the link and its item's "last updated".
+  linkPatchesPerBatch: 40,
+  linkMatchesPerUrl: 10,
   exportRowsPerPage: 500,
+  // The watch list reads every item (maxItems rows) beside one page of links, inside the 1,000 rows a handler may return.
+  watchlistLinksPerPage: 500,
   refreshLinksPerBatch: 20,
 
   // The public list query returns every item and its primary link in one handler

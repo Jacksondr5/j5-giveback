@@ -1,12 +1,17 @@
 // Enumerations for the giveback pipeline, with human labels.
 // Pure TypeScript: imported by the server, the client and nothing else.
 
-export const STAGES = ["found", "validating", "deciding", "preparing", "approving", "offered", "closed"] as const;
+// Display order. "held" is a side stop, not a step on the main path: it sits
+// after "deciding" wherever every stage is listed.
+export const STAGES = ["found", "validating", "deciding", "held", "preparing", "approving", "offered", "closed"] as const;
 export type Stage = (typeof STAGES)[number];
+/** The stages an item passes through on its way upstream, in order. "held" is not one of them. */
+export const MAIN_PATH_STAGES: readonly Stage[] = STAGES.filter((stage) => stage !== "held");
 export const STAGE_LABELS: Record<Stage, string> = {
   found: "Found",
   validating: "Validating",
   deciding: "Deciding",
+  held: "Held",
   preparing: "Preparing",
   approving: "Approving",
   offered: "Offered",
@@ -16,6 +21,7 @@ export const STAGE_DESCRIPTIONS: Record<Stage, string> = {
   found: "A candidate was recorded by a J5 agent.",
   validating: "Being checked against current upstream main and searched for duplicates.",
   deciding: "Validated and real. Needs a route from Jackson.",
+  held: "Valid, with nothing to offer yet. Waiting on someone else's upstream change.",
   preparing: "Route chosen. Branch, tests, evidence and post text are being produced.",
   approving: "The exact text of the upstream post is ready for Jackson's approval.",
   offered: "Posted upstream and being babysat.",

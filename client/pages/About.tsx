@@ -1,7 +1,7 @@
 // How it works: the process in plain words, for a visitor who has never seen it.
 
 import type { ComponentChildren } from "preact";
-import { STAGES, STAGE_LABELS, type Stage } from "../../shared/enums";
+import { MAIN_PATH_STAGES, STAGE_LABELS, type Stage } from "../../shared/enums";
 import { ExternalLink, TEXT_MUTED, cx } from "../components/ui";
 import { useTitle } from "../data";
 
@@ -12,6 +12,7 @@ const STAGE_PROSE: Record<Stage, string> = {
   found: "A possible fix is recorded.",
   validating: "It is checked against current upstream code and searched for duplicates.",
   deciding: "It is real. Jackson chooses how to offer it, or not to.",
+  held: "It is real, and there is nothing to offer yet: someone else's open upstream change already covers it, or has to land first.",
   preparing: "The branch, tests, evidence and the text of the post are produced.",
   approving: "Jackson reads the exact text and approves it.",
   offered: "It is posted upstream as a pull request, issue, comment or discussion.",
@@ -35,7 +36,7 @@ export function AboutPage() {
 
       <Heading>The stages</Heading>
       <ol className="mt-2 space-y-1">
-        {STAGES.map((stage, index) => (
+        {MAIN_PATH_STAGES.map((stage, index) => (
           <li className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-x-1" key={stage}>
             <span className={cx("tabular-nums", TEXT_MUTED)}>{index + 1}</span>
             <span>
@@ -44,6 +45,11 @@ export function AboutPage() {
           </li>
         ))}
       </ol>
+      <p className="mt-2">
+        <span className="font-semibold">{STAGE_LABELS.held}</span> is a side stop, not a step. {STAGE_PROSE.held} A held
+        item waits on that change, not on Jackson or the agent. When the change merges or is dropped, the item closes
+        or goes back onto the path.
+      </p>
       <p className="mt-2">An item can move back a stage, for example when upstream changes underneath it.</p>
 
       <Heading>The rules it follows</Heading>
