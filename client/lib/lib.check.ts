@@ -1,0 +1,252 @@
+// Checks for the pure helpers in this folder. Not part of the app: nothing imports
+// this file, so Lakebed does not bundle it. It has no test runner to install. Run:
+//
+//   npx esbuild client/lib/lib.check.ts --bundle --format=esm | node --input-type=module
+//
+// It prints one line per group and throws on the first failure.
+
+import type { ItemView, LinkView, SyncView } from "../../shared/api";
+import {
+  candidates,
+  median,
+  medianTimeToMerge,
+  offeredQuietestFirst,
+  openAsksByItem,
+  ourMove,
+  quietState,
+  recentlyClosed,
+  sortForList,
+  syncStatus,
+  type ListAsk,
+  type ListItem
+} from "./derive";
+import { applyFilters, filtersToSearch, itemsHref, parseFilters } from "./filters";
+import { DAY, HOUR, MINUTE, WEEK, YEAR, formatAgo, formatSpan, originRefUrl, shortRef } from "./format";
+
+function equal(actual: unknown, expected: unknown, what: string): void {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  if (a !== e) throw new Error(`${what}: expected ${e}, got ${a}`);
+}
+
+const NOW = Date.UTC(2026, 10, 11, 12, 0, 0);
+
+function link(patch: Partial<LinkView> = {}): LinkView {
+  return {
+    id: "link",
+    repo: "pingdotgg/t3code",
+    number: 33420,
+    url: "https://github.com/pingdotgg/t3code/pull/33420",
+    kind: "pr",
+    ownership: "ours",
+    role: "primary",
+    title: null,
+    state: "open",
+    isDraft: false,
+    mergedAt: null,
+    closedAt: null,
+    ci: null,
+    reviewDecision: null,
+    labels: [],
+    headSha: null,
+    macroscopeVerdict: null,
+    lastActivityAt: null,
+    lastOtherActivityAt: null,
+    lastOtherActivityBy: null,
+    triageBucket: null,
+    triageRank: null,
+    syncedAt: null,
+    syncError: null,
+    ...patch
+  };
+}
+
+function item(id: string, patch: Partial<ItemView> = {}): ListItem {
+  return {
+    id,
+    disclosed: true,
+    slug: id,
+    title: `Item ${id}`,
+    stage: "offered",
+    waitingOn: "maintainer",
+    waitingSince: NOW - 5 * DAY,
+    foundAt: NOW - 20 * DAY,
+    updatedAt: NOW - DAY,
+    summary: "",
+    route: null,
+    routeReason: null,
+    outcome: null,
+    closedAt: null,
+    targetRepo: "pingdotgg/t3code",
+    originRefs: [],
+    lastValidatedAt: null,
+    lastValidatedSha: null,
+    validationVerdict: null,
+    followUpState: "none",
+    followUpNote: null,
+    upstreamChangedAt: null,
+    upstreamChangeNote: null,
+    primaryLink: null,
+    ...patch
+  };
+}
+
+const ids = (items: { id: string }[]) => items.map((entry) => entry.id);
+
+// --- Ages -------------------------------------------------------------------
+
+equal(formatSpan(0), "<1 min", "zero span");
+equal(formatSpan(-5 * HOUR), "<1 min", "negative span");
+equal(formatSpan(MINUTE - 1), "<1 min", "just under a minute");
+equal(formatSpan(MINUTE), "1 min", "one minute");
+equal(formatSpan(HOUR - 1), "59 min", "just under an hour");
+equal(formatSpan(5 * HOUR + 59 * MINUTE), "5 h", "hours round down");
+equal(formatSpan(DAY), "1 d", "one day");
+equal(formatSpan(11 * DAY + 23 * HOUR), "11 d", "days round down");
+equal(formatSpan(2 * WEEK - 1), "13 d", "just under two weeks");
+equal(formatSpan(2 * WEEK), "2 wk", "two weeks");
+equal(formatSpan(3 * WEEK + 6 * DAY), "3 wk", "weeks round down");
+equal(formatSpan(10 * WEEK - 1), "9 wk", "just under ten weeks");
+equal(formatSpan(10 * WEEK), "2 mo", "ten weeks");
+equal(formatSpan(2 * YEAR + DAY), "2 yr", "two years");
+equal(formatAgo(NOW - 30_000, NOW), "just now", "under a minute ago");
+equal(formatAgo(NOW - 4 * MINUTE, NOW), "4 min ago", "minutes ago");
+equal(shortRef("pingdotgg/t3code", 33420), "t3code#33420", "short ref");
+equal(originRefUrl("Jacksondr5/j5code#2810"), "https://github.com/Jacksondr5/j5code/issues/2810", "origin ref");
+equal(originRefUrl("a note, not a ref"), null, "free-text origin");
+console.log("ok  ages and refs");
+
+// --- Median and time to merge --------------------------------------------------
+
+equal(median([]), null, "median of nothing");
+equal(median([3]), 3, "median of one");
+equal(median([5, 1, 3]), 3, "odd median");
+equal(median([4, 1, 3, 2]), 2.5, "even median");
+const merged = [
+  item("a", { stage: "closed", outcome: "merged", foundAt: NOW - 10 * DAY, closedAt: NOW - 2 * DAY }),
+  // GitHub's merge time wins over the item's close time.
+  item("b", {
+    stage: "closed",
+    outcome: "merged",
+    foundAt: NOW - 10 * DAY,
+    closedAt: NOW - DAY,
+    primaryLink: link({ state: "merged", mergedAt: NOW - 6 * DAY })
+  }),
+  // Merged before it was found: the dates cannot both be right, so it is left out.
+  item("c", { stage: "closed", outcome: "merged", foundAt: NOW - DAY, closedAt: NOW - 3 * DAY }),
+  item("d", { stage: "closed", outcome: "dropped", foundAt: NOW - 30 * DAY, closedAt: NOW - DAY }),
+  item("e", { stage: "offered" })
+];
+equal(medianTimeToMerge(merged), { medianMs: 6 * DAY, count: 2 }, "median time to merge");
+equal(medianTimeToMerge([item("e")]), { medianMs: null, count: 0 }, "no merged items");
+console.log("ok  statistics");
+
+// --- Offered: quietest first ------------------------------------------------------
+
+const offered = [
+  item("recent", { primaryLink: link({ lastOtherActivityAt: NOW - HOUR, lastOtherActivityBy: "someone" }) }),
+  item("silent", { waitingSince: NOW - 9 * DAY }),
+  item("quiet", { primaryLink: link({ lastOtherActivityAt: NOW - 4 * DAY }) }),
+  item("closed", { stage: "closed", outcome: "merged" }),
+  item("candidate", { stage: "deciding" })
+];
+equal(ids(offeredQuietestFirst(offered)), ["silent", "quiet", "recent"], "quietest first");
+equal(quietState(offered[1] as ListItem), { since: NOW - 9 * DAY, replied: false, by: null }, "no reply yet");
+equal(quietState(offered[0] as ListItem).replied, true, "replied");
+console.log("ok  quietest-first sort");
+
+// --- Candidates, closed, our move, list order ---------------------------------------
+
+const mixed = [
+  item("found", { stage: "found", waitingOn: "giveback_agent", foundAt: NOW - DAY, waitingSince: NOW - DAY }),
+  item("deciding-new", { stage: "deciding", waitingOn: "jackson", foundAt: NOW - 2 * DAY }),
+  item("deciding-old", { stage: "deciding", waitingOn: "jackson", foundAt: NOW - 9 * DAY }),
+  item("validating", { stage: "validating", waitingOn: "giveback_agent", waitingSince: NOW - 3 * DAY }),
+  item("changed", { stage: "offered", upstreamChangedAt: NOW - HOUR }),
+  item("closed-old", { stage: "closed", outcome: "merged", closedAt: NOW - 9 * DAY }),
+  item("closed-new", { stage: "closed", outcome: "dropped", closedAt: NOW - DAY }),
+  // An undisclosed closed item hides its close date; its last update stands in.
+  item("closed-hidden", { stage: "closed", disclosed: false, slug: null, closedAt: null, updatedAt: NOW - 4 * DAY }),
+  item("closed-agent", { stage: "closed", outcome: "parked", waitingOn: "giveback_agent", closedAt: NOW - 20 * DAY })
+];
+equal(ids(candidates(mixed)), ["deciding-old", "deciding-new", "validating", "found"], "candidates");
+equal(ids(recentlyClosed(mixed, 3)), ["closed-new", "closed-hidden", "closed-old"], "recently closed");
+equal(
+  ourMove(mixed).map((move) => `${move.item.id}:${move.reason}`),
+  ["changed:upstream_changed", "validating:agent", "found:agent"],
+  "our move"
+);
+equal(
+  ids(sortForList(mixed)),
+  ["found", "validating", "deciding-old", "deciding-new", "changed", "closed-new", "closed-hidden", "closed-old", "closed-agent"],
+  "list order"
+);
+console.log("ok  candidates, closed, our move, list order");
+
+// --- Asks ------------------------------------------------------------------------------
+
+function ask(id: string, itemId: string, openedAt: number, closedAt: number | null = null): ListAsk {
+  return {
+    id,
+    kind: "route_decision",
+    label: null,
+    openedAt,
+    closedAt,
+    resolution: null,
+    item: { id: itemId, disclosed: true, slug: itemId, title: itemId, stage: "offered" }
+  };
+}
+const byItem = openAsksByItem([ask("2", "x", NOW - DAY), ask("1", "x", NOW - 2 * DAY), ask("3", "y", NOW), ask("4", "y", NOW, NOW)]);
+equal(ids(byItem.get("x") ?? []), ["1", "2"], "open asks of an item, oldest first");
+equal(ids(byItem.get("y") ?? []), ["3"], "a closed ask is left out");
+console.log("ok  asks");
+
+// --- Sync state ---------------------------------------------------------------------------
+
+const sync = (patch: Partial<SyncView>): SyncView => ({
+  lastGithubSyncAt: null,
+  lastGithubOkAt: null,
+  lastAgentPushAt: null,
+  lastError: null,
+  lastErrorAt: null,
+  ...patch
+});
+equal(syncStatus(sync({}), NOW).kind, "never", "never synced");
+equal(syncStatus(sync({ lastGithubSyncAt: NOW - HOUR, lastGithubOkAt: NOW - HOUR }), NOW).kind, "ok", "exactly an hour is not stale");
+equal(syncStatus(sync({ lastGithubSyncAt: NOW - 61 * MINUTE, lastGithubOkAt: NOW - 61 * MINUTE }), NOW).kind, "stale", "over an hour");
+equal(
+  syncStatus(sync({ lastGithubSyncAt: NOW, lastGithubOkAt: NOW - 3 * HOUR, lastError: "boom", lastErrorAt: NOW }), NOW),
+  { kind: "failed", failedAt: NOW, lastOkAt: NOW - 3 * HOUR, error: "boom" },
+  "a failure wins over staleness"
+);
+console.log("ok  sync state");
+
+// --- Filters ---------------------------------------------------------------------------------
+
+const parsed = parseFilters("?stage=offered&waiting=jackson&outcome=merged&repo=expo%2Fexpo-device-hub&q=stream+closes");
+equal(parsed, { stage: "offered", waiting: "jackson", outcome: "merged", repo: "expo/expo-device-hub", q: "stream closes" }, "parse");
+equal(parseFilters(filtersToSearch(parsed)), parsed, "round trip");
+equal(parseFilters("?stage=bogus&waiting=&outcome=nope"), { stage: null, waiting: null, outcome: null, repo: null, q: "" }, "unknown values");
+equal(itemsHref({ stage: "deciding" }), "/items?stage=deciding", "stage link");
+equal(itemsHref(), "/items", "no filters");
+const list = [
+  item("stream", { title: "A revoked session's preview stream closes", primaryLink: link({ number: 32245 }) }),
+  item("stop", { title: "An agent's Stop", primaryLink: link({ number: 33420 }) }),
+  item("expo", { targetRepo: "expo/expo-device-hub", stage: "closed", outcome: "merged", waitingOn: "nobody" }),
+  item("hidden", { disclosed: false, slug: null, title: "Undisclosed candidate", targetRepo: null, stage: "deciding", waitingOn: "jackson" })
+];
+const run = (search: string) => ids(applyFilters(list, parseFilters(search)));
+equal(run(""), ["stream", "stop", "expo", "hidden"], "no filter");
+equal(run("?q=STREAM+closes"), ["stream"], "every word, any case");
+equal(run("?q=%2333420"), ["stop"], "bare number");
+equal(run("?q=t3code%2333420"), ["stop"], "short ref");
+equal(run("?q=pingdotgg/t3code%2332245"), ["stream"], "full ref");
+equal(run("?stage=deciding"), ["hidden"], "stage");
+equal(run("?waiting=jackson"), ["hidden"], "waiting on");
+equal(run("?outcome=merged"), ["expo"], "outcome");
+equal(run("?repo=expo/expo-device-hub"), ["expo"], "repository");
+equal(run("?stage=offered&q=stop"), ["stop"], "combined");
+equal(run("?q=nothing-matches"), [], "no match");
+console.log("ok  filters");
+
+console.log("all checks passed");

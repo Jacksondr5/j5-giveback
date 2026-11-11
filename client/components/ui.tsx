@@ -307,7 +307,7 @@ export function ErrorState({ error, retry }: { error: Error; retry: () => void }
     <div className={cx("mt-8 rounded-md p-4", SURFACE)} role="alert">
       <h2 className="font-semibold">This page could not be loaded</h2>
       <p className={cx("mt-1", TEXT_MUTED)}>
-        The server did not answer the request. The data is safe; this is a problem reading it.
+        The request for this page's data failed. The data itself is unaffected.
       </p>
       <p className={cx("mt-2 break-words", MONO, TEXT_MUTED)}>{error.message}</p>
       <button className={cx(BUTTON, "mt-3")} onClick={retry} type="button">
