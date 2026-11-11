@@ -18,7 +18,16 @@ import { AskTag, OutcomeTag, SideKey, ThreadSignals, ThreadToken, UpstreamChange
 import { Age, CARD, FOCUS, ItemTitleLink, LINK, SERIF, Skeleton, TEXT_DIM, YOU_TAG, cx } from "../components/ui";
 import { client, useTitle, useViewer } from "../data";
 import { openAsksByItem, repositories, sortForList, type ListAsk, type ListItem } from "../lib/derive";
-import { applyFilters, filtersToSearch, hasFilters, parseFilters, type ItemFilters } from "../lib/filters";
+import {
+  NO_FILTERS,
+  applyFilters,
+  closedWithoutOffer,
+  filtersToSearch,
+  hasFilters,
+  hidesClosedWithoutOffer,
+  parseFilters,
+  type ItemFilters
+} from "../lib/filters";
 import { askAction, groupByStage, listThreads, stageCounts, stageIcon, stageWaitsOnJackson } from "../lib/present";
 
 // ---------------------------------------------------------------------------
@@ -359,18 +368,31 @@ function ItemsBody({ items, openAsks }: { items: ListItem[] | undefined; openAsk
   // The open asks arrive with the overview query. Until they do, rows show what they wait on and no action.
   const asks = openAsksByItem(openAsks ?? []);
   const filtered = hasFilters(filters);
+  // Candidates closed without an offer are left out unless asked for. Say how many, and offer them.
+  const hiding = hidesClosedWithoutOffer(filters);
+  const hidden = hiding ? applyFilters(items, { ...filters, all: true }).filter(closedWithoutOffer).length : 0;
   return (
     <>
       <Filters filters={filters} items={items} />
       <p aria-live="polite" className={cx("mt-3 text-sm", TEXT_DIM)}>
-        {filtered ? `${shown.length} of ${items.length} items` : `${items.length} items`}
-        {filtered ? (
+        {filtered || hidden > 0 ? `${shown.length} of ${items.length} items` : `${items.length} items`}
+        {hidden > 0 ? (
           <>
-            {" "}
-            <Link className={cx(LINK, "ml-2")} replace to="/items">
-              Clear filters
+            {" · "}
+            {hidden} closed without an offer hidden{" "}
+            <Link className={cx(LINK, "ml-1")} replace to={`/items${filtersToSearch({ ...filters, all: true })}`}>
+              Show all
             </Link>
           </>
+        ) : filters.all ? (
+          <Link className={cx(LINK, "ml-2")} replace to={`/items${filtersToSearch({ ...filters, all: false })}`}>
+            Hide closed without an offer
+          </Link>
+        ) : null}
+        {filtered ? (
+          <Link className={cx(LINK, "ml-2")} replace to={`/items${filtersToSearch({ ...NO_FILTERS, all: filters.all })}`}>
+            Clear filters
+          </Link>
         ) : null}
       </p>
       <div className={cx(CARD, "mt-2 overflow-hidden")}>

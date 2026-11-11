@@ -21,9 +21,11 @@ export type ItemFilters = {
   repo: string | null;
   /** Free text, matched against the item's ID, title, slug and upstream ref. */
   q: string;
+  /** Show candidates that were closed without anything being offered. They are left out by default. */
+  all: boolean;
 };
 
-export const NO_FILTERS: ItemFilters = { stage: null, waiting: null, outcome: null, repo: null, q: "" };
+export const NO_FILTERS: ItemFilters = { stage: null, waiting: null, outcome: null, repo: null, q: "", all: false };
 
 const MAX_QUERY_LENGTH = 100;
 
@@ -39,7 +41,8 @@ export function parseFilters(search: string): ItemFilters {
     waiting: isOneOf(WAITING_ON, waiting) ? waiting : null,
     outcome: isOneOf(OUTCOMES, outcome) ? outcome : null,
     repo: repo && repo.length <= 100 ? repo : null,
-    q: (params.get("q") ?? "").slice(0, MAX_QUERY_LENGTH)
+    q: (params.get("q") ?? "").slice(0, MAX_QUERY_LENGTH),
+    all: params.get("all") === "1"
   };
 }
 
@@ -51,6 +54,7 @@ export function filtersToSearch(filters: ItemFilters): string {
   if (filters.outcome) params.set("outcome", filters.outcome);
   if (filters.repo) params.set("repo", filters.repo);
   if (filters.q.trim()) params.set("q", filters.q);
+  if (filters.all) params.set("all", "1");
   const text = params.toString();
   return text ? `?${text}` : "";
 }
@@ -60,8 +64,23 @@ export function itemsHref(filters: Partial<ItemFilters> = {}): string {
   return `/items${filtersToSearch({ ...NO_FILTERS, ...filters })}`;
 }
 
+/** True when a filter narrows the list. The "show all" switch widens it, so it does not count. */
 export function hasFilters(filters: ItemFilters): boolean {
-  return filtersToSearch(filters) !== "";
+  return filtersToSearch({ ...filters, all: false }) !== "";
+}
+
+/** A candidate that was closed without anything of ours being posted upstream. */
+export function closedWithoutOffer(item: ListItem): boolean {
+  return item.stage === "closed" && item.primaryLink?.ownership !== "ours";
+}
+
+/**
+ * Whether the list leaves out candidates closed without an offer. It does by
+ * default: they are most of the closed items and none of the live work. Asking
+ * for them brings them back: the switch, the Closed stage, an outcome, or a search.
+ */
+export function hidesClosedWithoutOffer(filters: ItemFilters): boolean {
+  return !filters.all && filters.stage !== "closed" && filters.outcome === null && filters.q.trim() === "";
 }
 
 /** The text a search runs over: title, slug, and the upstream ref in its short, full and bare-number forms. */
@@ -91,6 +110,7 @@ export function searchedNumber(word: string, wholeQuery: boolean): number | null
  * GB-1 and not GB-12.
  */
 export function matchesFilters(item: ListItem, filters: ItemFilters): boolean {
+  if (hidesClosedWithoutOffer(filters) && closedWithoutOffer(item)) return false;
   if (filters.stage && item.stage !== filters.stage) return false;
   if (filters.waiting && item.waitingOn !== filters.waiting) return false;
   if (filters.outcome && item.outcome !== filters.outcome) return false;

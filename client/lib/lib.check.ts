@@ -25,7 +25,7 @@ import {
   type ListItem
 } from "./derive";
 import { ITEM_ID_PREFIX, formatItemId, isItemNumber, itemIdOf, parseItemId } from "../../shared/itemId";
-import { applyFilters, filtersToSearch, itemsHref, parseFilters, searchedNumber } from "./filters";
+import { applyFilters, filtersToSearch, hasFilters, itemsHref, parseFilters, searchedNumber } from "./filters";
 import { DAY, HOUR, MINUTE, WEEK, YEAR, formatAgo, formatSpan, originRefUrl, shortRef } from "./format";
 import {
   askAction,
@@ -328,9 +328,17 @@ console.log("ok  sync state");
 // --- Filters ---------------------------------------------------------------------------------
 
 const parsed = parseFilters("?stage=offered&waiting=jackson&outcome=merged&repo=expo%2Fexpo-device-hub&q=stream+closes");
-equal(parsed, { stage: "offered", waiting: "jackson", outcome: "merged", repo: "expo/expo-device-hub", q: "stream closes" }, "parse");
+equal(
+  parsed,
+  { stage: "offered", waiting: "jackson", outcome: "merged", repo: "expo/expo-device-hub", q: "stream closes", all: false },
+  "parse"
+);
 equal(parseFilters(filtersToSearch(parsed)), parsed, "round trip");
-equal(parseFilters("?stage=bogus&waiting=&outcome=nope"), { stage: null, waiting: null, outcome: null, repo: null, q: "" }, "unknown values");
+equal(
+  parseFilters("?stage=bogus&waiting=&outcome=nope"),
+  { stage: null, waiting: null, outcome: null, repo: null, q: "", all: false },
+  "unknown values"
+);
 equal(itemsHref({ stage: "deciding" }), "/items?stage=deciding", "stage link");
 equal(itemsHref({ stage: "held" }), "/items?stage=held", "held stage link");
 equal(parseFilters("?stage=held").stage, "held", "held is a stage filter");
@@ -338,7 +346,13 @@ equal(itemsHref(), "/items", "no filters");
 const list = [
   item("stream", { title: "A revoked session's preview stream closes", primaryLink: link({ number: 32245 }) }),
   item("stop", { title: "An agent's Stop", primaryLink: link({ number: 33420 }) }),
-  item("expo", { targetRepo: "expo/expo-device-hub", stage: "closed", outcome: "merged", waitingOn: "nobody" }),
+  item("expo", {
+    targetRepo: "expo/expo-device-hub",
+    stage: "closed",
+    outcome: "merged",
+    waitingOn: "nobody",
+    primaryLink: link({ repo: "expo/expo-device-hub", number: 464, state: "merged" })
+  }),
   item("hidden", { disclosed: false, slug: null, title: "Undisclosed candidate", targetRepo: null, stage: "deciding", waitingOn: "jackson" }),
   item("parked", { title: "Waits for a covering PR", stage: "held", waitingOn: "covering_pr" })
 ];
@@ -398,6 +412,23 @@ equal(
   "a bare number alone: the item with that number, and text that holds it"
 );
 equal(find("12 item"), ["pr-twelve"], "a bare number beside another word is text only");
+
+// Candidates closed without an offer are left out of the list unless asked for.
+const offerMix = [
+  item("live", { stage: "offered", primaryLink: link() }),
+  item("merged-ours", { stage: "closed", outcome: "merged", primaryLink: link({ state: "merged" }) }),
+  item("dropped-bare", { stage: "closed", outcome: "dropped", title: "Dropped candidate" }),
+  item("fixed-theirs", { stage: "closed", outcome: "fixed_upstream", primaryLink: link({ ownership: "theirs" }) })
+];
+const listed = (search: string) => ids(applyFilters(offerMix, parseFilters(search)));
+equal(listed(""), ["live", "merged-ours"], "by default, closed without an offer is left out");
+equal(listed("?all=1"), ["live", "merged-ours", "dropped-bare", "fixed-theirs"], "show all brings them back");
+equal(listed("?stage=closed"), ["merged-ours", "dropped-bare", "fixed-theirs"], "the Closed stage shows every closed item");
+equal(listed("?outcome=dropped"), ["dropped-bare"], "an outcome filter finds them");
+equal(listed("?q=dropped"), ["dropped-bare"], "a search finds them");
+equal(listed("?stage=offered"), ["live"], "another stage is unaffected");
+equal(hasFilters(parseFilters("?all=1")), false, "show all is not a narrowing filter");
+equal(filtersToSearch(parseFilters("?all=1&stage=held")), "?stage=held&all=1", "show all survives in the address");
 
 // Where an item's page is: its ID, or until it has a number its slug, or its row id when it has neither.
 equal(itemPath({ id: "row-1", slug: "some-fix", number: 4 }), `/items/${formatItemId(4)}`, "a numbered item links by ID");
