@@ -142,8 +142,8 @@ function ThreadCard({ link, links }: { link: LinkView; links: readonly LinkView[
           </span>
         ) : null}
         {link.lastOtherActivityAt !== null ? (
-          <span>
-            {link.lastOtherActivityBy ?? "someone else"} <Age at={link.lastOtherActivityAt} suffix="ago" />
+          <span title="The last comment or review by anyone other than Jackson, bots excluded">
+            last heard from {link.lastOtherActivityBy ?? "someone else"} <Age at={link.lastOtherActivityAt} suffix="ago" />
           </span>
         ) : null}
         {link.headSha ? (
@@ -198,7 +198,7 @@ function Threads({ links }: { links: LinkView[] }) {
   const sorted = linksByRole(links);
   return (
     <Section count={sorted.length} title="Upstream threads">
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid items-start gap-4 md:grid-cols-2">
         <Lane all={sorted} links={sorted.filter((link) => threadSide(link) !== "theirs")} ours />
         <Lane all={sorted} links={sorted.filter((link) => threadSide(link) === "theirs")} ours={false} />
       </div>
@@ -395,7 +395,7 @@ function Undisclosed({ detail }: { detail: Detail }) {
     <>
       <Header item={item} />
       <p className="max-w-2xl">{UNDISCLOSED_TIP}</p>
-      <div className="mt-5 grid gap-x-8 gap-y-6 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)]">
+      <div className="mt-5 grid items-start gap-x-8 gap-y-6 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)]">
         {/* The route of an undisclosed item is withheld, so its line never claims a decision. */}
         <Tracker everOffered={false} routeChosen={false} stage={item.stage} />
         <Facts>

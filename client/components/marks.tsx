@@ -111,6 +111,22 @@ export function ThreadToken({
   );
 }
 
+/** The key to the block: filled is ours, hollow is theirs. Small enough to sit in a column heading. */
+export function SideKey() {
+  return (
+    <span className="inline-flex items-center gap-x-2.5 whitespace-nowrap">
+      <span className="inline-flex items-center gap-1">
+        <span aria-hidden="true" className="inline-block size-2.5 rounded-[0.1875rem] bg-(--dim)" />
+        ours
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <span aria-hidden="true" className="inline-block size-2.5 rounded-[0.1875rem] border-[1.5px] border-(color:--dim)" />
+        theirs
+      </span>
+    </span>
+  );
+}
+
 /** Shown in place of a thread when an item has none of ours. */
 export function NoThread() {
   return <span className={cx("text-[0.8125rem]", TEXT_DIM)}>Nothing posted</span>;

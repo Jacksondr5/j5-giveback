@@ -100,7 +100,7 @@ export function Rail({ stops, label }: { stops: Stop[]; label: string }) {
           "relative block min-w-0 rounded-sm px-1 sm:px-2",
           // Phone: an amber block for Jackson's stages, since there is no line to carry the dot.
           hot && "max-sm:bg-(--you-bg) max-sm:text-(color:--you-ink)",
-          held && "sm:ml-[50%] sm:flex sm:w-fit sm:items-center sm:gap-x-2 sm:pl-5"
+          held && "sm:ml-[25%] sm:flex sm:w-fit sm:items-center sm:gap-x-2 sm:pl-5"
         );
         return (
           <li
@@ -113,9 +113,9 @@ export function Rail({ stops, label }: { stops: Stop[]; label: string }) {
                 "sm:before:absolute sm:before:top-[1.875rem] sm:before:h-0.5 sm:before:-translate-y-1/2 sm:before:bg-(--edge) sm:before:content-['']",
               !held && (stop.stage === FIRST ? "sm:before:left-4" : "sm:before:left-0"),
               !held && (stop.stage === LAST ? "sm:before:right-[calc(100%-1rem)]" : "sm:before:right-0"),
-              // The branch: an elbow that leaves the line after Deciding and turns to Held.
+              // The branch: an elbow that leaves the line halfway between Deciding and the next stop, and turns to Held.
               held &&
-                "sm:before:absolute sm:before:left-1/2 sm:before:w-3.5 sm:before:rounded-bl-lg sm:before:border-b-2 sm:before:border-l-2 sm:before:border-(color:--edge) sm:before:content-['']",
+                "sm:before:absolute sm:before:left-1/4 sm:before:w-3.5 sm:before:rounded-bl-lg sm:before:border-b-2 sm:before:border-l-2 sm:before:border-(color:--edge) sm:before:content-['']",
               held && (counts ? "sm:before:-top-[2.5rem] sm:before:h-[3.375rem]" : "sm:mt-2 sm:before:-top-[1.125rem] sm:before:h-[1.75rem]")
             )}
             key={stop.stage}

@@ -6,7 +6,7 @@
 import { Link } from "lakebed/client";
 import type { ComponentChildren } from "preact";
 import type { OverviewView, OwnerOverviewView, SyncView } from "../../shared/api";
-import { AskTag, FollowUp, OutcomeTag, StageTag, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
+import { AskTag, FollowUp, OutcomeTag, SideKey, StageTag, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
 import { Icon } from "../components/icons";
 import { Rail } from "../components/Rail";
 import {
@@ -97,9 +97,11 @@ function SyncLine({ sync, owner }: { sync: SyncView; owner: boolean }) {
     <div className={cx("text-xs", TEXT_DIM)}>
       <p className="flex flex-wrap items-center gap-x-1.5 xl:justify-end">
         <Icon className={status.kind === "ok" ? undefined : "text-(color:--ink)"} name={status.kind === "ok" ? "sync" : "alert"} size={12} />
-        {github}
-        <span>{status.kind === "ok" ? "," : ""}</span>
-        {agent}
+        <span>
+          {github}
+          {status.kind === "ok" ? ", " : " "}
+          {agent}
+        </span>
       </p>
       {owner && status.kind === "failed" ? (
         <PrivateBlock className="mt-1.5 text-(color:--ink)">
@@ -369,7 +371,9 @@ function Offered({ items, asks }: { items: ListItem[]; asks: ListAsk[] }) {
       ) : (
         <div className={cx(CARD, "overflow-hidden")}>
           <div aria-hidden="true" className={cx("hidden border-b border-(color:--rule) px-3.5 py-1.5 text-xs", OFFERED_GRID, TEXT_DIM)}>
-            <span>Thread</span>
+            <span className="flex flex-wrap gap-x-3">
+              Thread <SideKey />
+            </span>
             <span>Item</span>
             <span>Checks</span>
             <span className="text-right" title="The last comment or review by anyone other than Jackson, bots excluded. Least recently active first.">

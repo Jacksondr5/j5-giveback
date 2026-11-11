@@ -14,7 +14,7 @@ import {
   type Stage
 } from "../../shared/enums";
 import { Icon } from "../components/icons";
-import { OutcomeTag, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
+import { OutcomeTag, SideKey, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
 import { Age, CARD, FOCUS, ItemTitleLink, LINK, SERIF, Skeleton, TEXT_DIM, YOU_TAG, cx } from "../components/ui";
 import { client, useTitle, useViewer } from "../data";
 import { repositories, sortForList, type ListItem } from "../lib/derive";
@@ -231,7 +231,9 @@ function Table({ groups }: { groups: { stage: Stage; items: ListItem[] }[] }) {
             Item
           </th>
           <th className={TH} scope="col">
-            Threads
+            <span className="flex flex-wrap gap-x-3">
+              Threads <SideKey />
+            </span>
           </th>
           <th className={TH} scope="col">
             Checks

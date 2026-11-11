@@ -28,7 +28,7 @@ function Heading({ children }: { children: ComponentChildren }) {
 
 function Key({ mark, children }: { mark: ComponentChildren; children: ComponentChildren }) {
   return (
-    <li className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-start gap-x-3">
+    <li className="grid grid-cols-[5.75rem_minmax(0,1fr)] items-start gap-x-3">
       <span className="flex min-h-6 flex-wrap items-center gap-1">{mark}</span>
       <span>{children}</span>
     </li>
