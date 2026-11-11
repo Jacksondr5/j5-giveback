@@ -27,7 +27,6 @@ import { applyFilters, filtersToSearch, itemsHref, parseFilters } from "./filter
 import { DAY, HOUR, MINUTE, WEEK, YEAR, formatAgo, formatSpan, originRefUrl, shortRef } from "./format";
 import {
   askAction,
-  askKindAction,
   ciSignal,
   commentHost,
   groupByStage,
@@ -357,7 +356,6 @@ equal(askAction("device_needed", "Needs a check on a physical iPhone"), { action
 equal(askAction("maintainer_question", "A maintainer asked whether delegated stops should name the parent"), { action: "Answer a maintainer", detail: "A maintainer asked whether delegated stops should name the parent" }, "maintainer question");
 equal(askAction("device_needed", null), { action: "Test on a device", detail: null }, "undisclosed ask has no label");
 equal(askAction("side_choice", "   "), { action: "Choose between options", detail: null }, "blank label");
-equal(askKindAction("route_decision"), "Choose a route", "kind of action for a tag");
 
 // Ours or theirs.
 equal(threadSide(link()), "ours", "our PR");

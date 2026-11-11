@@ -40,7 +40,7 @@ import {
 import { client, useTitle, useViewer } from "../data";
 import { asksForItem, linksByRole, type ListAsk, type ListItem } from "../lib/derive";
 import { WEEK, originRefUrl, shortSha } from "../lib/format";
-import { askAction, commentHost, listThreads, roleHint, roleWord, stageWaitsOnJackson, threadSide } from "../lib/present";
+import { askAction, commentHost, listThreads, roleHint, roleWord, threadSide } from "../lib/present";
 import { NotFound } from "./NotFound";
 
 type Detail = (ItemDetailView | OwnerItemDetailView) & { private?: ItemPrivateView | null };
@@ -170,7 +170,7 @@ function ThreadCard({ link, links }: { link: LinkView; links: readonly LinkView[
 
 function Lane({ ours, links, all }: { ours: boolean; links: LinkView[]; all: readonly LinkView[] }) {
   return (
-    <div className={cx(CARD, "overflow-hidden", ours && "border-t-[3px] border-t-(color:--ink)")}>
+    <div className={cx(CARD, "overflow-hidden")}>
       <h3 className="flex items-center gap-2 border-b border-(color:--rule) px-3.5 py-2 font-bold">
         {/* The same block the tokens use, so the heading is the key to them. */}
         <SideGlyph ours={ours} tone="dim">
@@ -244,7 +244,7 @@ function OpenAsk({ ask }: { ask: ListAsk }) {
         />
       </div>
       <div className="min-w-0">
-        <p className="max-w-[46rem] text-[0.9375rem] font-bold leading-6">{action}</p>
+        <p className="max-w-[46rem] text-[0.9375rem] font-bold leading-snug">{action}</p>
         {detail ? <p className={cx("max-w-[46rem] text-sm", TEXT_DIM)}>{detail}</p> : null}
         <PrivateAsk ask={ask} />
       </div>
@@ -281,30 +281,32 @@ function AnsweredAsk({ ask }: { ask: ListAsk }) {
   );
 }
 
-function Asks({ asks }: { asks: ListAsk[] }) {
-  const { open, closed } = asksForItem(asks);
-  if (asks.length === 0) return null;
+/** What the item needs from Jackson now. It leads the page, above the stage line. */
+function OpenAsks({ asks }: { asks: ListAsk[] }) {
+  const { open } = asksForItem(asks);
+  if (open.length === 0) return null;
   return (
-    <>
-      {open.length > 0 ? (
-        <Section count={open.length} title="Needs Jackson">
-          <ol className={cx(CARD, DIVIDE, "overflow-hidden border-l-4 border-l-(color:--you-solid)")}>
-            {open.map((ask) => (
-              <OpenAsk ask={ask} key={ask.id} />
-            ))}
-          </ol>
-        </Section>
-      ) : null}
-      {closed.length > 0 ? (
-        <Section count={closed.length} title="Answered asks">
-          <ul className={cx(CARD, DIVIDE)}>
-            {closed.map((ask) => (
-              <AnsweredAsk ask={ask} key={ask.id} />
-            ))}
-          </ul>
-        </Section>
-      ) : null}
-    </>
+    <Section count={open.length} title="Needs Jackson">
+      <ol className={cx(CARD, DIVIDE, "overflow-hidden border-l-4 border-l-(color:--you-solid)")}>
+        {open.map((ask) => (
+          <OpenAsk ask={ask} key={ask.id} />
+        ))}
+      </ol>
+    </Section>
+  );
+}
+
+function AnsweredAsks({ asks }: { asks: ListAsk[] }) {
+  const { closed } = asksForItem(asks);
+  if (closed.length === 0) return null;
+  return (
+    <Section count={closed.length} title="Answered asks">
+      <ul className={cx(CARD, DIVIDE)}>
+        {closed.map((ask) => (
+          <AnsweredAsk ask={ask} key={ask.id} />
+        ))}
+      </ul>
+    </Section>
   );
 }
 
@@ -345,7 +347,6 @@ function TimelineEntry({ event }: { event: EventView }) {
 function Header({ item, links = [] }: { item: ListItem; links?: readonly LinkView[] }) {
   const notPublic = item.isPublic === false;
   const threads = listThreads(item);
-  const hot = stageWaitsOnJackson(item.stage) && item.waitingOn === "jackson";
   return (
     <header className="pb-4 pt-4">
       <p className={cx("text-sm", TEXT_DIM)}>
@@ -366,13 +367,13 @@ function Header({ item, links = [] }: { item: ListItem; links?: readonly LinkVie
         {notPublic ? <span className="sr-only"> (not public)</span> : null}
       </h1>
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-        <StageTag hot={hot} stage={item.stage} />
+        <StageTag stage={item.stage} />
         {item.outcome ? <OutcomeTag outcome={item.outcome} /> : null}
         {item.stage !== "closed" || item.waitingOn !== "nobody" ? (
           <span className="inline-flex flex-wrap items-center gap-x-1.5">
-            {hot ? null : <Waiting waitingOn={item.waitingOn} />}
+            <Waiting waitingOn={item.waitingOn} />
             <span className={cx("text-sm", TEXT_DIM)}>
-              {hot ? "waiting" : "for"} <Age at={item.waitingSince} label="Waiting since" />
+              for <Age at={item.waitingSince} label="Waiting since" />
             </span>
           </span>
         ) : null}
@@ -557,13 +558,14 @@ function Disclosed({ detail }: { detail: Detail }) {
       */}
       <div className="mt-5 grid gap-x-8 gap-y-7 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)] xl:grid-rows-[auto_1fr]">
         <div className="min-w-0 space-y-7 xl:col-start-1 xl:row-start-1">
+          <OpenAsks asks={detail.asks} />
           <Tracker
             everOffered={detail.links.some((link) => link.ownership === "ours")}
             routeChosen={item.route !== null && item.route !== "hold" && item.route !== "drop"}
             stage={item.stage}
           />
-          <Asks asks={detail.asks} />
           <Threads links={detail.links} />
+          <AnsweredAsks asks={detail.asks} />
         </div>
         <div className="min-w-0 space-y-7 xl:col-start-2 xl:row-span-2 xl:row-start-1">
           {hasPrivate && privateFields ? <PrivateNotes fields={privateFields} /> : null}

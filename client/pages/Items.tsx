@@ -19,7 +19,7 @@ import { Age, CARD, FOCUS, ItemTitleLink, LINK, SERIF, Skeleton, TEXT_DIM, YOU_T
 import { client, useTitle, useViewer } from "../data";
 import { openAsksByItem, repositories, sortForList, type ListAsk, type ListItem } from "../lib/derive";
 import { applyFilters, filtersToSearch, hasFilters, parseFilters, type ItemFilters } from "../lib/filters";
-import { askAction, askKindAction, groupByStage, listThreads, stageCounts, stageIcon, stageWaitsOnJackson } from "../lib/present";
+import { askAction, groupByStage, listThreads, stageCounts, stageIcon, stageWaitsOnJackson } from "../lib/present";
 
 // ---------------------------------------------------------------------------
 // Filters
@@ -196,13 +196,11 @@ function Status({ item, asks }: { item: ListItem; asks: ListAsk[] }) {
   const jackson = item.waitingOn === "jackson";
   if (asks.length === 0 && item.waitingOn === "nobody") return <None label="Waits on nobody" />;
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+    <div className="flex flex-col items-start gap-y-1">
       {asks.map((ask) => (
-        <AskTag key={ask.id} title={askAction(ask.kind, ask.label).action}>
-          {askKindAction(ask.kind)}
-        </AskTag>
+        <AskTag key={ask.id}>{askAction(ask.kind, ask.label).action}</AskTag>
       ))}
-      {jackson && asks.length > 0 ? null : item.waitingOn === "nobody" ? null : <Waiting bare waitingOn={item.waitingOn} />}
+      {jackson && asks.length > 0 ? null : item.waitingOn === "nobody" ? null : <Waiting waitingOn={item.waitingOn} />}
     </div>
   );
 }
@@ -231,9 +229,9 @@ function Table({ groups, asks }: { groups: Group[]; asks: Map<string, ListAsk[]>
       <caption className="sr-only">Giveback items, grouped by stage</caption>
       <colgroup>
         <col />
-        <col className="w-[25%]" />
-        <col className="w-[15%]" />
-        <col className="w-[13%]" />
+        <col className="w-[24%]" />
+        <col className="w-[12%]" />
+        <col className="w-[18%]" />
         <col className="w-[9%]" />
         <col className="w-[6.5rem]" />
       </colgroup>
@@ -318,16 +316,14 @@ function Stack({ groups, asks }: { groups: Group[]; asks: Map<string, ListAsk[]>
                   ) : (
                     <>
                       {(asks.get(item.id) ?? []).map((ask) => (
-                        <AskTag key={ask.id} title={askAction(ask.kind, ask.label).action}>
-                          {askKindAction(ask.kind)}
-                        </AskTag>
+                        <AskTag key={ask.id}>{askAction(ask.kind, ask.label).action}</AskTag>
                       ))}
                       {item.waitingOn === "nobody" || (item.waitingOn === "jackson" && (asks.get(item.id) ?? []).length > 0) ? null : (
                         <Waiting waitingOn={item.waitingOn} />
                       )}
                     </>
                   )}
-                  {item.route ? <span className={cx("text-sm", TEXT_DIM)}>{ROUTE_LABELS[item.route]}</span> : null}
+                  {item.route ? <span className={cx("text-sm", TEXT_DIM)}>Route: {ROUTE_LABELS[item.route]}</span> : null}
                 </div>
                 {listThreads(item).length > 0 || item.upstreamChangedAt !== null ? (
                   <div className="mt-1.5 space-y-1">

@@ -56,11 +56,6 @@ const INSTRUCTION_VERBS = new Set([
   "verify"
 ]);
 
-/** The kind of action alone, short enough for a tag: "Choose a route". */
-export function askKindAction(kind: AskKind): string {
-  return ASK_ACTIONS[kind];
-}
-
 /**
  * What an ask needs from Jackson: one instruction, and the agent's context when it has some.
  *

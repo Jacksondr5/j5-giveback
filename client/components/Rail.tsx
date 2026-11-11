@@ -125,7 +125,7 @@ export function Rail({ stops, label }: { stops: Stop[]; label: string }) {
         const body = <StopBody stop={stop} />;
         const frame = cx(
           // Phone: dot, name, count in a row. Wide: name, dot, count stacked.
-          "relative min-w-0 rounded-sm max-sm:grid max-sm:min-h-8 max-sm:grid-cols-[2.25rem_minmax(0,1fr)_auto] max-sm:items-center max-sm:gap-x-1 max-sm:pr-2 sm:block sm:px-2",
+          "relative min-w-0 rounded-sm max-sm:grid max-sm:min-h-7 max-sm:grid-cols-[2.25rem_minmax(0,1fr)_auto] max-sm:items-center max-sm:gap-x-1 max-sm:pr-2 sm:block sm:px-2",
           held && "max-sm:ml-6 sm:ml-[25%] sm:flex sm:w-fit sm:items-center sm:gap-x-2 sm:pl-5"
         );
         return (

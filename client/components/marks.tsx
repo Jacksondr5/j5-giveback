@@ -87,21 +87,24 @@ export function ThreadToken({
   return (
     <span className="inline-flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 align-middle text-sm leading-5">
       <ExternalLink
-        className={cx(FOCUS, "group inline-flex min-w-0 items-center gap-1.5 rounded-sm")}
+        className={cx(FOCUS, "group inline-flex min-w-0 items-start gap-1.5 rounded-sm")}
         href={link.url}
         title={`${fullRef(link.repo, link.number)}${link.title ? `: ${link.title}` : ""}`}
       >
         <SideGlyph ours={ours} tone={live.tone}>
           <Icon name={live.icon} size={14} />
         </SideGlyph>
-        <span className="min-w-0 break-words">
+        <span className="min-w-0">
           <span className={ours ? "font-semibold" : undefined}>{threadName(link, host)}</span>{" "}
-          <span className={cx(REF, "underline decoration-(color:--edge) underline-offset-2 group-hover:decoration-(color:--ink)")}>
-            {full ? fullRef(link.repo, link.number) : shortRef(link.repo, link.number)}
+          {/* The ref and its state never part: when the token wraps, they move to the next line together. */}
+          <span className="whitespace-nowrap">
+            <span className={cx(REF, "underline decoration-(color:--edge) underline-offset-2 group-hover:decoration-(color:--ink)")}>
+              {full ? fullRef(link.repo, link.number) : shortRef(link.repo, link.number)}
+            </span>{" "}
+            <span className={cx("font-medium", TONE_TEXT[live.tone])}>{live.text}</span>
           </span>
         </span>
       </ExternalLink>
-      <span className={cx("whitespace-nowrap font-medium", TONE_TEXT[live.tone])}>{live.text}</span>
       {word ? (
         <span className={cx("whitespace-nowrap", TEXT_DIM)} title={roleHint(link.role)}>
           {word}
@@ -239,14 +242,11 @@ export function Waiting({
   );
 }
 
-/** An open ask as a compact amber tag: the kind of action it needs, with the full instruction in its tooltip. */
-export function AskTag({ children, title }: { children: ComponentChildren; title?: string }) {
+/** An open ask as an amber tag: the instruction itself, the same words the queue uses. It wraps when it is long. */
+export function AskTag({ children }: { children: ComponentChildren }) {
   return (
-    <span
-      className={cx(YOU_TAG, "inline-flex max-w-full items-center gap-1 rounded px-1.5 text-sm font-semibold leading-5")}
-      title={title}
-    >
-      <Icon name="person" size={14} />
+    <span className={cx(YOU_TAG, "inline-flex max-w-full items-start gap-1 rounded px-1.5 py-px text-sm font-semibold leading-5")}>
+      <Icon className="mt-[0.1875rem]" name="person" size={14} />
       <span className="min-w-0 break-words">{children}</span>
     </span>
   );
