@@ -211,6 +211,8 @@ export type LinkView = {
   /** GitHub snapshot. Null until the first successful refresh. */
   title: string | null;
   state: GhState | null;
+  /** When the PR, issue or discussion was opened on GitHub. */
+  createdAt: number | null;
   isDraft: boolean | null;
   mergedAt: number | null;
   closedAt: number | null;
@@ -263,6 +265,8 @@ export type ItemView = {
   upstreamChangeNote: string | null;
   /** The link with role "primary", if any. */
   primaryLink: LinkView | null;
+  /** Links with the role base or covering: what the item waits on or may be made unnecessary by. */
+  dependencyLinks: LinkView[];
 };
 
 export type ItemRef = {

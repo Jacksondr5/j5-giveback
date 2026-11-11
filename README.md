@@ -5,7 +5,7 @@ A public, read-only dashboard of the items J5 Code gives back to upstream reposi
 - `AGENT_API.md`: the HTTP API, for agents. Start there to record or read giveback state.
 - `AGENTS.md`: the Lakebed rules for anyone changing the app.
 
-The server is built. `client/index.tsx` is a placeholder that prints the overview as JSON.
+`server/` holds the schema, the public and owner queries, the agent endpoints and the GitHub refresh. `client/` holds the four pages: overview, item list, item and how it works. `shared/` holds the types, labels and limits both sides use.
 
 ## Layout
 
@@ -59,7 +59,7 @@ Put these in `.env.lakebed.server`, which Git ignores. `.env.lakebed.server.exam
 
 The owner check uses the account's Lakebed `userId`. Lakebed documents it as the one stable authorization key of a signed-in account, and documents email as profile data that is "not an authorization key". So the allow-list holds ids, not email addresses.
 
-To find your id: open the site, sign in with Google, and read `userId` in the Viewer block. Add it to `OWNER_IDS` and deploy again. Until `OWNER_IDS` is set, nobody is an owner.
+To find your id: open the site, sign in with Google, and copy the account id from the note under the navigation, which appears for a signed-in account that is not an owner. Add it to `OWNER_IDS` and deploy again. Until `OWNER_IDS` is set, nobody is an owner.
 
 ## Run locally
 

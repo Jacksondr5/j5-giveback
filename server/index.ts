@@ -11,7 +11,7 @@ import type {
 import { handleAsks, handleDeleteItem, handleEvents, handleExport, handleItems } from "./agent";
 import { isOwner, requireOwner } from "./auth";
 import { ownerItemDetail, ownerItems, ownerOverview } from "./owner";
-import { askView, eventView, itemView, linkView, readItemDetail, readItemList, readOverview } from "./read";
+import { askView, dependenciesOf, eventView, itemView, linkView, readItemDetail, readItemList, readOverview } from "./read";
 import { handleRefresh } from "./refresh";
 import { schema, type PublicDb, type ReadDb } from "./schema";
 
@@ -46,7 +46,7 @@ export default capsule({
       if (!data) return null;
       const primary = data.links.find((link) => link.role === "primary") ?? null;
       return {
-        item: itemView(data.row, primary, false),
+        item: itemView(data.row, primary, dependenciesOf(data.links), false),
         links: data.links.map(linkView),
         asks: data.asks.map((ask) => askView(ask, data.row, false)),
         events: data.events.map(eventView)

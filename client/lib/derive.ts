@@ -128,27 +128,26 @@ export function mergedTime(item: ListItem): number | null {
 }
 
 /**
- * Median time from an item being found to its change merging upstream, over
- * disclosed items with the outcome "merged". An item whose merge time is before
- * its found time is left out: the dates cannot both be right.
- *
- * The server does not yet store when a PR was opened, so this is not the
- * "PR opened to merged" time. See `mergeStart`.
+ * Median time from our PR being opened to it merging upstream, over disclosed
+ * items with the outcome "merged" whose primary link is a PR GitHub has dated.
+ * An item whose dates run backwards is left out: they cannot both be right.
  */
 export function medianTimeToMerge(items: readonly ListItem[]): { medianMs: number | null; count: number } {
   const spans: number[] = [];
   for (const item of items) {
     const end = mergedTime(item);
-    if (end === null) continue;
-    const span = end - mergeStart(item);
+    const start = mergeStart(item);
+    if (end === null || start === null) continue;
+    const span = end - start;
     if (span >= 0) spans.push(span);
   }
   return { medianMs: median(spans), count: spans.length };
 }
 
-/** Where the time-to-merge clock starts. The one place to change when the server stores a PR's open time. */
-export function mergeStart(item: ListItem): number {
-  return item.foundAt;
+/** Where the time-to-merge clock starts: when the item's primary PR was opened. Null when that is not known. */
+export function mergeStart(item: ListItem): number | null {
+  const link = item.primaryLink;
+  return link && link.kind === "pr" ? link.createdAt : null;
 }
 
 // ---------------------------------------------------------------------------

@@ -20,7 +20,7 @@ const ACTOR = "author{login __typename}";
 
 const PR_FRAGMENT = `
 fragment PrFields on PullRequest {
-  title prState: state isDraft mergedAt closedAt updatedAt headRefOid reviewDecision
+  title createdAt prState: state isDraft mergedAt closedAt updatedAt headRefOid reviewDecision
   mergedBy{login __typename}
   labels(first:20){nodes{name}}
   commits(last:1){nodes{commit{statusCheckRollup{state}}}}
@@ -30,13 +30,13 @@ fragment PrFields on PullRequest {
 }`;
 const ISSUE_FRAGMENT = `
 fragment IssueFields on Issue {
-  title issueState: state closedAt updatedAt
+  title createdAt issueState: state closedAt updatedAt
   labels(first:20){nodes{name}}
   comments(last:${RECENT}){nodes{${ACTOR} createdAt}}
 }`;
 const DISCUSSION_FRAGMENT = `
 fragment DiscussionFields on Discussion {
-  title closed closedAt updatedAt
+  title createdAt closed closedAt updatedAt
   labels(first:20){nodes{name}}
   comments(last:${RECENT}){nodes{${ACTOR} createdAt}}
 }`;
@@ -70,6 +70,8 @@ export function buildQuery(targets: LinkTarget[]): string {
 export type Snapshot = {
   title: string;
   state: GhState;
+  /** When the PR, issue or discussion was opened. */
+  createdAt: number | null;
   isDraft: boolean | null;
   mergedAt: number | null;
   closedAt: number | null;
@@ -199,6 +201,7 @@ export function snapshotFrom(node: unknown, selfLogin: string): Snapshot | null 
   return {
     title: title.slice(0, 200),
     state,
+    createdAt: time(node.createdAt),
     isDraft: isPr ? node.isDraft === true : null,
     mergedAt: isPr ? time(node.mergedAt) : null,
     closedAt: time(node.closedAt),

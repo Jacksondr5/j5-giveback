@@ -42,6 +42,7 @@ function link(patch: Partial<LinkView> = {}): LinkView {
     role: "primary",
     title: null,
     state: "open",
+    createdAt: null,
     isDraft: false,
     mergedAt: null,
     closedAt: null,
@@ -87,6 +88,7 @@ function item(id: string, patch: Partial<ItemView> = {}): ListItem {
     upstreamChangedAt: null,
     upstreamChangeNote: null,
     primaryLink: null,
+    dependencyLinks: [],
     ...patch
   };
 }
@@ -123,17 +125,33 @@ equal(median([3]), 3, "median of one");
 equal(median([5, 1, 3]), 3, "odd median");
 equal(median([4, 1, 3, 2]), 2.5, "even median");
 const merged = [
+  // No PR open date: left out.
   item("a", { stage: "closed", outcome: "merged", foundAt: NOW - 10 * DAY, closedAt: NOW - 2 * DAY }),
-  // GitHub's merge time wins over the item's close time.
+  // Opened 10 days ago, merged 6 days ago. GitHub's merge time wins over the item's close time.
   item("b", {
     stage: "closed",
     outcome: "merged",
-    foundAt: NOW - 10 * DAY,
     closedAt: NOW - DAY,
-    primaryLink: link({ state: "merged", mergedAt: NOW - 6 * DAY })
+    primaryLink: link({ state: "merged", createdAt: NOW - 10 * DAY, mergedAt: NOW - 6 * DAY })
   }),
-  // Merged before it was found: the dates cannot both be right, so it is left out.
-  item("c", { stage: "closed", outcome: "merged", foundAt: NOW - DAY, closedAt: NOW - 3 * DAY }),
+  // Opened 9 days ago, merged 1 day ago.
+  item("b2", {
+    stage: "closed",
+    outcome: "merged",
+    primaryLink: link({ state: "merged", createdAt: NOW - 9 * DAY, mergedAt: NOW - DAY })
+  }),
+  // Merged before it was opened: the dates cannot both be right, so it is left out.
+  item("c", {
+    stage: "closed",
+    outcome: "merged",
+    primaryLink: link({ state: "merged", createdAt: NOW - DAY, mergedAt: NOW - 3 * DAY })
+  }),
+  // The primary link is an issue, so there is no PR to time.
+  item("c2", {
+    stage: "closed",
+    outcome: "merged",
+    primaryLink: link({ kind: "issue", createdAt: NOW - 9 * DAY, mergedAt: NOW - DAY })
+  }),
   item("d", { stage: "closed", outcome: "dropped", foundAt: NOW - 30 * DAY, closedAt: NOW - DAY }),
   item("e", { stage: "offered" })
 ];

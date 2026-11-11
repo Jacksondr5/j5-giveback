@@ -178,7 +178,7 @@ function Tiles({ overview, items }: { overview: OverviewView; items: ListItem[] 
         value={String(deciding)}
       />
       <Tile
-        label="median, found to merged"
+        label="median, PR opened to merged"
         sub={merge.count > 0 ? `over ${plural(merge.count, "merged item", "merged items")}` : "no merged items yet"}
         value={merge.medianMs === null ? "–" : formatSpan(merge.medianMs)}
       />
@@ -359,10 +359,7 @@ function Pipeline({ pipeline }: { pipeline: OverviewView["pipeline"] }) {
 // Offered upstream
 // ---------------------------------------------------------------------------
 
-// The list query carries only an item's primary link. Until it also carries the
-// base and covering links, each visible offered row reads its own item for them.
-function Dependencies({ links }: { links: LinkView[] | undefined }) {
-  if (links === undefined) return null;
+function Dependencies({ links }: { links: readonly LinkView[] }) {
   return (
     <>
       {dependencyLinks(links).map((link) => (
@@ -372,14 +369,6 @@ function Dependencies({ links }: { links: LinkView[] | undefined }) {
       ))}
     </>
   );
-}
-
-function PublicDependencies({ itemRef }: { itemRef: string }) {
-  return <Dependencies links={client.useQuery("item", itemRef)?.links} />;
-}
-
-function OwnerDependencies({ itemRef }: { itemRef: string }) {
-  return <Dependencies links={client.useQuery("ownerItem", itemRef)?.links} />;
 }
 
 function OfferedRow({ item, owner, asks }: { item: ListItem; owner: boolean; asks: ListAsk[] }) {
@@ -450,7 +439,7 @@ function OfferedRow({ item, owner, asks }: { item: ListItem; owner: boolean; ask
         ) : null}
         {item.disclosed ? (
           <SilentBoundary>
-            {owner ? <OwnerDependencies itemRef={item.id} /> : <PublicDependencies itemRef={item.id} />}
+            <Dependencies links={item.dependencyLinks} />
           </SilentBoundary>
         ) : null}
       </ChipList>

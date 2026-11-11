@@ -9,7 +9,7 @@ import type {
   OwnerItemView,
   OwnerOverviewView
 } from "../shared/api";
-import { askView, eventView, linkView, ownerItemView, readItemDetail, readItemRows, readOverview } from "./read";
+import { askView, dependenciesOf, eventView, linkView, ownerItemView, readItemDetail, readItemRows, readOverview } from "./read";
 import type { AskRow, ItemRow, ReadDb } from "./schema";
 
 async function askPrivateFor(db: ReadDb, askId: string): Promise<AskPrivateView | null> {
@@ -37,8 +37,8 @@ export async function ownerOverview(db: ReadDb): Promise<OwnerOverviewView> {
 }
 
 export async function ownerItems(db: ReadDb): Promise<OwnerItemView[]> {
-  const { rows, primaryByItem } = await readItemRows(db);
-  return rows.map((row) => ownerItemView(row, primaryByItem.get(row.id) ?? null));
+  const { rows, primaryByItem, dependenciesByItem } = await readItemRows(db);
+  return rows.map((row) => ownerItemView(row, primaryByItem.get(row.id) ?? null, dependenciesByItem.get(row.id) ?? []));
 }
 
 export async function ownerItemDetail(db: ReadDb, ref: string): Promise<OwnerItemDetailView | null> {
@@ -59,7 +59,7 @@ export async function ownerItemDetail(db: ReadDb, ref: string): Promise<OwnerIte
   }
   const primary = links.find((link) => link.role === "primary") ?? null;
   return {
-    item: ownerItemView(row, primary),
+    item: ownerItemView(row, primary, dependenciesOf(links)),
     private: privateView,
     links: links.map(linkView),
     asks: ownerAsks,

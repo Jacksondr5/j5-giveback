@@ -56,6 +56,7 @@ export function linkView(row: LinkRow): LinkView {
     role: row.role as LinkRole,
     title: row.ghTitle ?? null,
     state: (row.ghState as GhState | undefined) ?? null,
+    createdAt: row.ghCreatedAt ?? null,
     isDraft: row.ghIsDraft ?? null,
     mergedAt: row.ghMergedAt ?? null,
     closedAt: row.ghClosedAt ?? null,
@@ -100,11 +101,12 @@ function undisclosedItemView(row: ItemRow): ItemView {
     followUpNote: null,
     upstreamChangedAt: null,
     upstreamChangeNote: null,
-    primaryLink: null
+    primaryLink: null,
+    dependencyLinks: []
   };
 }
 
-function disclosedItemView(row: ItemRow, primary: LinkRow | null): ItemView {
+function disclosedItemView(row: ItemRow, primary: LinkRow | null, dependencies: readonly LinkRow[]): ItemView {
   return {
     id: row.id,
     disclosed: true,
@@ -129,16 +131,22 @@ function disclosedItemView(row: ItemRow, primary: LinkRow | null): ItemView {
     followUpNote: row.followUpNote ?? null,
     upstreamChangedAt: row.upstreamChangedAt ?? null,
     upstreamChangeNote: row.upstreamChangeNote ?? null,
-    primaryLink: primary ? linkView(primary) : null
+    primaryLink: primary ? linkView(primary) : null,
+    dependencyLinks: dependencies.map(linkView)
   };
 }
 
-export function itemView(row: ItemRow, primary: LinkRow | null, full: boolean): ItemView {
-  return full || row.isPublic ? disclosedItemView(row, primary) : undisclosedItemView(row);
+export function itemView(row: ItemRow, primary: LinkRow | null, dependencies: readonly LinkRow[], full: boolean): ItemView {
+  return full || row.isPublic ? disclosedItemView(row, primary, dependencies) : undisclosedItemView(row);
 }
 
-export function ownerItemView(row: ItemRow, primary: LinkRow | null): OwnerItemView {
-  return { ...disclosedItemView(row, primary), isPublic: row.isPublic };
+export function ownerItemView(row: ItemRow, primary: LinkRow | null, dependencies: readonly LinkRow[]): OwnerItemView {
+  return { ...disclosedItemView(row, primary, dependencies), isPublic: row.isPublic };
+}
+
+/** The base and covering links among an item's links. */
+export function dependenciesOf(links: readonly LinkRow[]): LinkRow[] {
+  return links.filter((link) => link.role === "base" || link.role === "covering");
 }
 
 function itemRef(row: ItemRow, full: boolean): ItemRef {
@@ -252,7 +260,15 @@ export async function readOverview(db: PublicDb, full: boolean): Promise<Overvie
   return { view, openAskRows: keptRows };
 }
 
-export type ItemListData = { rows: ItemRow[]; primaryByItem: Map<string, LinkRow> };
+export type ItemListData = {
+  rows: ItemRow[];
+  primaryByItem: Map<string, LinkRow>;
+  dependenciesByItem: Map<string, LinkRow[]>;
+};
+
+// Base and covering links are rare: a few per hundred items. The cap keeps the
+// list inside the handler's row budget whatever the data.
+const MAX_DEPENDENCY_LINKS = 200;
 
 export async function readItemRows(db: PublicDb): Promise<ItemListData> {
   const rows = await db.items.withIndex("by_creation").take(LIMITS.maxItems);
@@ -262,12 +278,21 @@ export async function readItemRows(db: PublicDb): Promise<ItemListData> {
   for (const link of primaries) {
     primaryByItem.set(link.itemId, link);
   }
-  return { rows, primaryByItem };
+  const dependenciesByItem = new Map<string, LinkRow[]>();
+  for (const role of ["base", "covering"] as const) {
+    const links = await db.links.withIndex("by_role", (q) => q.eq("role", role)).take(MAX_DEPENDENCY_LINKS);
+    for (const link of links) {
+      const list = dependenciesByItem.get(link.itemId);
+      if (list) list.push(link);
+      else dependenciesByItem.set(link.itemId, [link]);
+    }
+  }
+  return { rows, primaryByItem, dependenciesByItem };
 }
 
 export async function readItemList(db: PublicDb, full: boolean): Promise<ItemView[]> {
-  const { rows, primaryByItem } = await readItemRows(db);
-  return rows.map((row) => itemView(row, primaryByItem.get(row.id) ?? null, full));
+  const { rows, primaryByItem, dependenciesByItem } = await readItemRows(db);
+  return rows.map((row) => itemView(row, primaryByItem.get(row.id) ?? null, dependenciesByItem.get(row.id) ?? [], full));
 }
 
 export type ItemDetailData = {

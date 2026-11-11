@@ -139,6 +139,7 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
       await db.links.update(link.id, {
         ghTitle: snapshot.title,
         ghState: snapshot.state,
+        ghCreatedAt: snapshot.createdAt,
         ghIsDraft: snapshot.isDraft,
         ghMergedAt: snapshot.mergedAt,
         ghClosedAt: snapshot.closedAt,

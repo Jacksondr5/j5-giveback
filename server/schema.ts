@@ -54,6 +54,7 @@ export const schema = {
     // GitHub snapshot, written by the refresh.
     ghTitle: string().optional(),
     ghState: string().optional(),
+    ghCreatedAt: number().optional(),
     ghIsDraft: boolean().optional(),
     ghMergedAt: number().optional(),
     ghClosedAt: number().optional(),
