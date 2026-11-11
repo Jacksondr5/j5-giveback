@@ -1,0 +1,141 @@
+import { boolean, id, number, string, table } from "lakebed/server";
+import type { ReadDatabaseOf, WriteDatabaseOf } from "lakebed/server";
+
+// Public tables: items, links, asks, events, syncState.
+// Private tables: itemPrivate, askPrivate. Public queries get a database type
+// that does not contain them (see PublicDb), so they cannot read them.
+//
+// All times are Unix epoch milliseconds in number() fields.
+
+export const schema = {
+  items: table({
+    slug: string(),
+    title: string(),
+    summary: string(),
+    stage: string(),
+    route: string().optional(),
+    routeReason: string().optional(),
+    waitingOn: string(),
+    waitingSince: number(),
+    outcome: string().optional(),
+    closedAt: number().optional(),
+    targetRepo: string(),
+    // J5 origin refs, one per line.
+    originRefs: string().default(""),
+    foundAt: number(),
+    lastValidatedAt: number().optional(),
+    lastValidatedSha: string().optional(),
+    validationVerdict: string().optional(),
+    followUpState: string().default("none"),
+    followUpNote: string().optional(),
+    isPublic: boolean(),
+    // Last change by an agent. Lakebed's own updatedAt also moves when the refresh raises the marker.
+    agentUpdatedAt: number(),
+    // "State changed upstream" marker. Raised by the refresh, cleared by the agent.
+    upstreamChangedAt: number().optional(),
+    upstreamChangeNote: string().optional()
+  }).index("by_slug", ["slug"]),
+
+  links: table({
+    itemId: id("items"),
+    repo: string(),
+    number: number(),
+    url: string(),
+    kind: string(),
+    ownership: string(),
+    role: string(),
+    // True while the item is not closed. The refresh reads only active links.
+    active: boolean(),
+    triageBucket: string().optional(),
+    triageRank: number().optional(),
+    // GitHub snapshot, written by the refresh.
+    ghTitle: string().optional(),
+    ghState: string().optional(),
+    ghIsDraft: boolean().optional(),
+    ghMergedAt: number().optional(),
+    ghClosedAt: number().optional(),
+    ghCi: string().optional(),
+    ghReviewDecision: string().optional(),
+    // One label per line.
+    ghLabels: string().optional(),
+    ghHeadSha: string().optional(),
+    ghLastActivityAt: number().optional(),
+    ghOtherActivityAt: number().optional(),
+    ghOtherActivityBy: string().optional(),
+    macroscopeVerdict: string().optional(),
+    syncedAt: number().optional(),
+    syncError: string().optional()
+  })
+    .index("by_item", ["itemId"])
+    .index("by_active", ["active"])
+    .index("by_role", ["role"]),
+
+  asks: table({
+    key: string(),
+    itemId: id("items"),
+    kind: string(),
+    publicLabel: string(),
+    openedAt: number(),
+    isOpen: boolean(),
+    closedAt: number().optional(),
+    resolution: string().optional()
+  })
+    .index("by_key", ["key"])
+    .index("by_item", ["itemId"])
+    .index("by_open", ["isOpen", "openedAt"]),
+
+  events: table({
+    key: string(),
+    itemId: id("items"),
+    at: number(),
+    actor: string(),
+    type: string(),
+    note: string(),
+    url: string().optional(),
+    isPublic: boolean()
+  })
+    .index("by_key", ["key"])
+    .index("by_item", ["itemId", "at"]),
+
+  itemPrivate: table({
+    itemId: id("items"),
+    notes: string().optional(),
+    impact: string().optional(),
+    preparedBranch: string().optional()
+  }).index("by_item", ["itemId"]),
+
+  askPrivate: table({
+    askId: id("asks"),
+    recommendation: string().optional(),
+    draftPointer: string().optional()
+  }).index("by_ask", ["askId"]),
+
+  // One row.
+  syncState: table({
+    lastGithubSyncAt: number().optional(),
+    lastGithubOkAt: number().optional(),
+    lastAgentPushAt: number().optional(),
+    lastError: string().optional(),
+    lastErrorAt: number().optional(),
+    // True when a batch of the refresh run in progress failed.
+    refreshRunFailed: boolean().default(false)
+  })
+};
+
+type Definition = { schema: typeof schema };
+
+export type ReadDb = ReadDatabaseOf<Definition>;
+export type WriteDb = WriteDatabaseOf<Definition>;
+
+/** The tables a public query may read. The private tables are absent on purpose. */
+export type PublicDb = Pick<ReadDb, "items" | "links" | "asks" | "events" | "syncState">;
+
+type RowOfTable<T> = T extends { get(id: string): Promise<infer R | null> } ? R : never;
+
+export type ItemRow = RowOfTable<ReadDb["items"]>;
+export type LinkRow = RowOfTable<ReadDb["links"]>;
+export type AskRow = RowOfTable<ReadDb["asks"]>;
+export type EventRow = RowOfTable<ReadDb["events"]>;
+export type ItemPrivateRow = RowOfTable<ReadDb["itemPrivate"]>;
+export type AskPrivateRow = RowOfTable<ReadDb["askPrivate"]>;
+export type SyncStateRow = RowOfTable<ReadDb["syncState"]>;

@@ -1,0 +1,373 @@
+// Payload types: what agents send to the HTTP endpoints, and what queries return to the client.
+// All times in responses are Unix epoch milliseconds.
+
+import type {
+  AskKind,
+  EventActor,
+  EventType,
+  FollowUpState,
+  GhCi,
+  GhReviewDecision,
+  GhState,
+  LinkKind,
+  LinkOwnership,
+  LinkRole,
+  Outcome,
+  Route,
+  Stage,
+  WaitingOn
+} from "./enums";
+
+// ---------------------------------------------------------------------------
+// Agent endpoint requests
+// ---------------------------------------------------------------------------
+
+/** A time in a request: epoch milliseconds, or an ISO 8601 string such as "2026-11-09T15:38:46Z". */
+export type TimeInput = number | string;
+
+export type LinkInput = {
+  /** Full https://github.com/<repo>/... URL. Identifies the link within its item. */
+  url: string;
+  /** "owner/name". */
+  repo: string;
+  /** PR, issue or discussion number. For a comment, the number of the thread it is on. */
+  number: number;
+  kind: LinkKind;
+  ownership: LinkOwnership;
+  role: LinkRole;
+  /** Triage-board bucket and rank. The refresh does not set these; the agent does. */
+  triageBucket?: string | null;
+  triageRank?: number | null;
+};
+
+export type ItemPrivateInput = {
+  notes?: string | null;
+  impact?: string | null;
+  preparedBranch?: string | null;
+};
+
+/**
+ * One item in `POST /api/agent/items`. `slug` identifies it.
+ * To create an item, send slug, title, summary, stage, waitingOn, targetRepo and isPublic.
+ * To change one, send slug and the fields that change. An omitted field keeps its value.
+ * `null` clears an optional field.
+ */
+export type ItemInput = {
+  slug: string;
+  title?: string;
+  summary?: string;
+  stage?: Stage;
+  route?: Route | null;
+  routeReason?: string | null;
+  waitingOn?: WaitingOn;
+  /** Defaults to now when `waitingOn` changes. */
+  waitingSince?: TimeInput;
+  /** Required when stage is "closed". Not allowed otherwise. */
+  outcome?: Outcome | null;
+  targetRepo?: string;
+  originRefs?: string[];
+  /** Defaults to now on create. */
+  foundAt?: TimeInput;
+  lastValidatedAt?: TimeInput | null;
+  lastValidatedSha?: string | null;
+  validationVerdict?: string | null;
+  followUpState?: FollowUpState;
+  followUpNote?: string | null;
+  isPublic?: boolean;
+  /** Defaults to now when the stage becomes "closed". */
+  closedAt?: TimeInput | null;
+  /** Public note for the stage-change event this request causes, if it causes one. */
+  stageNote?: string;
+  /** `true` clears the "state changed upstream" marker the refresh raised. */
+  clearUpstreamChange?: boolean;
+  /** When present, replaces the item's whole link set. */
+  links?: LinkInput[];
+  /** When present, merged into the item's private fields. */
+  private?: ItemPrivateInput;
+};
+
+export type ItemsRequest = { items: ItemInput[] };
+
+export type AskPrivateInput = {
+  recommendation?: string | null;
+  draftPointer?: string | null;
+};
+
+export type AskInput =
+  | {
+      op: "open";
+      /** Stable, chosen by the caller. A retry with the same key does not duplicate. */
+      key: string;
+      /** Item slug. */
+      item: string;
+      kind: AskKind;
+      /** Public-safe reason, shown to anyone when the item is public. */
+      publicLabel: string;
+      openedAt?: TimeInput;
+      private?: AskPrivateInput;
+    }
+  | {
+      op: "close";
+      key: string;
+      /** Public-safe resolution, such as "Approved" or "Chose issue first". */
+      resolution?: string;
+      closedAt?: TimeInput;
+    };
+
+export type AsksRequest = { asks: AskInput[] };
+
+export type EventInput = {
+  /** Stable, chosen by the caller. A retry with the same key does not duplicate. */
+  key: string;
+  /** Item slug. */
+  item: string;
+  /** Defaults to now. */
+  at?: TimeInput;
+  actor: EventActor;
+  type: EventType;
+  note: string;
+  url?: string | null;
+  /** Required. A private event is shown only to the owner. */
+  isPublic: boolean;
+};
+
+export type EventsRequest = { events: EventInput[] };
+
+// ---------------------------------------------------------------------------
+// Agent endpoint responses
+// ---------------------------------------------------------------------------
+
+export type ValidationIssue = { path: string; message: string };
+
+export type ApiError = {
+  ok: false;
+  error: string;
+  message: string;
+  /** Present when error is "validation_failed". Nothing was applied. */
+  errors?: ValidationIssue[];
+};
+
+export type WriteStatus = "created" | "updated" | "unchanged";
+
+export type ItemsResponse = {
+  ok: true;
+  results: { slug: string; id: string; status: WriteStatus; stageEvent: boolean }[];
+};
+
+export type AsksResponse = {
+  ok: true;
+  results: { key: string; id: string; status: WriteStatus; open: boolean }[];
+};
+
+export type EventsResponse = {
+  ok: true;
+  results: { key: string; id: string; status: "created" | "exists" }[];
+};
+
+export const EXPORT_TABLES = ["items", "links", "asks", "events", "itemPrivate", "askPrivate", "syncState"] as const;
+export type ExportTable = (typeof EXPORT_TABLES)[number];
+
+/** One page of `GET /api/agent/export`. Rows are raw table rows. Follow `nextCursor` until it is null. */
+export type ExportResponse = {
+  ok: true;
+  exportedAt: number;
+  tables: Partial<Record<ExportTable, Record<string, unknown>[]>>;
+  nextCursor: string | null;
+};
+
+export type RefreshResponse = {
+  ok: boolean;
+  /** Links read from the database for this batch. */
+  links: number;
+  /** Links whose snapshot was updated. */
+  refreshed: number;
+  /** Links GitHub could not answer for. Their old snapshot is kept. */
+  failed: { url: string; message: string }[];
+  /** Events recorded for state changes. */
+  events: number;
+  /** Pass as `?cursor=` to fetch the next batch. Null when this was the last batch. */
+  nextCursor: string | null;
+  done: boolean;
+  /** Present when the whole batch failed. No snapshot was changed. */
+  error?: string;
+  message?: string;
+  rateLimitRemaining?: number | null;
+};
+
+// ---------------------------------------------------------------------------
+// Query results
+// ---------------------------------------------------------------------------
+
+export type LinkView = {
+  id: string;
+  repo: string;
+  number: number;
+  url: string;
+  kind: LinkKind;
+  ownership: LinkOwnership;
+  role: LinkRole;
+  /** GitHub snapshot. Null until the first successful refresh. */
+  title: string | null;
+  state: GhState | null;
+  isDraft: boolean | null;
+  mergedAt: number | null;
+  closedAt: number | null;
+  ci: GhCi | null;
+  reviewDecision: GhReviewDecision | null;
+  labels: string[];
+  headSha: string | null;
+  /** Macroscope's approvability verdict, read from its PR comment. */
+  macroscopeVerdict: string | null;
+  lastActivityAt: number | null;
+  /** Last comment or review by someone other than the fork owner, bots excluded. */
+  lastOtherActivityAt: number | null;
+  lastOtherActivityBy: string | null;
+  triageBucket: string | null;
+  triageRank: number | null;
+  syncedAt: number | null;
+  syncError: string | null;
+};
+
+/**
+ * An item as anyone may see it. When `disclosed` is false, the item is an
+ * "Undisclosed candidate": every field below `updatedAt` is null or empty.
+ */
+export type ItemView = {
+  /** Opaque row id. The only handle for an undisclosed item. */
+  id: string;
+  disclosed: boolean;
+  slug: string | null;
+  title: string;
+  stage: Stage;
+  waitingOn: WaitingOn;
+  waitingSince: number;
+  foundAt: number;
+  updatedAt: number;
+
+  summary: string | null;
+  route: Route | null;
+  routeReason: string | null;
+  outcome: Outcome | null;
+  closedAt: number | null;
+  targetRepo: string | null;
+  originRefs: string[];
+  lastValidatedAt: number | null;
+  lastValidatedSha: string | null;
+  validationVerdict: string | null;
+  followUpState: FollowUpState | null;
+  followUpNote: string | null;
+  /** Set by the refresh when a link merged, closed, reopened or began failing CI. The agent clears it. */
+  upstreamChangedAt: number | null;
+  upstreamChangeNote: string | null;
+  /** The link with role "primary", if any. */
+  primaryLink: LinkView | null;
+};
+
+export type ItemRef = {
+  id: string;
+  disclosed: boolean;
+  slug: string | null;
+  title: string;
+  stage: Stage;
+};
+
+export type AskView = {
+  id: string;
+  kind: AskKind;
+  /** Null when the item is undisclosed. */
+  label: string | null;
+  openedAt: number;
+  closedAt: number | null;
+  /** Null when open, or when the item is undisclosed. */
+  resolution: string | null;
+  item: ItemRef;
+};
+
+export type EventView = {
+  id: string;
+  at: number;
+  actor: EventActor;
+  type: EventType;
+  note: string;
+  url: string | null;
+  isPublic: boolean;
+};
+
+export type SyncView = {
+  lastGithubSyncAt: number | null;
+  /** Last refresh run that finished with no error. */
+  lastGithubOkAt: number | null;
+  lastAgentPushAt: number | null;
+  lastError: string | null;
+  lastErrorAt: number | null;
+};
+
+export type StatsView = {
+  total: number;
+  /** Items whose stage is not "closed". */
+  inProgress: number;
+  offered: number;
+  closed: number;
+  merged: number;
+  undisclosed: number;
+  openAsks: number;
+  followUpsOwed: number;
+  upstreamChanged: number;
+};
+
+export type OverviewView = {
+  generatedAt: number;
+  stats: StatsView;
+  /** One entry per stage, in pipeline order. */
+  pipeline: { stage: Stage; count: number }[];
+  /** Items not closed, by what they wait on. */
+  waiting: { waitingOn: WaitingOn; count: number }[];
+  /** Closed items, by outcome. */
+  outcomes: { outcome: Outcome; count: number }[];
+  /** Oldest first. */
+  openAsks: AskView[];
+  sync: SyncView;
+};
+
+export type ItemDetailView = {
+  item: ItemView;
+  /** Empty when the item is undisclosed. */
+  links: LinkView[];
+  asks: AskView[];
+  /** Newest first. Public events only, and none when the item is undisclosed. */
+  events: EventView[];
+};
+
+// Owner views: the same data with nothing hidden, plus the private tables.
+
+export type ItemPrivateView = {
+  notes: string | null;
+  impact: string | null;
+  preparedBranch: string | null;
+};
+
+export type AskPrivateView = {
+  recommendation: string | null;
+  draftPointer: string | null;
+};
+
+export type OwnerItemView = ItemView & { isPublic: boolean };
+export type OwnerAskView = AskView & { key: string; private: AskPrivateView | null };
+export type OwnerEventView = EventView & { key: string };
+
+export type OwnerOverviewView = Omit<OverviewView, "openAsks"> & { openAsks: OwnerAskView[] };
+
+export type OwnerItemDetailView = {
+  item: OwnerItemView;
+  private: ItemPrivateView | null;
+  links: LinkView[];
+  asks: OwnerAskView[];
+  events: OwnerEventView[];
+};
+
+export type ViewerView = {
+  signedIn: boolean;
+  /** The caller's own Lakebed user id when signed in. This is the value to put in OWNER_IDS. */
+  userId: string | null;
+  isOwner: boolean;
+};

@@ -1,0 +1,434 @@
+#!/usr/bin/env node
+// giveback: command-line client for the giveback dashboard's agent API.
+// No dependencies. Needs Node 18 or newer (global fetch). See AGENT_API.md.
+"use strict";
+
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+const ITEMS_PER_BATCH = 25;
+const ASKS_PER_BATCH = 30;
+const EVENTS_PER_BATCH = 40;
+const MAX_PAGES = 200;
+
+const USAGE = `giveback: read and write the giveback dashboard.
+
+Usage:
+  giveback upsert <file|->            Create or change items. JSON: {"items":[...]}, an array, or one item.
+  giveback ask open  --key K --item SLUG --kind KIND --label TEXT
+                     [--recommendation TEXT] [--draft TEXT] [--opened-at TIME]
+  giveback ask close --key K [--resolution TEXT] [--closed-at TIME]
+  giveback ask apply <file|->         JSON: {"asks":[...]} or an array.
+  giveback event add --key K --item SLUG --actor ACTOR --type TYPE --note TEXT
+                     (--public | --private) [--url URL] [--at TIME]
+  giveback event apply <file|->       JSON: {"events":[...]} or an array.
+  giveback load <file>                JSON: {"items":[...],"asks":[...],"events":[...]}, applied in that order.
+  giveback export [--raw] [--out FILE]
+                                      Everything, public and private. Default: items with their links,
+                                      private fields, asks and events nested. --raw: the table rows.
+  giveback refresh                    Refresh GitHub state for every link on an open item.
+
+Configuration comes from environment variables, or from a file of KEY=VALUE lines.
+It is never read from arguments.
+  GIVEBACK_URL             Base URL, such as https://j5-giveback.lakebed.app
+  GIVEBACK_AGENT_SECRET    Bearer secret for upsert, ask, event, load and export
+  GIVEBACK_REFRESH_SECRET  Bearer secret for refresh
+  GIVEBACK_ENV_FILE        Path of the file. Default: ~/.config/j5-giveback/env
+In the file, AGENT_SECRET and REFRESH_SECRET are accepted as names too, so a
+capsule's .env.lakebed.server works for local development.
+
+TIME is an ISO 8601 string or epoch milliseconds. "-" reads JSON from standard input.
+Exit status: 0 on success, 1 when the server refused the request, 2 on a usage error.`;
+
+function fail(message, code) {
+  process.stderr.write(`giveback: ${message}\n`);
+  process.exit(code === undefined ? 1 : code);
+}
+
+function usageError(message) {
+  fail(`${message}\nRun "giveback help" for usage.`, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+function readEnvFile() {
+  const file = process.env.GIVEBACK_ENV_FILE || path.join(os.homedir(), ".config", "j5-giveback", "env");
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if (process.env.GIVEBACK_ENV_FILE) {
+      fail(`cannot read GIVEBACK_ENV_FILE (${file}): ${error.code || error.message}`, 2);
+    }
+    return {};
+  }
+  const values = {};
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!match) continue;
+    let value = match[2].trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    values[match[1]] = value;
+  }
+  return values;
+}
+
+let envFileCache = null;
+function setting(names) {
+  for (const name of names) {
+    if (process.env[name]) return process.env[name];
+  }
+  if (envFileCache === null) envFileCache = readEnvFile();
+  for (const name of names) {
+    if (envFileCache[name]) return envFileCache[name];
+  }
+  return null;
+}
+
+function baseUrl() {
+  const url = setting(["GIVEBACK_URL"]);
+  if (!url) fail("GIVEBACK_URL is not set. Set it in the environment or in the env file.", 2);
+  return url.replace(/\/+$/, "");
+}
+
+function secret(kind) {
+  const names = kind === "refresh" ? ["GIVEBACK_REFRESH_SECRET", "REFRESH_SECRET"] : ["GIVEBACK_AGENT_SECRET", "AGENT_SECRET"];
+  const value = setting(names);
+  if (!value) fail(`${names[0]} is not set. Set it in the environment or in the env file.`, 2);
+  return value;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP
+// ---------------------------------------------------------------------------
+
+async function call(method, route, kind, body) {
+  const url = `${baseUrl()}${route}`;
+  let response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers: {
+        authorization: `Bearer ${secret(kind)}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" })
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    });
+  } catch (error) {
+    fail(`cannot reach ${url}: ${error.cause?.code || error.message}`);
+  }
+  const text = await response.text();
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    fail(`${method} ${route} returned HTTP ${response.status} with a body that is not JSON: ${text.slice(0, 200)}`);
+  }
+  return { status: response.status, payload };
+}
+
+function reportFailure(method, route, status, payload) {
+  const lines = [`${method} ${route} failed with HTTP ${status}: ${payload.message || payload.error || "no message"}`];
+  for (const issue of payload.errors || []) {
+    lines.push(`  ${issue.path}: ${issue.message}`);
+  }
+  fail(lines.join("\n"));
+}
+
+async function post(route, kind, body) {
+  const { status, payload } = await call("POST", route, kind, body);
+  if (status !== 200 || payload.ok !== true) reportFailure("POST", route, status, payload);
+  return payload;
+}
+
+function chunks(list, size) {
+  const out = [];
+  for (let index = 0; index < list.length; index += size) out.push(list.slice(index, index + size));
+  return out;
+}
+
+async function postBatches(route, field, list, size) {
+  const results = [];
+  for (const batch of chunks(list, size)) {
+    const payload = await post(route, "agent", { [field]: batch });
+    results.push(...payload.results);
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Arguments and input
+// ---------------------------------------------------------------------------
+
+function readJson(source) {
+  if (!source) usageError("a JSON file path, or - for standard input, is required.");
+  let text;
+  try {
+    text = fs.readFileSync(source === "-" ? 0 : source, "utf8");
+  } catch (error) {
+    fail(`cannot read ${source}: ${error.code || error.message}`, 2);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    fail(`${source} is not valid JSON: ${error.message}`, 2);
+  }
+}
+
+function listFrom(value, field) {
+  if (Array.isArray(value)) return value;
+  if (value && Array.isArray(value[field])) return value[field];
+  if (value && typeof value === "object" && field === "items" && typeof value.slug === "string") return [value];
+  usageError(`expected {"${field}":[...]} or an array.`);
+}
+
+/** Parses "--name value" pairs and bare "--flag" switches. */
+function parseOptions(args, valueOptions, flagOptions) {
+  const options = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg.startsWith("--")) usageError(`unexpected argument "${arg}".`);
+    const name = arg.slice(2);
+    if (flagOptions.includes(name)) {
+      options[name] = true;
+    } else if (valueOptions.includes(name)) {
+      if (index + 1 >= args.length) usageError(`--${name} needs a value.`);
+      options[name] = args[index + 1];
+      index += 1;
+    } else {
+      usageError(`unknown option --${name}.`);
+    }
+  }
+  return options;
+}
+
+function requireOptions(options, names) {
+  for (const name of names) {
+    if (options[name] === undefined) usageError(`--${name} is required.`);
+  }
+}
+
+function timeValue(text) {
+  return /^\d+$/.test(text) ? Number(text) : text;
+}
+
+function print(value) {
+  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+async function upsert(args) {
+  const items = listFrom(readJson(args[0]), "items");
+  print({ ok: true, results: await postBatches("/api/agent/items", "items", items, ITEMS_PER_BATCH) });
+}
+
+async function ask(args) {
+  const [action, ...rest] = args;
+  let asks;
+  if (action === "apply") {
+    asks = listFrom(readJson(rest[0]), "asks");
+  } else if (action === "open") {
+    const o = parseOptions(rest, ["key", "item", "kind", "label", "recommendation", "draft", "opened-at"], []);
+    requireOptions(o, ["key", "item", "kind", "label"]);
+    const entry = { op: "open", key: o.key, item: o.item, kind: o.kind, publicLabel: o.label };
+    if (o["opened-at"] !== undefined) entry.openedAt = timeValue(o["opened-at"]);
+    if (o.recommendation !== undefined || o.draft !== undefined) {
+      entry.private = {};
+      if (o.recommendation !== undefined) entry.private.recommendation = o.recommendation;
+      if (o.draft !== undefined) entry.private.draftPointer = o.draft;
+    }
+    asks = [entry];
+  } else if (action === "close") {
+    const o = parseOptions(rest, ["key", "resolution", "closed-at"], []);
+    requireOptions(o, ["key"]);
+    const entry = { op: "close", key: o.key };
+    if (o.resolution !== undefined) entry.resolution = o.resolution;
+    if (o["closed-at"] !== undefined) entry.closedAt = timeValue(o["closed-at"]);
+    asks = [entry];
+  } else {
+    usageError('use "ask open", "ask close" or "ask apply".');
+  }
+  print({ ok: true, results: await postBatches("/api/agent/asks", "asks", asks, ASKS_PER_BATCH) });
+}
+
+async function event(args) {
+  const [action, ...rest] = args;
+  let events;
+  if (action === "apply") {
+    events = listFrom(readJson(rest[0]), "events");
+  } else if (action === "add") {
+    const o = parseOptions(rest, ["key", "item", "actor", "type", "note", "url", "at"], ["public", "private"]);
+    requireOptions(o, ["key", "item", "actor", "type", "note"]);
+    if (Boolean(o.public) === Boolean(o.private)) usageError("say exactly one of --public or --private.");
+    const entry = { key: o.key, item: o.item, actor: o.actor, type: o.type, note: o.note, isPublic: Boolean(o.public) };
+    if (o.url !== undefined) entry.url = o.url;
+    if (o.at !== undefined) entry.at = timeValue(o.at);
+    events = [entry];
+  } else {
+    usageError('use "event add" or "event apply".');
+  }
+  print({ ok: true, results: await postBatches("/api/agent/events", "events", events, EVENTS_PER_BATCH) });
+}
+
+async function load(args) {
+  const data = readJson(args[0]);
+  if (!data || typeof data !== "object" || Array.isArray(data)) usageError('expected {"items":[...],"asks":[...],"events":[...]}.');
+  const out = { ok: true };
+  if (Array.isArray(data.items)) out.items = await postBatches("/api/agent/items", "items", data.items, ITEMS_PER_BATCH);
+  if (Array.isArray(data.asks)) {
+    // Opens before closes, so one file can open an ask and close it.
+    const opens = data.asks.filter((entry) => entry && entry.op !== "close");
+    const closes = data.asks.filter((entry) => entry && entry.op === "close");
+    out.asks = [
+      ...(await postBatches("/api/agent/asks", "asks", opens, ASKS_PER_BATCH)),
+      ...(await postBatches("/api/agent/asks", "asks", closes, ASKS_PER_BATCH))
+    ];
+  }
+  if (Array.isArray(data.events)) out.events = await postBatches("/api/agent/events", "events", data.events, EVENTS_PER_BATCH);
+  const count = (list) => (list ? list.length : 0);
+  process.stderr.write(`giveback: loaded ${count(out.items)} items, ${count(out.asks)} ask operations, ${count(out.events)} events.\n`);
+  print(out);
+}
+
+async function exportRaw() {
+  const tables = {};
+  let exportedAt = null;
+  let cursor = null;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const route = `/api/agent/export${cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`}`;
+    const { status, payload } = await call("GET", route, "agent");
+    if (status !== 200 || payload.ok !== true) reportFailure("GET", "/api/agent/export", status, payload);
+    exportedAt = exportedAt ?? payload.exportedAt;
+    for (const [name, rows] of Object.entries(payload.tables)) {
+      tables[name] = (tables[name] || []).concat(rows);
+    }
+    cursor = payload.nextCursor;
+    if (cursor === null) return { exportedAt, tables };
+  }
+  fail(`the export did not finish within ${MAX_PAGES} pages.`);
+}
+
+function without(row, names) {
+  const copy = { ...row };
+  for (const name of names) delete copy[name];
+  return copy;
+}
+
+function groupBy(rows, field) {
+  const map = new Map();
+  for (const row of rows || []) {
+    if (!map.has(row[field])) map.set(row[field], []);
+    map.get(row[field]).push(row);
+  }
+  return map;
+}
+
+function nest({ exportedAt, tables }) {
+  const links = groupBy(tables.links, "itemId");
+  const asks = groupBy(tables.asks, "itemId");
+  const events = groupBy(tables.events, "itemId");
+  const itemPrivate = groupBy(tables.itemPrivate, "itemId");
+  const askPrivate = groupBy(tables.askPrivate, "askId");
+  const meta = ["id", "createdAt", "updatedAt"];
+  const items = (tables.items || []).map((item) => {
+    const privateRow = (itemPrivate.get(item.id) || [])[0];
+    return {
+      ...item,
+      originRefs: item.originRefs ? item.originRefs.split("\n") : [],
+      links: (links.get(item.id) || []).map((row) => ({
+        ...without(row, ["itemId", "createdAt", "updatedAt"]),
+        ...(row.ghLabels === undefined ? {} : { ghLabels: row.ghLabels.split("\n") })
+      })),
+      private: privateRow ? without(privateRow, ["itemId", ...meta]) : null,
+      asks: (asks.get(item.id) || []).map((row) => {
+        const askPrivateRow = (askPrivate.get(row.id) || [])[0];
+        return {
+          ...without(row, ["itemId", "createdAt", "updatedAt"]),
+          private: askPrivateRow ? without(askPrivateRow, ["askId", ...meta]) : null
+        };
+      }),
+      events: (events.get(item.id) || [])
+        .map((row) => without(row, ["itemId", "createdAt", "updatedAt"]))
+        .sort((a, b) => a.at - b.at)
+    };
+  });
+  return {
+    exportedAt,
+    counts: Object.fromEntries(Object.entries(tables).map(([name, rows]) => [name, rows.length])),
+    syncState: (tables.syncState || [])[0] ? without(tables.syncState[0], meta) : null,
+    items
+  };
+}
+
+async function exportCommand(args) {
+  const options = parseOptions(args, ["out"], ["raw"]);
+  const raw = await exportRaw();
+  const text = `${JSON.stringify(options.raw ? raw : nest(raw), null, 2)}\n`;
+  if (options.out) {
+    fs.writeFileSync(options.out, text, { mode: 0o600 });
+    process.stderr.write(`giveback: wrote ${options.out}\n`);
+  } else {
+    process.stdout.write(text);
+  }
+}
+
+async function refresh() {
+  const total = { ok: true, batches: 0, links: 0, refreshed: 0, events: 0, failed: [], rateLimitRemaining: null };
+  let cursor = null;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const route = `/api/refresh${cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`}`;
+    const { status, payload } = await call("POST", route, "refresh");
+    if (status !== 200 || payload.ok !== true) {
+      print(total);
+      reportFailure("POST", "/api/refresh", status, payload);
+    }
+    total.batches += 1;
+    total.links += payload.links;
+    total.refreshed += payload.refreshed;
+    total.events += payload.events;
+    total.failed.push(...payload.failed);
+    total.rateLimitRemaining = payload.rateLimitRemaining ?? total.rateLimitRemaining;
+    cursor = payload.nextCursor;
+    if (cursor === null) {
+      print(total);
+      return;
+    }
+  }
+  fail(`the refresh did not finish within ${MAX_PAGES} batches.`);
+}
+
+async function main() {
+  const [command, ...args] = process.argv.slice(2);
+  switch (command) {
+    case "upsert":
+      return upsert(args);
+    case "ask":
+      return ask(args);
+    case "event":
+      return event(args);
+    case "load":
+      return load(args);
+    case "export":
+      return exportCommand(args);
+    case "refresh":
+      return refresh();
+    case undefined:
+    case "help":
+    case "--help":
+    case "-h":
+      process.stdout.write(`${USAGE}\n`);
+      return undefined;
+    default:
+      return usageError(`unknown command "${command}".`);
+  }
+}
+
+main().catch((error) => fail(error && error.stack ? error.stack : String(error)));

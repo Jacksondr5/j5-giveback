@@ -1,171 +1,71 @@
-import { canAccessApp, createClient, getIdentity, Link, retryAuth, Route, Router, Routes, SignInWithGoogle, signOut, useAuth } from "lakebed/client";
-import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
-import type app from "../server";
-import { cleanTodoText } from "../shared/todo";
+// Placeholder client. It renders the public overview as JSON so the server can be
+// exercised, and shows a signed-in user their id for the OWNER_IDS allow-list.
+// The real pages are built in a separate task.
+
+import { canAccessApp, createClient, retryAuth, SignInWithGoogle, signOut, useAuth } from "lakebed/client";
+import type app from "../server/index";
 
 const client = createClient<typeof app>();
 
-function AuthAvatar({ label, picture }: { label: string; picture?: string }) {
-  const initial = label.trim().slice(0, 1).toUpperCase() || "?";
-
-  if (picture) {
-    return (
-      <img
-        alt=""
-        className="h-7 w-7 shrink-0 rounded-full border border-neutral-800 bg-neutral-900 object-cover"
-        referrerPolicy="no-referrer"
-        src={picture}
-      />
-    );
-  }
-
+function Json({ value }: { value: unknown }) {
   return (
-    <span
-      aria-hidden="true"
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900 text-xs font-medium text-neutral-300"
-    >
-      {initial}
-    </span>
+    <pre className="overflow-x-auto whitespace-pre-wrap break-words border border-neutral-800 p-3 text-xs">
+      {value === undefined ? "Loading..." : JSON.stringify(value, null, 2)}
+    </pre>
   );
 }
 
-function TodoPage() {
-  const todos = client.useQuery("todos");
-  const addTodo = client.useMutation("addTodo");
-
-  async function onSubmit(event: SubmitEvent) {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    const data = new FormData(form);
-    const text = cleanTodoText(String(data.get("text") ?? ""));
-    if (!text) {
-      return;
-    }
-
-    await addTodo({ text });
-    form.reset();
-  }
-
+function Data() {
+  const viewer = client.useQuery("viewer");
+  const overview = client.useQuery("overview");
   return (
-    <section>
-      <h1 className="mb-8 text-5xl font-bold tracking-tight">{ "j5-giveback" }</h1>
-      <form className="mb-8 flex gap-3" onSubmit={(event) => void onSubmit(event)}>
-        <input className="min-w-0 flex-1 border border-neutral-700 bg-black px-3 py-2 text-white outline-none focus:border-white" name="text" placeholder="Add a todo" />
-        <button className="border border-white px-4 py-2 font-medium" type="submit">Add</button>
-      </form>
-      <ul className="divide-y divide-neutral-800 border-y border-neutral-800">
-        {(todos ?? []).map((todo) => (
-          <li className="py-3" key={todo.id}>{todo.text}</li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function StatusPage() {
-  const [status, setStatus] = useState("not checked");
-
-  async function checkStatus() {
-    const token = getIdentity().token;
-    const response = await fetch("api/status", {
-      headers: token ? { "X-Lakebed-Token": token } : {}
-    });
-    setStatus(response.ok ? await response.text() : "error " + response.status);
-  }
-
-  return (
-    <section>
-      <h1 className="mb-4 text-4xl font-bold tracking-tight">Status</h1>
-      <p className="mb-6 text-neutral-400">This route calls the server endpoint at /api/status.</p>
-      <button className="border border-white px-4 py-2 font-medium" type="button" onClick={() => void checkStatus()}>
-        Check endpoint
-      </button>
-      <p className="mt-4 font-mono text-sm text-neutral-400">endpoint: {status}</p>
-    </section>
-  );
-}
-
-function SessionGate({ children }: { children: ComponentChildren }) {
-  const auth = useAuth();
-  if (auth.isLoading) {
-    return null;
-  }
-  if (canAccessApp()) {
-    return <>{children}</>;
-  }
-  return (
-    <section>
-      {auth.error ? <p role="alert">{auth.error}</p> : <p>Sign in to use this app.</p>}
-      <div className="mt-4 flex flex-wrap gap-3">
-        {auth.error ? (
-          <button className="border border-white px-4 py-2" type="button" onClick={() => void retryAuth()}>
-            Retry
-          </button>
+    <div className="space-y-6">
+      <section>
+        <h2 className="mb-2 text-lg font-semibold">Viewer</h2>
+        <Json value={viewer} />
+        {viewer?.signedIn && !viewer.isOwner ? (
+          <p className="mt-2 text-sm text-neutral-400">
+            To see private fields, add the user id above to the OWNER_IDS server secret.
+          </p>
         ) : null}
-        <SignInWithGoogle className="border border-white px-4 py-2" />
-        {!auth.requireSignIn && auth.userId === null ? (
-          <button
-            className="border border-white px-4 py-2"
-            type="button"
-            onClick={() => {
-              if (window.confirm("Start a new guest session? Guest data that has not moved to an account stays inaccessible.")) {
-                void signOut();
-              }
-            }}
-          >
-            Start a new guest session
-          </button>
-        ) : null}
-      </div>
-    </section>
+      </section>
+      <section>
+        <h2 className="mb-2 text-lg font-semibold">Overview</h2>
+        <Json value={overview} />
+      </section>
+    </div>
   );
 }
 
 export function App() {
   const auth = useAuth();
-  const authLabel = auth.displayName;
-  const authStatus = auth.isLoading
-    ? ""
-    : auth.isSignedIn
-      ? "Signed in as " + authLabel
-      : auth.isGuest
-        ? "Using this browser"
-        : "Signed out";
-
+  if (auth.isLoading) {
+    return null;
+  }
   return (
-    <Router>
-      <main className="min-h-screen bg-black px-6 py-10 text-white">
-        <section className="mx-auto max-w-2xl">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
-              {auth.isSignedIn ? <AuthAvatar label={authLabel} picture={auth.picture} /> : null}
-              <p className="min-w-0 truncate font-mono text-sm">{authStatus}</p>
-            </div>
-            {auth.isSignedIn ? (
-              <button className="shrink-0 text-sm text-neutral-400 hover:text-white" type="button" onClick={() => void signOut()}>
-                Sign out
-              </button>
-            ) : auth.isGuest ? (
-              <SignInWithGoogle className="shrink-0 border border-neutral-700 px-3 py-1.5 text-sm font-medium text-neutral-200 hover:border-white hover:text-white" />
-            ) : null}
-          </div>
-          {auth.isGuest ? (
-            <p className="mb-6 text-sm">Sign in to keep your todos. Clearing browser data ends guest access.</p>
-          ) : null}
-          <nav className="mb-8 flex gap-4 text-sm text-neutral-400">
-            <Link className="hover:text-white" to="/">Todos</Link>
-            <Link className="hover:text-white" to="/status">Status</Link>
-          </nav>
-          <SessionGate>
-            <Routes>
-              <Route path="/" element={<TodoPage />} />
-              <Route path="/status" element={<StatusPage />} />
-              <Route path="*" element={<section><h1 className="mb-4 text-4xl font-bold">Not found</h1><Link className="text-neutral-300 hover:text-white" to="/">Back to todos</Link></section>} />
-            </Routes>
-          </SessionGate>
-        </section>
-      </main>
-    </Router>
+    <main className="min-h-screen bg-black px-4 py-8 text-white">
+      <div className="mx-auto max-w-3xl">
+        <div className="mb-6 flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold">Giveback dashboard</h1>
+          {auth.isSignedIn ? (
+            <button className="border border-neutral-700 px-3 py-1.5 text-sm" type="button" onClick={() => void signOut()}>
+              Sign out {auth.displayName}
+            </button>
+          ) : (
+            <SignInWithGoogle className="border border-neutral-700 px-3 py-1.5 text-sm" />
+          )}
+        </div>
+        {canAccessApp() ? (
+          <Data />
+        ) : (
+          <section>
+            <p role="alert">{auth.error ?? "The session could not be started."}</p>
+            <button className="mt-3 border border-white px-3 py-1.5 text-sm" type="button" onClick={() => void retryAuth()}>
+              Retry
+            </button>
+          </section>
+        )}
+      </div>
+    </main>
   );
 }

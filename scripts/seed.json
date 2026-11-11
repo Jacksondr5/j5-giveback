@@ -1,0 +1,693 @@
+{
+  "_comment": "Seed data for local development. The upstream refs are real, so the refresh can be exercised against GitHub. The wording, stages, roles and asks are invented. Every private value and every field of the non-public item contains SEED-PRIVATE so a leak is easy to spot. Load with: scripts/giveback load scripts/seed.json",
+  "items": [
+    {
+      "slug": "seed-terminal-resize-flicker",
+      "title": "Terminal flickers while the panel is resized",
+      "summary": "Seed item. A J5 agent noticed the terminal repaints on every pixel of a panel drag. Recorded as a candidate, not yet checked against upstream main.",
+      "stage": "found",
+      "waitingOn": "giveback_agent",
+      "targetRepo": "pingdotgg/t3code",
+      "originRefs": ["Jacksondr5/j5code#2901"],
+      "foundAt": "2026-11-09T14:00:00Z",
+      "isPublic": true
+    },
+    {
+      "slug": "seed-diff-cache-stale-after-rebase",
+      "title": "Diff cache is stale after a rebase",
+      "summary": "Seed item. The diff panel keeps the pre-rebase hunks until the thread is reopened. Being checked against current upstream main and searched for duplicates.",
+      "stage": "validating",
+      "waitingOn": "giveback_agent",
+      "targetRepo": "pingdotgg/t3code",
+      "originRefs": ["Jacksondr5/j5code#2755", "Jacksondr5/j5code#2760"],
+      "foundAt": "2026-11-04T09:30:00Z",
+      "lastValidatedAt": "2026-11-08T11:00:00Z",
+      "lastValidatedSha": "37b3be30ae7e",
+      "validationVerdict": "Reproduces on upstream main. Duplicate search still running.",
+      "isPublic": true
+    },
+    {
+      "slug": "seed-archive-shortcut-conflict",
+      "title": "Archive shortcut conflicts with the browser's own",
+      "summary": "Seed item. Validated and real. The archive shortcut is swallowed by the browser on Linux. Needs a route: a direct PR or an issue first.",
+      "stage": "deciding",
+      "waitingOn": "jackson",
+      "waitingSince": "2026-11-07T16:00:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-30T10:00:00Z",
+      "lastValidatedAt": "2026-11-07T15:30:00Z",
+      "lastValidatedSha": "37b3be30ae7e",
+      "validationVerdict": "Valid. No duplicate found.",
+      "isPublic": true,
+      "private": {
+        "notes": "SEED-PRIVATE notes: the fork already ships a two-line fix. Low risk.",
+        "impact": "SEED-PRIVATE impact: drops one fork patch at the next advance."
+      }
+    },
+    {
+      "slug": "seed-worktree-prune-on-delete",
+      "title": "Deleting a thread leaves its worktree behind",
+      "summary": "Seed item. Route chosen: direct PR, because the fix is small and obvious. Branch, tests and the post text are being produced.",
+      "stage": "preparing",
+      "route": "direct_pr",
+      "routeReason": "CONTRIBUTING allows a direct PR for a small, obvious fix with a test.",
+      "waitingOn": "giveback_agent",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-28T08:00:00Z",
+      "isPublic": true,
+      "private": {
+        "preparedBranch": "SEED-PRIVATE giveback/worktree-prune-on-delete",
+        "notes": "SEED-PRIVATE notes: waiting for the Windows path test to pass."
+      }
+    },
+    {
+      "slug": "seed-idle-reconnect-backoff",
+      "title": "Idle reconnect retries without a backoff",
+      "summary": "Seed item. Route chosen: issue first, because the behaviour change needs a maintainer's view. The exact issue text is ready for approval.",
+      "stage": "approving",
+      "route": "issue_first",
+      "routeReason": "Changes retry behaviour, so CONTRIBUTING asks for an issue before a PR.",
+      "waitingOn": "jackson",
+      "waitingSince": "2026-11-10T09:00:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-25T12:00:00Z",
+      "isPublic": true
+    },
+    {
+      "slug": "agent-stop-attribution",
+      "title": "An agent's Stop no longer reads as the user's",
+      "summary": "Seed item on a real PR. Agent-initiated stops now name the agent in the timeline. Posted upstream and waiting for a maintainer.",
+      "stage": "offered",
+      "route": "direct_pr",
+      "routeReason": "Small fix with a test.",
+      "waitingOn": "maintainer",
+      "waitingSince": "2026-11-09T15:40:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-11-02T10:00:00Z",
+      "isPublic": true,
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/33420",
+          "repo": "pingdotgg/t3code",
+          "number": 33420,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary",
+          "triageBucket": "needs approval",
+          "triageRank": 12
+        }
+      ],
+      "private": {
+        "notes": "SEED-PRIVATE notes: a maintainer verified it on Linux. Do not ping again before Friday."
+      }
+    },
+    {
+      "slug": "preview-stream-revoked-session",
+      "title": "A revoked session's preview stream closes",
+      "summary": "Seed item on a real PR. The preview stream now watches session invalidation. Posted upstream; bot findings need a look.",
+      "stage": "offered",
+      "route": "direct_pr",
+      "waitingOn": "ci",
+      "waitingSince": "2026-11-08T20:00:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-29T10:00:00Z",
+      "isPublic": true,
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/32245",
+          "repo": "pingdotgg/t3code",
+          "number": 32245,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary"
+        }
+      ]
+    },
+    {
+      "slug": "answered-question-raw-json",
+      "title": "An answered question no longer shows its raw item JSON",
+      "summary": "Seed item on a real PR. One condition, matching the web client. Posted upstream and waiting for a maintainer.",
+      "stage": "offered",
+      "route": "direct_pr",
+      "waitingOn": "maintainer",
+      "waitingSince": "2026-11-05T07:30:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-27T10:00:00Z",
+      "isPublic": true,
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/31330",
+          "repo": "pingdotgg/t3code",
+          "number": 31330,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary"
+        }
+      ]
+    },
+    {
+      "slug": "seed-stacked-on-base",
+      "title": "Stacked change that waits for its base PR",
+      "summary": "Seed item on real PRs. Shown as stacked on another of our PRs, to exercise a base link. The stacking is invented.",
+      "stage": "offered",
+      "route": "direct_pr",
+      "waitingOn": "base_pr",
+      "waitingSince": "2026-11-06T22:30:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-31T10:00:00Z",
+      "isPublic": true,
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/32282",
+          "repo": "pingdotgg/t3code",
+          "number": 32282,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary"
+        },
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/32213",
+          "repo": "pingdotgg/t3code",
+          "number": 32213,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "base"
+        }
+      ]
+    },
+    {
+      "slug": "seed-covered-by-another-pr",
+      "title": "Change that another contributor's PR may cover",
+      "summary": "Seed item on real PRs. Shown as waiting on a covering PR from another contributor, to exercise a covering link. The relationship is invented.",
+      "stage": "offered",
+      "route": "direct_pr",
+      "waitingOn": "covering_pr",
+      "waitingSince": "2026-11-06T22:30:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-31T11:00:00Z",
+      "isPublic": true,
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/32213",
+          "repo": "pingdotgg/t3code",
+          "number": 32213,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary"
+        },
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/30593",
+          "repo": "pingdotgg/t3code",
+          "number": 30593,
+          "kind": "pr",
+          "ownership": "theirs",
+          "role": "covering"
+        }
+      ]
+    },
+    {
+      "slug": "expo-device-hub-546",
+      "title": "Device hub change waiting on a physical device check",
+      "summary": "Seed item on a real PR in expo/expo-device-hub. Posted upstream. A check on a physical device is still owed.",
+      "stage": "offered",
+      "route": "direct_pr",
+      "waitingOn": "maintainer",
+      "waitingSince": "2026-11-03T10:00:00Z",
+      "targetRepo": "expo/expo-device-hub",
+      "foundAt": "2026-10-20T10:00:00Z",
+      "isPublic": true,
+      "links": [
+        {
+          "url": "https://github.com/expo/expo-device-hub/pull/546",
+          "repo": "expo/expo-device-hub",
+          "number": 546,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary"
+        }
+      ]
+    },
+    {
+      "slug": "seed-snooze-until-limits-reset",
+      "title": "Support for an Ideas discussion on snoozing threads",
+      "summary": "Seed item on a real discussion and a real issue. Route: Ideas discussion. Waiting for upstream to advance before anything else is offered.",
+      "stage": "offered",
+      "route": "discussion",
+      "routeReason": "A feature idea, so CONTRIBUTING points to the Ideas category.",
+      "waitingOn": "upstream_advance",
+      "waitingSince": "2026-11-01T10:00:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-22T10:00:00Z",
+      "isPublic": true,
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/discussions/31072",
+          "repo": "pingdotgg/t3code",
+          "number": 31072,
+          "kind": "discussion",
+          "ownership": "theirs",
+          "role": "primary"
+        },
+        {
+          "url": "https://github.com/pingdotgg/t3code/issues/34413",
+          "repo": "pingdotgg/t3code",
+          "number": 34413,
+          "kind": "issue",
+          "ownership": "theirs",
+          "role": "related"
+        },
+        {
+          "url": "https://github.com/pingdotgg/t3code/issues/34401#issuecomment-1",
+          "repo": "pingdotgg/t3code",
+          "number": 34401,
+          "kind": "comment",
+          "ownership": "ours",
+          "role": "related"
+        }
+      ]
+    },
+    {
+      "slug": "seed-session-handoff-token-race",
+      "title": "SEED-PRIVATE token race in the session handoff",
+      "summary": "SEED-PRIVATE summary. A security-sensitive finding that stays private until it is filed.",
+      "stage": "deciding",
+      "route": "hold",
+      "routeReason": "SEED-PRIVATE route reason: hold until the report is acknowledged.",
+      "waitingOn": "jackson",
+      "waitingSince": "2026-11-08T08:00:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "originRefs": ["SEED-PRIVATE Jacksondr5/j5code#2999"],
+      "foundAt": "2026-11-06T08:00:00Z",
+      "validationVerdict": "SEED-PRIVATE verdict: reproduces.",
+      "followUpNote": "SEED-PRIVATE follow-up note.",
+      "isPublic": false,
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/29751",
+          "repo": "pingdotgg/t3code",
+          "number": 29751,
+          "kind": "pr",
+          "ownership": "theirs",
+          "role": "related",
+          "triageBucket": "SEED-PRIVATE bucket"
+        }
+      ],
+      "private": {
+        "notes": "SEED-PRIVATE notes: details of the race.",
+        "impact": "SEED-PRIVATE impact: the fork is patched.",
+        "preparedBranch": "SEED-PRIVATE giveback/handoff-race"
+      }
+    },
+    {
+      "slug": "merged-21065",
+      "title": "Merged fix whose fork patch is still to be dropped",
+      "summary": "Seed item on a real merged PR. Merged upstream. The fork still carries its own copy of the patch, to be dropped at the next upstream advance.",
+      "stage": "closed",
+      "outcome": "merged",
+      "route": "direct_pr",
+      "waitingOn": "nobody",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-10T10:00:00Z",
+      "closedAt": "2026-10-18T03:00:00Z",
+      "followUpState": "owed",
+      "followUpNote": "Drop the fork patch and its register entry at the next upstream advance.",
+      "isPublic": true,
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/21065",
+          "repo": "pingdotgg/t3code",
+          "number": 21065,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary"
+        }
+      ]
+    },
+    {
+      "slug": "merged-24691",
+      "title": "Merged fix with its fork patch already dropped",
+      "summary": "Seed item on a real merged PR. Merged upstream, and the fork patch was dropped at the following advance.",
+      "stage": "closed",
+      "outcome": "merged",
+      "route": "direct_pr",
+      "waitingOn": "nobody",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-12T10:00:00Z",
+      "closedAt": "2026-10-21T10:00:00Z",
+      "followUpState": "done",
+      "followUpNote": "Fork patch dropped.",
+      "isPublic": true,
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/24691",
+          "repo": "pingdotgg/t3code",
+          "number": 24691,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary"
+        }
+      ]
+    },
+    {
+      "slug": "expo-device-hub-464",
+      "title": "Merged device hub fix",
+      "summary": "Seed item on a real merged PR in expo/expo-device-hub.",
+      "stage": "closed",
+      "outcome": "merged",
+      "route": "direct_pr",
+      "waitingOn": "nobody",
+      "targetRepo": "expo/expo-device-hub",
+      "foundAt": "2026-09-20T10:00:00Z",
+      "closedAt": "2026-10-01T10:00:00Z",
+      "isPublic": true,
+      "links": [
+        {
+          "url": "https://github.com/expo/expo-device-hub/pull/464",
+          "repo": "expo/expo-device-hub",
+          "number": 464,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary"
+        }
+      ]
+    },
+    {
+      "slug": "seed-fixed-by-maintainer-pr",
+      "title": "Report that a maintainer fixed with their own PR",
+      "summary": "Seed item on a real merged PR. Shown as fixed by a maintainer's own PR, to exercise a fixes link. The relationship is invented.",
+      "stage": "closed",
+      "outcome": "fixed_by_maintainer_pr",
+      "route": "issue_first",
+      "waitingOn": "nobody",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-11T10:00:00Z",
+      "closedAt": "2026-10-23T10:00:00Z",
+      "isPublic": true,
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/24719",
+          "repo": "pingdotgg/t3code",
+          "number": 24719,
+          "kind": "pr",
+          "ownership": "theirs",
+          "role": "fixes"
+        }
+      ]
+    },
+    {
+      "slug": "seed-taken-over-by-maintainer",
+      "title": "PR that a maintainer took over",
+      "summary": "Seed item on a real merged PR. Shown as taken over by a maintainer. The outcome is invented.",
+      "stage": "closed",
+      "outcome": "taken_over",
+      "route": "direct_pr",
+      "waitingOn": "nobody",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-13T10:00:00Z",
+      "closedAt": "2026-10-26T10:00:00Z",
+      "followUpState": "owed",
+      "followUpNote": "Compare the maintainer's version with the fork patch at the next advance.",
+      "isPublic": true,
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/25248",
+          "repo": "pingdotgg/t3code",
+          "number": 25248,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary"
+        }
+      ]
+    },
+    {
+      "slug": "seed-covered-by-contributor",
+      "title": "Candidate another contributor already covered",
+      "summary": "Seed item. Another contributor's PR fixed the same defect before ours was offered.",
+      "stage": "closed",
+      "outcome": "covered_by_contributor",
+      "route": "direct_pr",
+      "waitingOn": "nobody",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-14T10:00:00Z",
+      "closedAt": "2026-10-27T10:00:00Z",
+      "isPublic": true
+    },
+    {
+      "slug": "seed-fixed-upstream-independently",
+      "title": "Candidate that upstream fixed on its own",
+      "summary": "Seed item. The route was a comment on an existing thread. Upstream fixed the defect before the comment was posted.",
+      "stage": "closed",
+      "outcome": "fixed_upstream",
+      "route": "comment",
+      "routeReason": "An open thread already described the defect.",
+      "waitingOn": "nobody",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-15T10:00:00Z",
+      "closedAt": "2026-10-28T10:00:00Z",
+      "isPublic": true
+    },
+    {
+      "slug": "seed-not-a-giveback",
+      "title": "Fork-only behaviour that is not a give-back",
+      "summary": "Seed item. Validation showed the behaviour exists only in the fork.",
+      "stage": "closed",
+      "outcome": "not_a_giveback",
+      "route": "drop",
+      "waitingOn": "nobody",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-16T10:00:00Z",
+      "closedAt": "2026-10-17T10:00:00Z",
+      "isPublic": true
+    },
+    {
+      "slug": "seed-parked",
+      "title": "Candidate parked until upstream settles its design",
+      "summary": "Seed item. Parked: upstream is redesigning the area, so anything offered now would be thrown away.",
+      "stage": "closed",
+      "outcome": "parked",
+      "route": "hold",
+      "routeReason": "Upstream is redesigning this area.",
+      "waitingOn": "upstream_advance",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-17T10:00:00Z",
+      "closedAt": "2026-10-19T10:00:00Z",
+      "isPublic": true
+    },
+    {
+      "slug": "seed-dropped",
+      "title": "Candidate dropped as too small to matter",
+      "summary": "Seed item. Dropped at the route decision.",
+      "stage": "closed",
+      "outcome": "dropped",
+      "route": "drop",
+      "waitingOn": "nobody",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-18T10:00:00Z",
+      "closedAt": "2026-10-19T12:00:00Z",
+      "isPublic": true
+    },
+    {
+      "slug": "seed-closed-by-upstream",
+      "title": "PR that upstream closed without merging",
+      "summary": "Seed item. Upstream closed the PR as out of scope.",
+      "stage": "closed",
+      "outcome": "closed_by_upstream",
+      "route": "direct_pr",
+      "waitingOn": "nobody",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-10-05T10:00:00Z",
+      "closedAt": "2026-10-09T10:00:00Z",
+      "isPublic": true
+    }
+  ],
+  "asks": [
+    {
+      "op": "open",
+      "key": "seed-archive-shortcut:route",
+      "item": "seed-archive-shortcut-conflict",
+      "kind": "route_decision",
+      "publicLabel": "Choose a route: direct PR or issue first",
+      "openedAt": "2026-11-07T16:00:00Z",
+      "private": {
+        "recommendation": "SEED-PRIVATE recommendation: direct PR. Two lines and a test.",
+        "draftPointer": "SEED-PRIVATE draft: thread note 14"
+      }
+    },
+    {
+      "op": "open",
+      "key": "seed-idle-reconnect:route",
+      "item": "seed-idle-reconnect-backoff",
+      "kind": "route_decision",
+      "publicLabel": "Choose a route for the reconnect backoff",
+      "openedAt": "2026-11-01T10:00:00Z"
+    },
+    {
+      "op": "close",
+      "key": "seed-idle-reconnect:route",
+      "resolution": "Chose issue first",
+      "closedAt": "2026-11-02T18:00:00Z"
+    },
+    {
+      "op": "open",
+      "key": "seed-idle-reconnect:text",
+      "item": "seed-idle-reconnect-backoff",
+      "kind": "text_approval",
+      "publicLabel": "Approve the issue text",
+      "openedAt": "2026-11-10T09:00:00Z",
+      "private": {
+        "recommendation": "SEED-PRIVATE recommendation: approve as written.",
+        "draftPointer": "SEED-PRIVATE draft: artifact giveback/idle-reconnect-issue.md"
+      }
+    },
+    {
+      "op": "open",
+      "key": "t3code-33420:maintainer-question",
+      "item": "agent-stop-attribution",
+      "kind": "maintainer_question",
+      "publicLabel": "A maintainer asked whether delegated stops should name the parent",
+      "openedAt": "2026-11-10T12:45:00Z",
+      "private": {
+        "recommendation": "SEED-PRIVATE recommendation: say yes, and offer a follow-up PR."
+      }
+    },
+    {
+      "op": "open",
+      "key": "t3code-32245:bot-findings",
+      "item": "preview-stream-revoked-session",
+      "kind": "bot_ci_findings",
+      "publicLabel": "Two review-bot findings need a decision",
+      "openedAt": "2026-11-08T20:00:00Z"
+    },
+    {
+      "op": "open",
+      "key": "t3code-31330:open-on-nod",
+      "item": "answered-question-raw-json",
+      "kind": "open_on_nod",
+      "publicLabel": "Open the PR once the issue gets a nod",
+      "openedAt": "2026-11-03T10:00:00Z"
+    },
+    {
+      "op": "close",
+      "key": "t3code-31330:open-on-nod",
+      "resolution": "Approved, PR opened",
+      "closedAt": "2026-11-05T07:00:00Z"
+    },
+    {
+      "op": "open",
+      "key": "seed-stacked:side-choice",
+      "item": "seed-stacked-on-base",
+      "kind": "side_choice",
+      "publicLabel": "Rebase onto main or keep the stack",
+      "openedAt": "2026-11-09T10:00:00Z"
+    },
+    {
+      "op": "open",
+      "key": "seed-covered:triage-move",
+      "item": "seed-covered-by-another-pr",
+      "kind": "triage_move",
+      "publicLabel": "The triage board moved the PR down a bucket",
+      "openedAt": "2026-11-09T12:00:00Z"
+    },
+    {
+      "op": "open",
+      "key": "expo-546:device",
+      "item": "expo-device-hub-546",
+      "kind": "device_needed",
+      "publicLabel": "Needs a check on a physical iPhone",
+      "openedAt": "2026-11-03T10:00:00Z"
+    },
+    {
+      "op": "open",
+      "key": "seed-handoff-race:route",
+      "item": "seed-session-handoff-token-race",
+      "kind": "route_decision",
+      "publicLabel": "SEED-PRIVATE label: decide how to report the handoff race",
+      "openedAt": "2026-11-08T08:00:00Z",
+      "private": {
+        "recommendation": "SEED-PRIVATE recommendation: report privately first.",
+        "draftPointer": "SEED-PRIVATE draft: thread note 3"
+      }
+    },
+    {
+      "op": "open",
+      "key": "seed-handoff-race:text",
+      "item": "seed-session-handoff-token-race",
+      "kind": "text_approval",
+      "publicLabel": "SEED-PRIVATE label: approve the private report",
+      "openedAt": "2026-11-07T08:00:00Z"
+    },
+    {
+      "op": "close",
+      "key": "seed-handoff-race:text",
+      "resolution": "SEED-PRIVATE resolution: approved",
+      "closedAt": "2026-11-07T20:00:00Z"
+    }
+  ],
+  "events": [
+    {
+      "key": "seed:33420:posted",
+      "item": "agent-stop-attribution",
+      "at": "2026-11-09T15:38:00Z",
+      "actor": "agent",
+      "type": "posted",
+      "note": "Opened pingdotgg/t3code#33420.",
+      "url": "https://github.com/pingdotgg/t3code/pull/33420",
+      "isPublic": true
+    },
+    {
+      "key": "seed:33420:review",
+      "item": "agent-stop-attribution",
+      "at": "2026-11-10T12:41:00Z",
+      "actor": "maintainer",
+      "type": "review",
+      "note": "A maintainer verified the change in a real dev environment.",
+      "url": "https://github.com/pingdotgg/t3code/pull/33420",
+      "isPublic": true
+    },
+    {
+      "key": "seed:33420:private-note",
+      "item": "agent-stop-attribution",
+      "at": "2026-11-10T13:00:00Z",
+      "actor": "jackson",
+      "type": "note",
+      "note": "SEED-PRIVATE event: hold the follow-up PR until this one merges.",
+      "isPublic": false
+    },
+    {
+      "key": "seed:archive-shortcut:validated",
+      "item": "seed-archive-shortcut-conflict",
+      "at": "2026-11-07T15:30:00Z",
+      "actor": "agent",
+      "type": "validated",
+      "note": "Reproduced on upstream main. No duplicate issue or PR found.",
+      "isPublic": true
+    },
+    {
+      "key": "seed:21065:follow-up",
+      "item": "merged-21065",
+      "at": "2026-10-18T04:00:00Z",
+      "actor": "agent",
+      "type": "follow_up",
+      "note": "Fork patch to be dropped at the next upstream advance.",
+      "isPublic": true
+    },
+    {
+      "key": "seed:handoff-race:validated",
+      "item": "seed-session-handoff-token-race",
+      "at": "2026-11-06T09:00:00Z",
+      "actor": "agent",
+      "type": "validated",
+      "note": "SEED-PRIVATE event: the race reproduces on upstream main.",
+      "isPublic": true
+    },
+    {
+      "key": "seed:handoff-race:note",
+      "item": "seed-session-handoff-token-race",
+      "at": "2026-11-06T10:00:00Z",
+      "actor": "jackson",
+      "type": "note",
+      "note": "SEED-PRIVATE event: keep this one quiet.",
+      "isPublic": false
+    }
+  ]
+}
