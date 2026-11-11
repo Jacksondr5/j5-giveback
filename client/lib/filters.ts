@@ -10,6 +10,7 @@ import {
   type Stage,
   type WaitingOn
 } from "../../shared/enums";
+import { parseItemId } from "../../shared/itemId";
 import type { ListItem } from "./derive";
 import { fullRef, shortRef } from "./format";
 
@@ -18,7 +19,7 @@ export type ItemFilters = {
   waiting: WaitingOn | null;
   outcome: Outcome | null;
   repo: string | null;
-  /** Free text, matched against title, slug and upstream ref. */
+  /** Free text, matched against the item's ID, title, slug and upstream ref. */
   q: string;
 };
 
@@ -73,7 +74,22 @@ export function searchText(item: ListItem): string {
   return parts.join(" ").toLowerCase();
 }
 
-/** True when the item passes every set filter. Every word of the search must appear. */
+/**
+ * The item number a search word asks for, or null when the word is not an ID.
+ * "GB-12" in either case is one. A bare "12" is one only when it is the whole
+ * search, so a number inside a longer search stays what it was: text.
+ */
+export function searchedNumber(word: string, wholeQuery: boolean): number | null {
+  const byId = parseItemId(word);
+  if (byId !== null) return byId;
+  return wholeQuery && /^[1-9][0-9]{0,6}$/.test(word) ? Number(word) : null;
+}
+
+/**
+ * True when the item passes every set filter. Every word of the search must
+ * appear in the item's text, or be its ID. An ID matches whole: "GB-1" finds
+ * GB-1 and not GB-12.
+ */
 export function matchesFilters(item: ListItem, filters: ItemFilters): boolean {
   if (filters.stage && item.stage !== filters.stage) return false;
   if (filters.waiting && item.waitingOn !== filters.waiting) return false;
@@ -82,7 +98,10 @@ export function matchesFilters(item: ListItem, filters: ItemFilters): boolean {
   const words = filters.q.toLowerCase().split(/\s+/).filter((word) => word.length > 0);
   if (words.length === 0) return true;
   const text = searchText(item);
-  return words.every((word) => text.includes(word));
+  return words.every((word) => {
+    const number = searchedNumber(word, words.length === 1);
+    return (number !== null && item.number === number) || text.includes(word);
+  });
 }
 
 export function applyFilters(items: readonly ListItem[], filters: ItemFilters): ListItem[] {

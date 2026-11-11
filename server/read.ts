@@ -34,6 +34,7 @@ import {
   type Stage,
   type WaitingOn
 } from "../shared/enums";
+import { parseItemId } from "../shared/itemId";
 import { LIMITS, SLUG_PATTERN } from "../shared/limits";
 import type { AskRow, EventRow, ItemRow, LinkRow, PublicDb, SyncStateRow } from "./schema";
 
@@ -79,6 +80,8 @@ export function linkView(row: LinkRow): LinkView {
 function undisclosedItemView(row: ItemRow): ItemView {
   return {
     id: row.id,
+    // A bare number says nothing about the item, and it is how the item is named.
+    number: row.number ?? null,
     disclosed: false,
     slug: null,
     title: UNDISCLOSED_TITLE,
@@ -110,6 +113,7 @@ function undisclosedItemView(row: ItemRow): ItemView {
 function disclosedItemView(row: ItemRow, primary: LinkRow | null, dependencies: readonly LinkRow[]): ItemView {
   return {
     id: row.id,
+    number: row.number ?? null,
     disclosed: true,
     slug: row.slug,
     title: row.title,
@@ -154,6 +158,7 @@ function itemRef(row: ItemRow, full: boolean): ItemRef {
   const disclosed = full || row.isPublic;
   return {
     id: row.id,
+    number: row.number ?? null,
     disclosed,
     slug: disclosed ? row.slug : null,
     title: disclosed ? row.title : UNDISCLOSED_TITLE,
@@ -308,15 +313,20 @@ export type ItemDetailData = {
 };
 
 /**
- * Finds an item by slug or by row id.
+ * Finds an item by its ID ("GB-12", in either case), by slug or by row id.
  *
  * A slug finds only an item the caller may see in full, so that guessing the
- * slug of a non-public item does not confirm it exists. The row id finds any
- * item; the caller then decides what to show.
+ * slug of a non-public item does not confirm it exists. The ID and the row id
+ * find any item; the caller then decides what to show.
  */
 export async function findItem(db: PublicDb, ref: string, full: boolean): Promise<ItemRow | null> {
   if (typeof ref !== "string" || ref.length === 0 || ref.length > 200) {
     return null;
+  }
+  const number = parseItemId(ref);
+  if (number !== null) {
+    const byNumber = await db.items.withIndex("by_number", (q) => q.eq("number", number)).first();
+    if (byNumber) return byNumber;
   }
   if (SLUG_PATTERN.test(ref)) {
     const bySlug = await db.items.withIndex("by_slug", (q) => q.eq("slug", ref)).first();

@@ -9,6 +9,7 @@ import type {
   ViewerView
 } from "../shared/api";
 import {
+  handleAssignNumbers,
   handleAsks,
   handleDeleteEvents,
   handleDeleteItem,
@@ -48,7 +49,10 @@ export default capsule({
       return readItemList(db, false);
     }),
 
-    /** `ref` is a slug or an item id. An undisclosed item is found only by id, and comes back redacted. */
+    /**
+     * `ref` is an item ID ("GB-12"), a slug or a row id. An undisclosed item is
+     * found by its ID or its row id, never by its slug, and comes back redacted.
+     */
     item: query(async (ctx, ref: string): Promise<ItemDetailView | null> => {
       const db: PublicDb = ctx.db as unknown as ReadDb;
       const data = await readItemDetail(db, ref, false);
@@ -96,6 +100,7 @@ export default capsule({
   endpoints: {
     agentItems: endpoint({ method: "POST", path: "/api/agent/items" }, handleItems),
     agentDeleteItem: endpoint({ method: "POST", path: "/api/agent/items/delete" }, handleDeleteItem),
+    agentAssignNumbers: endpoint({ method: "POST", path: "/api/agent/items/assign-numbers" }, handleAssignNumbers),
     agentAsks: endpoint({ method: "POST", path: "/api/agent/asks" }, handleAsks),
     agentEvents: endpoint({ method: "POST", path: "/api/agent/events" }, handleEvents),
     agentDeleteEvents: endpoint({ method: "POST", path: "/api/agent/events/delete" }, handleDeleteEvents),

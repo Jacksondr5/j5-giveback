@@ -107,12 +107,12 @@ function Filters({ filters, items }: { filters: ItemFilters; items: ListItem[] }
       <StageTabs counts={stageCounts(items)} filters={filters} total={items.length} />
       <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,22rem)_repeat(3,minmax(0,13rem))]">
         <label className="relative col-span-2 block min-w-0 md:col-span-1">
-          <span className="sr-only">Search title or ref</span>
+          <span className="sr-only">Search ID, title or ref</span>
           <Icon className={cx("pointer-events-none absolute left-2 top-2", TEXT_DIM)} name="search" />
           <input
             className={cx(CONTROL, "pl-8")}
             onInput={(event) => set({ q: (event.currentTarget as HTMLInputElement).value })}
-            placeholder="Search title or ref, such as #33420"
+            placeholder="Search title, GB-12 or #33420"
             type="search"
             value={filters.q}
           />

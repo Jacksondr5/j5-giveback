@@ -10,6 +10,9 @@ import type { ReadDatabaseOf, WriteDatabaseOf } from "lakebed/server";
 export const schema = {
   items: table({
     slug: string(),
+    // The item's number, shown as "GB-<n>" (shared/itemId.ts). The server assigns it; it never changes
+    // and is never reused. Optional because items stored before numbers existed have none until the backfill.
+    number: number().optional(),
     title: string(),
     summary: string(),
     stage: string(),
@@ -34,7 +37,10 @@ export const schema = {
     // "State changed upstream" marker. Raised by the refresh, cleared by the agent.
     upstreamChangedAt: number().optional(),
     upstreamChangeNote: string().optional()
-  }).index("by_slug", ["slug"]),
+  })
+    .index("by_slug", ["slug"])
+    // Finds an item by its number. Read in descending order, its first row carries the highest number in use.
+    .index("by_number", ["number"]),
 
   links: table({
     itemId: id("items"),
@@ -125,6 +131,9 @@ export const schema = {
     lastAgentPushAt: number().optional(),
     // Goes up by one on every agent write and every refresh batch. An export whose pages disagree on it is not a consistent copy.
     revision: number().default(0),
+    // The number the next new item gets. Absent until the first number is assigned:
+    // then it is one more than the highest number in use.
+    nextItemNumber: number().optional(),
     lastError: string().optional(),
     lastErrorAt: number().optional(),
     // True when a batch of the refresh run in progress failed.

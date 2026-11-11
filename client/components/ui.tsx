@@ -7,9 +7,11 @@
 import { Link } from "lakebed/client";
 import { Component, createContext } from "preact";
 import type { ComponentChildren } from "preact";
-import { useContext } from "preact/hooks";
+import { useContext, useEffect, useRef, useState } from "preact/hooks";
+import { formatItemId, itemIdOf } from "../../shared/itemId";
 import { formatAge, formatDate, formatDateTime, isoTime } from "../lib/format";
-import type { Tone } from "../lib/present";
+import { itemPath, type Tone } from "../lib/present";
+import { Icon } from "./icons";
 
 /** Joins class strings, skipping the empty ones. */
 export function cx(...parts: (string | false | null | undefined)[]): string {
@@ -30,6 +32,7 @@ export function cx(...parts: (string | false | null | undefined)[]): string {
 //   open, merged, closed, draft, pending
 //                   GitHub's own state colours, used only on a state icon and its words
 //   serif, sans     Charter for titles and figures, the system sans for everything else
+//   mono            the system monospace, for an item's ID and nothing else
 export const ROOT_TOKENS = [
   "[--paper:#f1f3f6]",
   "[--card:#ffffff]",
@@ -63,6 +66,7 @@ export const ROOT_TOKENS = [
   "dark:[--pending:#d9a017]",
   "[--serif:Charter,'Bitstream_Charter','Sitka_Text',Cambria,'DejaVu_Serif',Georgia,serif]",
   "[--sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe_UI',Roboto,'Liberation_Sans',Arial,sans-serif]",
+  "[--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation_Mono','DejaVu_Sans_Mono',monospace]",
   "bg-(--paper)",
   "scheme-light",
   "dark:scheme-dark"
@@ -80,8 +84,14 @@ export const LINK = cx(
 );
 /** A title that is a link: the serif face, and no underline until hover, so a list of them stays calm. */
 export const TITLE_LINK = cx(FOCUS, SERIF, "rounded-sm text-[0.9375rem] leading-snug hover:underline hover:underline-offset-2");
-/** Refs, SHAs and other identifiers: the sans face with even digits. */
+/** Upstream refs, SHAs and branch names: the sans face with even digits. */
 export const REF = "tabular-nums";
+/**
+ * An item's own ID, "GB-12": small, monospaced and dim, so it reads as a handle
+ * and never competes with the title it sits in front of. Upright even where the
+ * title is italic. It is the one thing on the site set in the monospace face.
+ */
+export const ITEM_ID = "[font-family:var(--mono)] font-normal not-italic tabular-nums text-(color:--dim)";
 
 export const TONE_TEXT: Record<Tone, string> = {
   open: "text-(color:--open)",
@@ -176,11 +186,6 @@ export function ExternalLink({
   );
 }
 
-/** The address of an item's page. An undisclosed item has no slug, so its id is used. */
-export function itemPath(item: { id: string; slug: string | null }): string {
-  return `/items/${encodeURIComponent(item.slug ?? item.id)}`;
-}
-
 export const UNDISCLOSED_TIP = "Details are withheld until this candidate is offered upstream.";
 
 /**
@@ -193,20 +198,82 @@ export function ItemTitleLink({
   notPublic = false,
   className
 }: {
-  item: { id: string; slug: string | null; title: string; disclosed?: boolean };
+  item: { id: string; slug: string | null; title: string; disclosed?: boolean; number?: number | null };
   notPublic?: boolean;
   className?: string;
 }) {
   const undisclosed = item.disclosed === false;
+  const id = itemIdOf(item);
   return (
     <Link
       className={cx(TITLE_LINK, notPublic && PRIVATE_TEXT, undisclosed && cx("italic", TEXT_DIM), className)}
       title={notPublic ? `Not public. ${PRIVATE_TIP}.` : undisclosed ? UNDISCLOSED_TIP : undefined}
       to={itemPath(item)}
     >
+      {/*
+        The ID leads the title in every list, in a box of one width, so titles
+        start in line down a list and a long title wraps under its ID at full
+        width. An inline block takes no underline from the link around it.
+        An item with no number yet has no box: its title starts at the edge.
+      */}
+      {id ? <span className={cx(ITEM_ID, "mr-1.5 inline-block min-w-[2.875rem] text-xs")}>{id}</span> : null}
       {item.title}
       {notPublic ? <span className="sr-only"> (not public)</span> : null}
     </Link>
+  );
+}
+
+/**
+ * An item's ID as a control that copies it: for the item page, where the ID is
+ * picked up to be said or pasted to an agent. It looks like the ID in a list,
+ * with a small copy mark. Where the clipboard is not available it selects the
+ * ID instead, so the usual copy shortcut works.
+ */
+export function CopyItemId({ number, className }: { number: number; className?: string }) {
+  const id = formatItemId(number);
+  const [copied, setCopied] = useState(false);
+  const text = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopied(true);
+    } catch {
+      const node = text.current;
+      const selection = window.getSelection();
+      if (!node || !selection) return;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  }
+
+  return (
+    <>
+      <button
+        className={cx(
+          FOCUS,
+          ITEM_ID,
+          "inline-flex cursor-pointer select-text items-baseline gap-1 rounded-sm hover:text-(color:--ink)",
+          className
+        )}
+        onClick={copy}
+        title={`Copy ${id}`}
+        type="button"
+      >
+        <span ref={text}>{id}</span>
+        <Icon className="self-center" name={copied ? "check" : "copy"} size={12} />
+      </button>
+      <span className="sr-only" role="status">
+        {copied ? `Copied ${id}` : ""}
+      </span>
+    </>
   );
 }
 

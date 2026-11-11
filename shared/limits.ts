@@ -42,6 +42,8 @@ export const LIMITS = {
   // The watch list reads every item (maxItems rows) beside one page of links, inside the 1,000 rows a handler may return.
   watchlistLinksPerPage: 500,
   refreshLinksPerBatch: 20,
+  // Items one call of the number backfill numbers: one write each, inside the 5-second transaction limit.
+  assignNumbersPerCall: 100,
 
   // The public list query returns every item and its primary link in one handler
   // (1,000 rows returned at most), so the item count is capped.

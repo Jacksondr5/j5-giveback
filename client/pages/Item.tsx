@@ -13,12 +13,14 @@ import {
   STAGES,
   type Stage
 } from "../../shared/enums";
+import { itemIdOf } from "../../shared/itemId";
 import { Icon } from "../components/icons";
 import { OutcomeTag, SideGlyph, StageTag, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
 import { Rail, type Stop } from "../components/Rail";
 import {
   Age,
   CARD,
+  CopyItemId,
   DIVIDE,
   DateText,
   ExternalLink,
@@ -361,6 +363,8 @@ function Header({ item, links = [] }: { item: ListItem; links?: readonly LinkVie
         ) : null}
       </p>
       <h1 className={cx(SERIF, "mt-1 max-w-5xl text-[1.75rem] font-bold leading-9", !item.disclosed && "italic")}>
+        {/* The ID leads the title, as it does in every list. Here it is also the control that copies it. */}
+        {item.number !== null ? <CopyItemId className="mr-2.5 text-[0.8125rem] leading-5" number={item.number} /> : null}
         <span className={notPublic ? PRIVATE_TEXT : undefined} title={notPublic ? `Not public. ${PRIVATE_TIP}.` : undefined}>
           {item.title}
         </span>
@@ -588,7 +592,8 @@ function Disclosed({ detail }: { detail: Detail }) {
 }
 
 function ItemBody({ detail }: { detail: Detail | null | undefined }) {
-  useTitle(detail ? detail.item.title : detail === null ? "Not found" : "Item");
+  const id = detail ? itemIdOf(detail.item) : null;
+  useTitle(detail ? (id ? `${id} ${detail.item.title}` : detail.item.title) : detail === null ? "Not found" : "Item");
   if (detail === undefined) {
     return (
       <div className="grid gap-x-8 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)]">

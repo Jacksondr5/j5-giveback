@@ -14,7 +14,16 @@ import type {
   Stage,
   WaitingOn
 } from "../../shared/enums";
+import { itemIdOf } from "../../shared/itemId";
 import type { ListItem } from "./derive";
+
+/**
+ * The address of an item's page: its slug. An undisclosed item has no slug, so
+ * its ID ("GB-12") is used, or its row id until it has a number.
+ */
+export function itemPath(item: { id: string; slug: string | null; number?: number | null }): string {
+  return `/items/${encodeURIComponent(item.slug ?? itemIdOf(item) ?? item.id)}`;
+}
 
 /** A colour role. Always paired with an icon shape and words, never used alone. */
 export type Tone = "open" | "merged" | "closed" | "draft" | "pending" | "dim";

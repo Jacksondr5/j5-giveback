@@ -23,13 +23,15 @@ import {
   type ListAsk,
   type ListItem
 } from "./derive";
-import { applyFilters, filtersToSearch, itemsHref, parseFilters } from "./filters";
+import { ITEM_ID_PREFIX, formatItemId, isItemNumber, itemIdOf, parseItemId } from "../../shared/itemId";
+import { applyFilters, filtersToSearch, itemsHref, parseFilters, searchedNumber } from "./filters";
 import { DAY, HOUR, MINUTE, WEEK, YEAR, formatAgo, formatSpan, originRefUrl, shortRef } from "./format";
 import {
   askAction,
   ciSignal,
   commentHost,
   groupByStage,
+  itemPath,
   listThreads,
   macroscopeSignal,
   outcomeMark,
@@ -82,6 +84,7 @@ function link(patch: Partial<LinkView> = {}): LinkView {
 function item(id: string, patch: Partial<ItemView> = {}): ListItem {
   return {
     id,
+    number: null,
     disclosed: true,
     slug: id,
     title: `Item ${id}`,
@@ -283,7 +286,7 @@ function ask(id: string, itemId: string, openedAt: number, closedAt: number | nu
     openedAt,
     closedAt,
     resolution: null,
-    item: { id: itemId, disclosed: true, slug: itemId, title: itemId, stage: "offered" }
+    item: { id: itemId, number: null, disclosed: true, slug: itemId, title: itemId, stage: "offered" }
   };
 }
 const byItem = openAsksByItem([ask("2", "x", NOW - DAY), ask("1", "x", NOW - 2 * DAY), ask("3", "y", NOW), ask("4", "y", NOW, NOW)]);
@@ -341,6 +344,48 @@ equal(run("?outcome=merged"), ["expo"], "outcome");
 equal(run("?repo=expo/expo-device-hub"), ["expo"], "repository");
 equal(run("?stage=offered&q=stop"), ["stop"], "combined");
 equal(run("?q=nothing-matches"), [], "no match");
+
+// Item IDs. The prefix is read from the shared module, so these hold for any prefix.
+const ID12 = formatItemId(12);
+equal(ID12, `${ITEM_ID_PREFIX}-12`, "format");
+equal(parseItemId(ID12), 12, "parse");
+equal(parseItemId(ID12.toLowerCase()), 12, "parse, lower case");
+equal(parseItemId(` ${ID12} `), 12, "parse, spaces around");
+equal(parseItemId(formatItemId(350)), 350, "format and parse round trip");
+equal(
+  [`${ITEM_ID_PREFIX}-0`, `${ITEM_ID_PREFIX}-012`, `${ITEM_ID_PREFIX}12`, "12", `${ID12}a`, `x${ID12}`, `${ITEM_ID_PREFIX}-1.5`, `${ITEM_ID_PREFIX}--1`, `${ITEM_ID_PREFIX}-12345678`, ""].map(parseItemId),
+  [null, null, null, null, null, null, null, null, null, null],
+  "not an ID"
+);
+equal([0, 1, 1.5, -3, 350].map(isItemNumber), [false, true, false, false, true], "a number an item can have");
+equal([itemIdOf({ number: 3 }), itemIdOf({ number: null }), itemIdOf({})], [formatItemId(3), null, null], "the ID of an item");
+equal(searchedNumber(ID12.toLowerCase(), false), 12, "an ID is a number anywhere in a search");
+equal([searchedNumber("12", true), searchedNumber("12", false), searchedNumber("012", true)], [12, null, null], "a bare number only as the whole search");
+
+const numbered = [
+  item("one", { number: 1 }),
+  item("twelve", { number: 12, primaryLink: link({ number: 4100 }) }),
+  item("one-twenty", { number: 120 }),
+  item("withheld", { number: 7, disclosed: false, slug: null, title: "Undisclosed candidate", targetRepo: null }),
+  item("pr-twelve", { primaryLink: link({ number: 12 }) }),
+  item("no-number")
+];
+const find = (q: string) => ids(applyFilters(numbered, parseFilters(`?q=${encodeURIComponent(q)}`)));
+equal(find(ID12), ["twelve"], "search by ID");
+equal(find(ID12.toLowerCase()), ["twelve"], "search by ID, lower case");
+equal(find(formatItemId(1)), ["one"], "an ID matches whole, not as a prefix");
+equal(find(formatItemId(7)), ["withheld"], "an undisclosed item is found by its ID");
+equal(find(formatItemId(999)), [], "an ID no item has");
+equal(find(`${ID12} twelve`), ["twelve"], "an ID beside another word");
+equal(find(`${ID12} one`), [], "an ID and a word of another item");
+equal(find("12"), ["twelve", "pr-twelve"], "a bare number alone: the item with that number, and text that holds it");
+equal(find("12 item"), ["pr-twelve"], "a bare number beside another word is text only");
+
+// Where an item's page is: the slug, the ID for an item with no slug, the row id until it has a number.
+equal(itemPath({ id: "row-1", slug: "some-fix", number: 4 }), "/items/some-fix", "a disclosed item links by slug");
+equal(itemPath({ id: "row-2", slug: null, number: 7 }), `/items/${formatItemId(7)}`, "an undisclosed item links by ID");
+equal(itemPath({ id: "row-3", slug: null, number: null }), "/items/row-3", "an undisclosed item with no number links by row id");
+equal(itemPath({ id: "row-4", slug: null }), "/items/row-4", "a reference with no number field");
 console.log("ok  filters");
 
 // --- Presentation -------------------------------------------------------------

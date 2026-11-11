@@ -23,7 +23,8 @@ const path = require("node:path");
 const UNDISCLOSED_TITLE = "Undisclosed candidate";
 // Fields of an undisclosed item that may carry a value. Everything else must be null or empty.
 // Stage, what it waits on, and dates. closedAt is a date: the closed list needs it to order the item.
-const UNDISCLOSED_ALLOWED = ["id", "disclosed", "title", "stage", "waitingOn", "waitingSince", "foundAt", "updatedAt", "closedAt"];
+// number is the item's "GB-<n>" ID: a bare number says nothing about the item, and it is how the item is named.
+const UNDISCLOSED_ALLOWED = ["id", "number", "disclosed", "title", "stage", "waitingOn", "waitingSince", "foundAt", "updatedAt", "closedAt"];
 const MIN_SENTINEL_LENGTH = 6;
 
 function fail(message) {
@@ -50,6 +51,9 @@ function setting(names) {
 const baseUrl = (setting(["GIVEBACK_URL"]) || fail("GIVEBACK_URL is not set.")).replace(/\/+$/, "");
 const agentSecret = setting(["GIVEBACK_AGENT_SECRET", "AGENT_SECRET"]) || fail("The agent secret is not set.");
 
+// The prefix of an item ID ("GB"), as the export reports it.
+let itemIdPrefix = null;
+
 async function exportAll() {
   const tables = {};
   let cursor = null;
@@ -58,6 +62,7 @@ async function exportAll() {
     const response = await fetch(url, { headers: { authorization: `Bearer ${agentSecret}` } });
     const payload = await response.json();
     if (response.status !== 200 || !payload.ok) fail(`export failed with HTTP ${response.status}.`);
+    itemIdPrefix = itemIdPrefix ?? payload.itemIdPrefix ?? null;
     for (const [name, rows] of Object.entries(payload.tables)) tables[name] = (tables[name] || []).concat(rows);
     cursor = payload.nextCursor;
     if (cursor === null) return tables;
@@ -230,21 +235,39 @@ async function main() {
   };
   for (const item of undisclosed) checkUndisclosed(item, "items");
 
+  // The list carries each item's number, the hidden ones included, exactly as stored.
+  const storedNumber = new Map((tables.items || []).map((row) => [row.id, row.number ?? null]));
   for (const item of items) {
-    const detail = await run("item", [item.id]);
-    check(detail.ok && detail.data !== null, `item(${item.id}) failed.`);
-    if (!detail.ok || detail.data === null) continue;
+    check(item.number === storedNumber.get(item.id), `items: ${item.id} has number ${item.number}, stored ${storedNumber.get(item.id)}.`);
+  }
+
+  const checkDetail = (detail, item, ref) => {
+    check(detail.ok && detail.data !== null, `item(${ref}) failed.`);
+    if (!detail.ok || detail.data === null) return;
+    check(detail.data.item.id === item.id, `item(${ref}) found another item.`);
     if (hiddenIds.has(item.id)) {
-      checkUndisclosed(detail.data.item, `item(${item.id})`);
-      check(detail.data.links.length === 0, `item(${item.id}): undisclosed item returned links.`);
-      check(detail.data.events.length === 0, `item(${item.id}): undisclosed item returned events.`);
-      check(detail.data.asks.length === 0, `item(${item.id}): undisclosed item returned asks.`);
+      checkUndisclosed(detail.data.item, `item(${ref})`);
+      check(detail.data.links.length === 0, `item(${ref}): undisclosed item returned links.`);
+      check(detail.data.events.length === 0, `item(${ref}): undisclosed item returned events.`);
+      check(detail.data.asks.length === 0, `item(${ref}): undisclosed item returned asks.`);
       for (const ask of detail.data.asks) {
-        check(ask.label === null && ask.resolution === null, `item(${item.id}): undisclosed ask exposes its label or resolution.`);
-        check(ask.item.slug === null && ask.item.title === UNDISCLOSED_TITLE, `item(${item.id}): ask exposes the item.`);
+        check(ask.label === null && ask.resolution === null, `item(${ref}): undisclosed ask exposes its label or resolution.`);
+        check(ask.item.slug === null && ask.item.title === UNDISCLOSED_TITLE, `item(${ref}): ask exposes the item.`);
       }
     } else {
-      check(detail.data.events.every((event) => event.isPublic === true), `item(${item.id}): returned a private event.`);
+      check(detail.data.events.every((event) => event.isPublic === true), `item(${ref}): returned a private event.`);
+    }
+  };
+
+  let byShortId = 0;
+  for (const item of items) {
+    checkDetail(await run("item", [item.id]), item, item.id);
+    // By its ID, in both cases: a hidden item comes back in the same redacted form as by row id.
+    if (item.number !== null && itemIdPrefix) {
+      for (const ref of [`${itemIdPrefix}-${item.number}`, `${itemIdPrefix.toLowerCase()}-${item.number}`]) {
+        checkDetail(await run("item", [ref]), item, ref);
+      }
+      byShortId += 1;
     }
     if (item.slug) {
       const bySlug = await run("item", [item.slug]);
@@ -255,7 +278,10 @@ async function main() {
     const result = await run("item", [slug]);
     check(result.ok && result.data === null, `item("${slug}"): the slug of a non-public item must find nothing.`);
   }
-  for (const ref of ["", "no-such-item", "00000000-0000-0000-0000-000000000000"]) {
+  const unknownRefs = ["", "no-such-item", "00000000-0000-0000-0000-000000000000"];
+  // An ID no item has, and things that only look like one.
+  if (itemIdPrefix) unknownRefs.push(`${itemIdPrefix}-9999999`, `${itemIdPrefix}-0`, `${itemIdPrefix}-`);
+  for (const ref of unknownRefs) {
     const result = await run("item", [ref]);
     check(result.ok && result.data === null, `item(${JSON.stringify(ref)}) should be null.`);
   }
@@ -274,6 +300,7 @@ async function main() {
     ["GET", "/api/agent/watchlist"],
     ["POST", "/api/agent/items"],
     ["POST", "/api/agent/items/delete"],
+    ["POST", "/api/agent/items/assign-numbers"],
     ["POST", "/api/agent/asks"],
     ["POST", "/api/agent/events"],
     ["POST", "/api/agent/events/delete"],
@@ -314,6 +341,7 @@ async function main() {
     privateValuesSearchedFor: sentinels.size,
     items: items.length,
     undisclosedItems: undisclosed.length,
+    itemsReadByShortId: byShortId,
     leaks: hits,
     failures
   };

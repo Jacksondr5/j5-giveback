@@ -166,7 +166,33 @@ export type WriteStatus = "created" | "updated" | "unchanged";
 
 export type ItemsResponse = {
   ok: true;
-  results: { slug: string; id: string; status: WriteStatus; stageEvent: boolean }[];
+  results: {
+    slug: string;
+    /** The row id. */
+    id: string;
+    /** The item's number. Null only for an item stored before numbers existed and not yet backfilled. */
+    number: number | null;
+    /** The number as an ID, such as "GB-12". */
+    shortId: string | null;
+    status: WriteStatus;
+    stageEvent: boolean;
+  }[];
+};
+
+/** `POST /api/agent/items/assign-numbers`. The body is optional. */
+export type AssignNumbersRequest = {
+  /** How many items one call may number. Default 100, at most 350. */
+  limit?: number;
+};
+
+export type AssignNumbersResponse = {
+  ok: true;
+  /** The items this call numbered, in the order they were numbered. Empty when every item already had a number. */
+  assigned: { slug: string; id: string; number: number; shortId: string }[];
+  /** Items still without a number. Call again until this is 0. */
+  remaining: number;
+  /** The number the next new item will get. */
+  nextNumber: number;
 };
 
 export type AsksResponse = {
@@ -206,6 +232,9 @@ export type WatchlistLink = {
   ownership: LinkOwnership;
   role: LinkRole;
   itemSlug: string;
+  /** The item's number and its ID, such as "GB-12". Null for an item not yet numbered. */
+  itemNumber: number | null;
+  itemShortId: string | null;
   itemStage: Stage;
   ghState: GhState | null;
   /** Last comment or review by someone other than the fork owner, bots excluded. */
@@ -232,6 +261,8 @@ export type ExportResponse = {
   exportedAt: number;
   /** Changes on every agent write. Pages of one export must all carry the same value. */
   revision: number;
+  /** The prefix of an item ID: an item row with `number` 12 is "<prefix>-12". */
+  itemIdPrefix: string;
   tables: Partial<Record<ExportTable, Record<string, unknown>[]>>;
   nextCursor: string | null;
 };
@@ -296,8 +327,14 @@ export type LinkView = {
  * "Undisclosed candidate": every field below `updatedAt` is null or empty.
  */
 export type ItemView = {
-  /** Opaque row id. The only handle for an undisclosed item. */
+  /** Opaque row id. */
   id: string;
+  /**
+   * The item's number, shown as "GB-<n>" (see shared/itemId.ts). Present for an
+   * undisclosed item too: with the row id, it is that item's public handle.
+   * Null for an item stored before numbers existed and not yet backfilled.
+   */
+  number: number | null;
   disclosed: boolean;
   slug: string | null;
   title: string;
@@ -333,6 +370,7 @@ export type ItemView = {
 
 export type ItemRef = {
   id: string;
+  number: number | null;
   disclosed: boolean;
   slug: string | null;
   title: string;

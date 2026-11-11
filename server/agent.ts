@@ -7,6 +7,7 @@
 import { json, type EndpointRequest, type EndpointResponse, type QueryServerContext, type ServerContext } from "lakebed/server";
 import {
   EXPORT_TABLES,
+  type AssignNumbersResponse,
   type AsksResponse,
   type EventsDeleteResponse,
   type EventsResponse,
@@ -31,10 +32,12 @@ import {
   type Outcome,
   type Stage
 } from "../shared/enums";
+import { ITEM_ID_PREFIX, formatItemId, isItemNumber, itemIdOf, parseItemId } from "../shared/itemId";
 import { CURSOR_PATTERN, LIMITS, SLUG_PATTERN } from "../shared/limits";
 import { apiError, checkBearer } from "./auth";
-import type { AskRow, ItemRow, LinkRow, ReadDb, WriteDb } from "./schema";
+import type { AskRow, ItemRow, LinkRow, ReadDb, SyncStateRow, WriteDb } from "./schema";
 import {
+  isObject,
   parseAsksRequest,
   parseEventsDeleteRequest,
   parseEventsRequest,
@@ -79,9 +82,12 @@ export async function touchSyncState(
     lastError?: string | null;
     lastErrorAt?: number | null;
     refreshRunFailed?: boolean;
-  }
+    nextItemNumber?: number;
+  },
+  /** The one syncState row, when the caller has already read it. Saves the read here. */
+  known?: SyncStateRow | null
 ): Promise<void> {
-  const row = await db.syncState.withIndex("by_creation").first();
+  const row = known !== undefined ? known : await db.syncState.withIndex("by_creation").first();
   // An agent write moves the revision, which lets an export detect a write between its pages.
   const bump = patch.lastAgentPushAt !== undefined;
   if (row) {
@@ -89,6 +95,28 @@ export async function touchSyncState(
   } else {
     await db.syncState.insert(bump ? { ...patch, revision: 1 } : patch);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Item numbers
+// ---------------------------------------------------------------------------
+
+/**
+ * The highest item number in use, or 0 when no item has one. One row is read:
+ * in the by_number index an item with no number sorts last in descending order.
+ */
+async function highestItemNumber(db: ReadDb): Promise<number> {
+  const top = await db.items.withIndex("by_number").order("desc").first();
+  return top?.number ?? 0;
+}
+
+/**
+ * The number the next new item gets. The counter on the syncState row only goes
+ * up, so deleting an item does not free its number. Until the counter is first
+ * stored, the next number is one more than the highest in use.
+ */
+async function nextItemNumber(db: ReadDb, state: SyncStateRow | null): Promise<number> {
+  return state?.nextItemNumber ?? (await highestItemNumber(db)) + 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +209,14 @@ function planItem(issues: Issues, input: ParsedItem, existing: ItemRow | null, p
           message: `Required to create an item. No item has the slug "${input.slug}".`
         });
       }
+    }
+    // "gb-12" as a slug would be read as the ID GB-12 wherever an item is looked up.
+    const asId = parseItemId(input.slug);
+    if (asId !== null) {
+      issues.push({
+        path: `${path}.slug`,
+        message: `A slug must not have the form of an item ID (${formatItemId(asId)}). The server assigns IDs.`
+      });
     }
     if (issues.length !== before) return null;
   }
@@ -378,6 +414,9 @@ export async function handleItems(ctx: ServerContext, req: EndpointRequest): Pro
     const plan = planItem(issues, input, existing, `items[${index}]`, now);
     if (plan) plans.push(plan);
   }
+  // New items take the next numbers, in the order they appear in the batch.
+  let state: SyncStateRow | null | undefined;
+  let nextNumber = 0;
   if (creates > 0 && issues.length === 0) {
     const count = await db.items.withIndex("by_creation").count();
     if (count + creates > LIMITS.maxItems) {
@@ -386,6 +425,8 @@ export async function handleItems(ctx: ServerContext, req: EndpointRequest): Pro
         message: `This would store ${count + creates} items. The dashboard holds at most ${LIMITS.maxItems}.`
       });
     }
+    state = await db.syncState.withIndex("by_creation").first();
+    nextNumber = await nextItemNumber(db, state);
   }
   if (issues.length > 0) return validationFailed(issues);
 
@@ -395,10 +436,15 @@ export async function handleItems(ctx: ServerContext, req: EndpointRequest): Pro
     const active = next.stage !== "closed";
     let changed = false;
     let itemId: string;
+    // An existing item keeps the number it has, or none until the backfill gives it one.
+    let number: number | null = existing?.number ?? null;
 
     if (!existing) {
+      number = nextNumber;
+      nextNumber += 1;
       const row = await db.items.insert({
         slug: input.slug,
+        number,
         title: next.title,
         summary: next.summary,
         stage: next.stage,
@@ -486,13 +532,98 @@ export async function handleItems(ctx: ServerContext, req: EndpointRequest): Pro
     results.push({
       slug: input.slug,
       id: itemId,
+      number,
+      shortId: number === null ? null : formatItemId(number),
       status: !existing ? "created" : changed ? "updated" : "unchanged",
       stageEvent
     });
   }
 
-  await touchSyncState(db, { lastAgentPushAt: now });
+  await touchSyncState(db, { lastAgentPushAt: now, ...(creates > 0 ? { nextItemNumber: nextNumber } : {}) }, state);
   const response: ItemsResponse = { ok: true, results };
+  return json(response);
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/agent/items/assign-numbers
+// ---------------------------------------------------------------------------
+
+/**
+ * Gives a number to every item that has none: the items stored before numbers
+ * existed. Oldest find first (`foundAt`, ties by creation time), continuing
+ * after the highest number in use. An item that has a number keeps it, so a
+ * second run assigns nothing.
+ *
+ * One call reads every item in one scan and writes one row per item it numbers,
+ * which is inside the write limit for a full dashboard. The 5-second transaction
+ * limit is the tighter one, so a call numbers at most `limit` items and reports
+ * how many remain. The order does not depend on where a call stops, so calling
+ * again until `remaining` is 0 gives the same numbers as one call would.
+ */
+export async function handleAssignNumbers(ctx: ServerContext, req: EndpointRequest): Promise<EndpointResponse> {
+  const denied = checkBearer(ctx.env, req, "AGENT_SECRET");
+  if (denied) return denied;
+
+  // The body is optional: {} or nothing means the default limit.
+  let body: unknown = {};
+  try {
+    const text = await req.text();
+    if (text.trim().length > 0) body = JSON.parse(text);
+  } catch {
+    return apiError(400, "invalid_json", "The request body is not valid JSON.");
+  }
+  const issues: Issues = [];
+  let limit: number = LIMITS.assignNumbersPerCall;
+  if (!isObject(body)) {
+    issues.push({ path: "", message: "The body must be a JSON object, or empty." });
+  } else {
+    for (const key of Object.keys(body)) {
+      if (key !== "limit") issues.push({ path: key, message: "Unknown field. Allowed fields: limit." });
+    }
+    if (body.limit !== undefined) {
+      if (typeof body.limit === "number" && Number.isInteger(body.limit) && body.limit >= 1 && body.limit <= LIMITS.maxItems) {
+        limit = body.limit;
+      } else {
+        issues.push({ path: "limit", message: `Must be a whole number from 1 to ${LIMITS.maxItems}.` });
+      }
+    }
+  }
+  if (issues.length > 0) return validationFailed(issues);
+
+  const db = ctx.db as unknown as WriteDb;
+  const now = Date.now();
+
+  // Read everything before the first write. Two index scans, whatever the item count.
+  const rows = await db.items.withIndex("by_creation").take(LIMITS.maxItems);
+  const state = await db.syncState.withIndex("by_creation").first();
+
+  let highest = 0;
+  const unnumbered: ItemRow[] = [];
+  for (const row of rows) {
+    if (isItemNumber(row.number)) highest = Math.max(highest, row.number);
+    else unnumbered.push(row);
+  }
+  // The rows arrive in creation order and the sort is stable, so equal `foundAt` keeps creation order.
+  unnumbered.sort((a, b) => a.foundAt - b.foundAt);
+  let next = Math.max(state?.nextItemNumber ?? 1, highest + 1);
+
+  const assigned: AssignNumbersResponse["assigned"] = [];
+  for (const row of unnumbered.slice(0, limit)) {
+    await db.items.update(row.id, { number: next });
+    assigned.push({ slug: row.slug, id: row.id, number: next, shortId: formatItemId(next) });
+    next += 1;
+  }
+  // Nothing to number means nothing to write: a repeated run leaves the revision alone.
+  if (assigned.length > 0) {
+    await touchSyncState(db, { lastAgentPushAt: now, nextItemNumber: next }, state);
+  }
+
+  const response: AssignNumbersResponse = {
+    ok: true,
+    assigned,
+    remaining: unnumbered.length - assigned.length,
+    nextNumber: next
+  };
   return json(response);
 }
 
@@ -915,7 +1046,14 @@ export async function handleExport(ctx: QueryServerContext, req: EndpointRequest
   }
 
   const state = await db.syncState.withIndex("by_creation").first();
-  const response: ExportResponse = { ok: true, exportedAt: Date.now(), revision: state?.revision ?? 0, tables, nextCursor };
+  const response: ExportResponse = {
+    ok: true,
+    exportedAt: Date.now(),
+    revision: state?.revision ?? 0,
+    itemIdPrefix: ITEM_ID_PREFIX,
+    tables,
+    nextCursor
+  };
   return json(response);
 }
 
@@ -989,6 +1127,8 @@ export async function handleWatchlist(ctx: QueryServerContext, req: EndpointRequ
       ownership: row.ownership as LinkOwnership,
       role: row.role as LinkRole,
       itemSlug: item.slug,
+      itemNumber: item.number ?? null,
+      itemShortId: itemIdOf(item),
       itemStage: item.stage as Stage,
       ghState: (row.ghState as GhState | undefined) ?? null,
       lastOtherActivityAt: row.ghOtherActivityAt ?? null,

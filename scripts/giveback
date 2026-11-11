@@ -19,6 +19,11 @@ const USAGE = `giveback: read and write the giveback dashboard.
 Usage:
   giveback upsert <file|->            Create or change items. JSON: {"items":[...]}, an array, or one item.
   giveback delete <slug>              Remove one item and its whole history. For mistakes only.
+  giveback show <GB-n|slug>           One item, by its ID or its slug, with its links, asks, events and
+                                      private fields.
+  giveback assign-numbers [--limit N] Give a number (shown as GB-<n>) to every item that has none, oldest
+                                      find first. Needed once, for items stored before IDs existed.
+                                      Running it again assigns nothing. --limit: items per request.
   giveback ask open  --key K --item SLUG --kind KIND --label TEXT
                      [--recommendation TEXT] [--draft TEXT] [--opened-at TIME]
   giveback ask close --key K [--resolution TEXT] [--closed-at TIME]
@@ -35,8 +40,9 @@ Usage:
   giveback watchlist                  Every link on an item that is not closed, with its item and GitHub state.
   giveback load <file>                JSON: {"items":[...],"asks":[...],"events":[...]}, applied in that order.
   giveback export [--raw] [--out FILE]
-                                      Everything, public and private. Default: items with their links,
-                                      private fields, asks and events nested. --raw: the table rows.
+                                      Everything, public and private. Default: items with their ID
+                                      (shortId), links, private fields, asks and events nested.
+                                      --raw: the table rows.
   giveback refresh                    Refresh GitHub state for every link on an open item.
 
 Configuration comes from environment variables, or from a file of KEY=VALUE lines.
@@ -400,19 +406,21 @@ async function exportOnce() {
   const tables = {};
   let exportedAt = null;
   let revision = null;
+  let itemIdPrefix = null;
   let cursor = null;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const route = `/api/agent/export${cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`}`;
     const { status, payload } = await call("GET", route, "agent");
     if (status !== 200 || payload.ok !== true) reportFailure("GET", "/api/agent/export", status, payload);
     exportedAt = exportedAt ?? payload.exportedAt;
+    itemIdPrefix = itemIdPrefix ?? payload.itemIdPrefix ?? null;
     if (revision === null) revision = payload.revision;
     if (payload.revision !== revision) return null;
     for (const [name, rows] of Object.entries(payload.tables)) {
       tables[name] = (tables[name] || []).concat(rows);
     }
     cursor = payload.nextCursor;
-    if (cursor === null) return { exportedAt, revision, tables };
+    if (cursor === null) return { exportedAt, revision, itemIdPrefix, tables };
   }
   fail(`the export did not finish within ${MAX_PAGES} pages.`);
 }
@@ -441,7 +449,12 @@ function groupBy(rows, field) {
   return map;
 }
 
-function nest({ exportedAt, tables }) {
+/** "GB-12" for an item row with number 12. The prefix comes from the server, which owns it. */
+function shortIdOf(item, itemIdPrefix) {
+  return itemIdPrefix && Number.isInteger(item.number) ? `${itemIdPrefix}-${item.number}` : null;
+}
+
+function nest({ exportedAt, itemIdPrefix, tables }) {
   const links = groupBy(tables.links, "itemId");
   const asks = groupBy(tables.asks, "itemId");
   const events = groupBy(tables.events, "itemId");
@@ -451,6 +464,7 @@ function nest({ exportedAt, tables }) {
   const items = (tables.items || []).map((item) => {
     const privateRow = (itemPrivate.get(item.id) || [])[0];
     return {
+      shortId: shortIdOf(item, itemIdPrefix),
       ...item,
       originRefs: item.originRefs ? item.originRefs.split("\n") : [],
       links: (links.get(item.id) || []).map((row) => ({
@@ -488,6 +502,44 @@ async function exportCommand(args) {
   } else {
     process.stdout.write(text);
   }
+}
+
+// One item, found in the full export. The export is the one read that carries private fields.
+async function show(args) {
+  const ref = args[0];
+  if (!ref || args.length !== 1) return usageError("show takes exactly one item ID (such as GB-12) or slug.");
+  const raw = await exportRaw();
+  const { items } = nest(raw);
+  const asId = /^([A-Za-z]+)-([1-9][0-9]*)$/.exec(ref.trim());
+  const isId = Boolean(asId && raw.itemIdPrefix && asId[1].toLowerCase() === raw.itemIdPrefix.toLowerCase());
+  const item =
+    (isId ? items.find((entry) => entry.number === Number(asId[2])) : undefined) ||
+    items.find((entry) => entry.slug === ref.trim());
+  if (!item) fail(isId ? `no item has the ID ${ref.trim().toUpperCase()}.` : `no item has the slug "${ref}".`);
+  print(item);
+  return undefined;
+}
+
+// The server numbers at most `limit` items per request and says how many remain.
+// The order does not depend on where a request stops, so the loop is safe to stop and run again.
+async function assignNumbers(args) {
+  const options = parseOptions(args, ["limit"], []);
+  const body = {};
+  if (options.limit !== undefined) {
+    if (!/^[1-9][0-9]*$/.test(options.limit)) usageError("--limit must be a positive whole number.");
+    body.limit = Number(options.limit);
+  }
+  const assigned = [];
+  for (let request = 1; request <= MAX_PAGES; request += 1) {
+    const payload = await post("/api/agent/items/assign-numbers", "agent", body);
+    assigned.push(...payload.assigned);
+    if (payload.remaining === 0) {
+      print({ ok: true, requests: request, count: assigned.length, nextNumber: payload.nextNumber, assigned });
+      return;
+    }
+    if (payload.assigned.length === 0) fail(`${payload.remaining} items have no number and the server assigned none.`);
+  }
+  fail(`assign-numbers did not finish within ${MAX_PAGES} requests.`);
 }
 
 async function refresh() {
@@ -531,6 +583,10 @@ async function main() {
       return upsert(args);
     case "delete":
       return deleteItem(args);
+    case "show":
+      return show(args);
+    case "assign-numbers":
+      return assignNumbers(args);
     case "ask":
       return ask(args);
     case "event":

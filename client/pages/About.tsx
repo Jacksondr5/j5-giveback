@@ -2,9 +2,10 @@
 
 import type { ComponentChildren } from "preact";
 import { MAIN_PATH_STAGES, STAGE_LABELS, type Stage } from "../../shared/enums";
+import { formatItemId } from "../../shared/itemId";
 import { Icon, type IconName } from "../components/icons";
 import { SideGlyph } from "../components/marks";
-import { ExternalLink, PRIVATE_BLOCK, SERIF, TEXT_DIM, TONE_TEXT, YOU_TAG, cx } from "../components/ui";
+import { ExternalLink, ITEM_ID, PRIVATE_BLOCK, SERIF, TEXT_DIM, TONE_TEXT, YOU_TAG, cx } from "../components/ui";
 import { useTitle } from "../data";
 import { stageIcon, type Tone } from "../lib/present";
 
@@ -148,6 +149,10 @@ export function AboutPage() {
             >
               A review that approved, asked for changes, or is still required. The same three marks give the review
               bot's verdict.
+            </Key>
+            <Key mark={<span className={cx(ITEM_ID, "text-xs")}>{formatItemId(12)}</span>}>
+              An item's ID. Each item takes the next number when it is recorded and keeps it, so the ID is a short,
+              stable way to name the item. An undisclosed candidate has one too.
             </Key>
             <Key mark={<span className={cx(PRIVATE_BLOCK, "text-sm")}>dashed</span>}>
               A dashed edge or underline marks what only the signed-in owner is sent. Visitors never receive it.
