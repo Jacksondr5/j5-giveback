@@ -1,44 +1,29 @@
 // Overview: what needs Jackson, what is on our side, and where everything stands.
+//
+// Wide, it is columns: the attention queue first, the pipeline and the offered
+// table beside it, and the quieter lists after. On a phone they stack in that order.
 
 import { Link } from "lakebed/client";
 import type { ComponentChildren } from "preact";
-import type { LinkView, OverviewView, OwnerOverviewView, SyncView } from "../../shared/api";
-import { ASK_KIND_LABELS, STAGE_LABELS, type Stage } from "../../shared/enums";
-import {
-  CiChip,
-  DependencyChip,
-  FollowUpChip,
-  LinkStateChip,
-  MacroscopeChip,
-  NotPublicChip,
-  OutcomeChip,
-  ReviewChip,
-  StageChip,
-  TriageChip,
-  UpstreamChangedChip,
-  WaitingChip,
-  stageWaitsOnJackson,
-  waitingPhrase
-} from "../components/chips";
-import { RefLead } from "../components/refs";
+import type { OverviewView, OwnerOverviewView, SyncView } from "../../shared/api";
+import { AskTag, FollowUp, OutcomeTag, StageTag, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
+import { Icon } from "../components/icons";
+import { Rail } from "../components/Rail";
 import {
   Age,
-  Box,
-  Chip,
-  ChipList,
+  CARD,
+  DIVIDE,
   DateText,
   EmptyNote,
   FOCUS,
   ItemTitleLink,
   LINK,
-  OwnerOnly,
-  Row,
-  RowList,
-  RowNote,
+  PrivateBlock,
+  SERIF,
   Section,
-  SilentBoundary,
   Skeleton,
-  TEXT_MUTED,
+  TEXT_DIM,
+  TONE_TEXT,
   cx,
   useNowValue
 } from "../components/ui";
@@ -62,14 +47,16 @@ import {
 } from "../lib/derive";
 import { itemsHref } from "../lib/filters";
 import { WEEK, formatAge, formatAgo, formatDateTime, formatSpan, plural } from "../lib/format";
+import { askAction, listThreads, stageWaitsOnJackson, threadState } from "../lib/present";
 
-const OFFERED_SHOWN = 8;
+const OFFERED_SHOWN = 12;
 const CLOSED_SHOWN = 8;
 
-const UNDISCLOSED_NOTE = "Details are withheld until this candidate is offered upstream.";
+const LIST = cx(CARD, DIVIDE, "overflow-hidden");
+const META = "mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5";
 
 // ---------------------------------------------------------------------------
-// Sync line
+// Sync
 // ---------------------------------------------------------------------------
 
 function SyncLine({ sync, owner }: { sync: SyncView; owner: boolean }) {
@@ -84,106 +71,42 @@ function SyncLine({ sync, owner }: { sync: SyncView; owner: boolean }) {
 
   let github: ComponentChildren;
   if (status.kind === "ok") {
-    github = <span title={formatDateTime(status.lastOkAt)}>GitHub state synced {formatAgo(status.lastOkAt, now)}</span>;
+    github = <span title={formatDateTime(status.lastOkAt)}>GitHub synced {formatAgo(status.lastOkAt, now)}</span>;
   } else if (status.kind === "never") {
-    github = (
-      <strong className="font-semibold text-stone-900 dark:text-stone-100">
-        GitHub state has not been synced yet, so upstream status is missing below.
-      </strong>
-    );
+    github = <strong className="font-semibold text-(color:--ink)">GitHub has not been synced yet: upstream state is missing.</strong>;
   } else if (status.kind === "stale") {
     github = (
-      <strong className="font-semibold text-stone-900 dark:text-stone-100" title={formatDateTime(status.lastOkAt)}>
+      <strong className="font-semibold text-(color:--ink)" title={formatDateTime(status.lastOkAt)}>
         GitHub state is out of date: last synced {formatAgo(status.lastOkAt, now)}.
       </strong>
     );
   } else {
     github = (
-      <strong className="font-semibold text-stone-900 dark:text-stone-100">
+      <strong className="font-semibold text-(color:--ink)">
         The last GitHub sync failed{status.failedAt !== null ? ` ${formatAgo(status.failedAt, now)}` : ""}.{" "}
         {status.lastOkAt !== null ? (
-          <span title={formatDateTime(status.lastOkAt)}>
-            Upstream status below is from the last good sync, {formatAgo(status.lastOkAt, now)}.
-          </span>
+          <span title={formatDateTime(status.lastOkAt)}>Upstream state is from {formatAgo(status.lastOkAt, now)}.</span>
         ) : (
-          "No sync has succeeded yet, so upstream status is missing below."
+          "No sync has succeeded yet: upstream state is missing."
         )}
       </strong>
     );
   }
 
   return (
-    <div className="mt-3">
-      <p className={cx("text-xs", TEXT_MUTED)}>
+    <div className={cx("text-xs", TEXT_DIM)}>
+      <p className="flex flex-wrap items-center gap-x-1.5 xl:justify-end">
+        <Icon className={status.kind === "ok" ? undefined : "text-(color:--ink)"} name={status.kind === "ok" ? "sync" : "alert"} size={12} />
         {github}
-        {status.kind === "ok" ? " · " : " "}
+        <span>{status.kind === "ok" ? "," : ""}</span>
         {agent}
       </p>
       {owner && status.kind === "failed" ? (
-        <OwnerOnly className="mt-2 rounded-md border border-dashed">
+        <PrivateBlock className="mt-1.5 text-(color:--ink)">
           <p className="break-words">Sync error: {status.error}</p>
-        </OwnerOnly>
+        </PrivateBlock>
       ) : null}
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Stat tiles
-// ---------------------------------------------------------------------------
-
-function Tile({ value, label, sub, to }: { value: string; label: string; sub?: string; to?: string }) {
-  const body = (
-    <>
-      <p className="text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
-      <p className="text-xs">{label}</p>
-      {sub ? <p className={cx("text-xs", TEXT_MUTED)}>{sub}</p> : null}
-    </>
-  );
-  const frame = "block h-full rounded-md border border-stone-300 bg-white px-3.5 py-3 dark:border-stone-700 dark:bg-stone-900";
-  return (
-    <li>
-      {to ? (
-        <Link className={cx(frame, FOCUS, "hover:border-stone-500 dark:hover:border-stone-400")} to={to}>
-          {body}
-        </Link>
-      ) : (
-        <div className={frame}>{body}</div>
-      )}
-    </li>
-  );
-}
-
-function Tiles({ overview, items }: { overview: OverviewView; items: ListItem[] }) {
-  const { stats, pipeline } = overview;
-  const deciding = pipeline.find((entry) => entry.stage === "deciding")?.count ?? 0;
-  const merge = medianTimeToMerge(items);
-  return (
-    <ul className="mt-5 grid grid-cols-2 gap-2.5 md:grid-cols-4">
-      <Tile
-        label="merged upstream"
-        sub={`of ${stats.closed} closed`}
-        to={itemsHref({ outcome: "merged" })}
-        value={String(stats.merged)}
-      />
-      <Tile
-        label="open upstream"
-        sub="offered, not yet closed"
-        to={itemsHref({ stage: "offered" })}
-        value={String(stats.offered)}
-      />
-      <Tile
-        label="awaiting a decision"
-        sub="validated, route not chosen"
-        to={itemsHref({ stage: "deciding" })}
-        value={String(deciding)}
-      />
-      <Tile
-        label="median, PR opened to merged"
-        sub={merge.count > 0 ? `over ${plural(merge.count, "merged item", "merged items")}` : "no merged items yet"}
-        value={merge.medianMs === null ? "–" : formatSpan(merge.medianMs)}
-      />
-    </ul>
   );
 }
 
@@ -191,73 +114,91 @@ function Tiles({ overview, items }: { overview: OverviewView; items: ListItem[] 
 // Needs Jackson
 // ---------------------------------------------------------------------------
 
-function AskRow({ ask, notPublic }: { ask: ListAsk; notPublic: boolean }) {
+function AskRow({ ask, index, item }: { ask: ListAsk; index: number; item: ListItem | undefined }) {
   const now = useNowValue();
   const old = now - ask.openedAt >= WEEK;
+  const { action, detail } = askAction(ask.kind, ask.label);
   const recommendation = ask.private?.recommendation ?? null;
   const draftPointer = ask.private?.draftPointer ?? null;
+  const thread = item ? listThreads(item)[0] : undefined;
   return (
-    <Row
-      below={
-        recommendation || draftPointer ? (
-          <OwnerOnly className="sm:pl-[11.625rem]">
+    <li className="grid grid-cols-[3.25rem_minmax(0,1fr)] gap-x-3 px-3 py-2.5 sm:grid-cols-[1rem_3.5rem_minmax(0,1fr)]">
+      <span aria-hidden="true" className={cx("hidden pt-0.5 text-right text-xs tabular-nums sm:block", TEXT_DIM)}>
+        {index + 1}
+      </span>
+      <div>
+        <Age
+          at={ask.openedAt}
+          className={cx(
+            SERIF,
+            "block rounded px-1 text-center text-base font-bold leading-6",
+            old ? "bg-(--you-solid) text-[#2b1d00]" : "bg-(--you-bg) text-(color:--you-ink)"
+          )}
+          label="Asked"
+        />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[0.9375rem] leading-6">
+          <strong className="font-bold">{action}</strong>
+          {detail ? <span className="ml-2">{detail}</span> : null}
+        </p>
+        <p>
+          <ItemTitleLink item={ask.item} notPublic={item?.isPublic === false} />
+        </p>
+        <div className={META}>
+          <StageTag stage={ask.item.stage} />
+          {thread ? <ThreadToken link={thread} state /> : null}
+        </div>
+        {recommendation || draftPointer ? (
+          <PrivateBlock className="mt-1.5">
             {recommendation ? <p className="whitespace-pre-wrap break-words">Recommendation: {recommendation}</p> : null}
             {draftPointer ? <p className="break-words">Draft: {draftPointer}</p> : null}
-          </OwnerOnly>
-        ) : null
-      }
-      lead={
-        <ChipList>
-          <li>
-            <Chip tone="you">{ASK_KIND_LABELS[ask.kind]}</Chip>
-          </li>
-        </ChipList>
-      }
-      trail={<Age at={ask.openedAt} className={old ? "font-semibold" : undefined} label="Asked" />}
-    >
-      <p>
-        <ItemTitleLink item={ask.item} />
-        {notPublic ? (
-          <>
-            {" "}
-            <NotPublicChip />
-          </>
+          </PrivateBlock>
         ) : null}
-      </p>
-      <RowNote>
-        {STAGE_LABELS[ask.item.stage]} · {ask.label ?? UNDISCLOSED_NOTE}
-      </RowNote>
-    </Row>
+      </div>
+    </li>
   );
 }
 
 function NeedsJackson({ asks, items }: { asks: ListAsk[]; items: ListItem[] }) {
-  // Only the owner's list says which items are not public; for everyone else this set is empty.
-  const notPublic = new Set(items.filter((item) => item.isPublic === false).map((item) => item.id));
   const now = useNowValue();
   const sorted = asksOldestFirst(asks);
   const oldest = sorted[0];
+  const byId = new Map(items.map((item) => [item.id, item]));
   return (
     <Section
-      note={
-        oldest ? `${plural(sorted.length, "open ask", "open asks")} · oldest ${formatAge(oldest.openedAt, now)}` : undefined
-      }
+      aside={oldest ? <span className={TEXT_DIM}>oldest {formatAge(oldest.openedAt, now)}</span> : undefined}
+      count={sorted.length}
       title="Needs Jackson"
     >
       {sorted.length === 0 ? (
-        <Box>
-          <EmptyNote>Nothing is waiting on Jackson.</EmptyNote>
-        </Box>
+        <EmptyNote>Nothing is waiting on Jackson.</EmptyNote>
       ) : (
-        <Box accent>
-          <RowList>
-            {sorted.map((ask) => (
-              <AskRow ask={ask} key={ask.id} notPublic={notPublic.has(ask.item.id)} />
-            ))}
-          </RowList>
-        </Box>
+        <ol className={cx(LIST, "border-l-4 border-l-(color:--you-solid)")}>
+          {sorted.map((ask, index) => (
+            <AskRow ask={ask} index={index} item={byId.get(ask.item.id)} key={ask.id} />
+          ))}
+        </ol>
       )}
     </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Rows shared by the quieter lists
+// ---------------------------------------------------------------------------
+
+function Entry({ item, trail, children }: { item: ListItem; trail: ComponentChildren; children?: ComponentChildren }) {
+  return (
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 px-3.5 py-2">
+      <div className="min-w-0">
+        <p>
+          <ItemTitleLink item={item} notPublic={item.isPublic === false} />
+        </p>
+        {children}
+      </div>
+      <div className="pt-0.5 text-right text-[0.8125rem]">{trail}</div>
+    </li>
   );
 }
 
@@ -268,96 +209,82 @@ function NeedsJackson({ asks, items }: { asks: ListAsk[]; items: ListItem[] }) {
 function MoveRow({ move }: { move: Move }) {
   const { item, reason } = move;
   return (
-    <Row
-      lead={
-        <ChipList>
-          <li>{reason === "upstream_changed" ? <UpstreamChangedChip note={null} /> : <StageChip stage={item.stage} />}</li>
-        </ChipList>
-      }
-      trail={<Age at={move.since} label={reason === "upstream_changed" ? "Changed" : "Waiting since"} />}
-    >
-      <p>
-        <ItemTitleLink item={item} />
-      </p>
-      <RowNote>
-        {reason === "upstream_changed"
-          ? `${STAGE_LABELS[item.stage]} · ${item.upstreamChangeNote ?? "An upstream thread this item depends on changed state."}`
-          : waitingPhrase(item.waitingOn)}
-      </RowNote>
-    </Row>
+    <Entry item={item} trail={<Age at={move.since} label={reason === "upstream_changed" ? "Changed" : "Waiting since"} />}>
+      <div className={META}>
+        <StageTag stage={item.stage} />
+        {reason === "upstream_changed" ? (
+          <>
+            <UpstreamChanged note={null} />
+            {item.upstreamChangeNote ? <span className="text-[0.8125rem]">{item.upstreamChangeNote}</span> : null}
+          </>
+        ) : (
+          <Waiting waitingOn={item.waitingOn} />
+        )}
+      </div>
+    </Entry>
   );
 }
 
+/** Shown only when the next step is on the J5 side: upstream changed under an item, or the agent has it. */
 function OurMove({ items }: { items: ListItem[] }) {
   const moves = ourMove(items);
   if (moves.length === 0) return null;
   return (
-    <Section note="upstream changed underneath an item, or the giveback agent has the next step" title="Our move">
-      <Box>
-        <RowList>
-          {moves.map((move) => (
-            <MoveRow key={move.item.id} move={move} />
-          ))}
-        </RowList>
-      </Box>
+    <Section count={moves.length} title="Our move">
+      <ul className={LIST}>
+        {moves.map((move) => (
+          <MoveRow key={move.item.id} move={move} />
+        ))}
+      </ul>
     </Section>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Pipeline
+// Pipeline and figures
 // ---------------------------------------------------------------------------
 
-/** Who moves an item on from each stage, as the pipeline defines it. */
-const STAGE_MOVER: Record<Stage, string> = {
-  found: "agent",
-  validating: "agent",
-  deciding: "Jackson",
-  held: "upstream",
-  preparing: "agent",
-  approving: "Jackson",
-  offered: "upstream",
-  closed: "done"
-};
+function Figure({ value, label, title, to }: { value: string; label: string; title?: string; to?: string }) {
+  const body = (
+    <>
+      <span className={cx(SERIF, "text-2xl font-bold leading-7 tabular-nums")}>{value}</span>
+      <span className="text-[0.8125rem]">{label}</span>
+    </>
+  );
+  const frame = "flex items-baseline gap-x-2 rounded-sm";
+  return to ? (
+    <Link className={cx(frame, FOCUS, "hover:underline hover:underline-offset-2")} title={title} to={to}>
+      {body}
+    </Link>
+  ) : (
+    <p className={frame} title={title}>
+      {body}
+    </p>
+  );
+}
 
-function Pipeline({ pipeline }: { pipeline: OverviewView["pipeline"] }) {
+function Pipeline({ overview, items }: { overview: OverviewView; items: ListItem[] }) {
+  const { stats, pipeline } = overview;
+  const merge = medianTimeToMerge(items);
   return (
-    <Section title="Pipeline">
-      <ol className="grid grid-cols-4 gap-1 md:grid-cols-8">
-        {pipeline.map(({ stage, count }) => {
-          const hot = stageWaitsOnJackson(stage);
-          // Held is a side stop, not a step on the path: a dashed edge sets it apart.
-          const side = stage === "held";
-          return (
-            <li key={stage}>
-              <Link
-                className={cx(
-                  FOCUS,
-                  "block h-full rounded-md border px-1.5 py-2.5 text-center",
-                  hot
-                    ? "border-amber-600 bg-amber-100 text-amber-950 hover:border-amber-800 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-100 dark:hover:border-amber-300"
-                    : "border-stone-300 bg-white hover:border-stone-500 dark:border-stone-700 dark:bg-stone-900 dark:hover:border-stone-400",
-                  side && "border-dashed"
-                )}
-                to={itemsHref({ stage })}
-              >
-                <span className="block text-lg font-semibold tabular-nums">{count}</span>
-                <span className="block text-xs">{STAGE_LABELS[stage]}</span>
-                <span className={cx("block text-[0.6875rem]", hot ? "font-semibold" : TEXT_MUTED)}>
-                  <span className="sr-only">{stage === "closed" ? "" : "waits on "}</span>
-                  {STAGE_MOVER[stage]}
-                </span>
-              </Link>
-            </li>
-          );
-        })}
-      </ol>
-      <p className={cx("mt-2 text-xs", TEXT_MUTED)}>
-        Under each stage is who moves an item on from it. The two marked Jackson wait on him. Held is a side stop: a
-        valid candidate with nothing to offer until someone else's upstream change lands. Each stage opens the item
-        list filtered to it.
-      </p>
-    </Section>
+    <section aria-label="Pipeline" className={cx(CARD, "px-2 pb-3 pt-3 sm:px-3")}>
+      <Rail
+        label="Items at each stage"
+        stops={pipeline.map(({ stage, count }) => ({ stage, count, href: itemsHref({ stage }) }))}
+      />
+      <div className="mt-3 flex flex-wrap gap-x-8 gap-y-1 border-t border-(color:--rule) px-1 pt-2.5 sm:px-2">
+        <Figure
+          label={`merged, of ${stats.closed} closed`}
+          to={itemsHref({ outcome: "merged" })}
+          value={String(stats.merged)}
+        />
+        <Figure
+          label="median, PR opened to merged"
+          title={merge.count > 0 ? `Over ${plural(merge.count, "merged item", "merged items")}` : "No merged items yet"}
+          value={merge.medianMs === null ? "–" : formatSpan(merge.medianMs)}
+        />
+      </div>
+    </section>
   );
 }
 
@@ -365,30 +292,45 @@ function Pipeline({ pipeline }: { pipeline: OverviewView["pipeline"] }) {
 // Offered upstream
 // ---------------------------------------------------------------------------
 
-function Dependencies({ links }: { links: readonly LinkView[] }) {
-  return (
-    <>
-      {dependencyLinks(links).map((link) => (
-        <li key={link.id}>
-          <DependencyChip link={link} />
-        </li>
-      ))}
-    </>
-  );
-}
+const OFFERED_GRID = "md:grid md:grid-cols-[11rem_minmax(0,1fr)_8.5rem_6rem] md:gap-x-4";
 
-function OfferedRow({ item, owner, asks }: { item: ListItem; owner: boolean; asks: ListAsk[] }) {
+function OfferedRow({ item, asks }: { item: ListItem; asks: ListAsk[] }) {
+  const now = useNowValue();
   const link = item.primaryLink;
   const quiet = quietState(item);
-  const now = useNowValue();
   const quietLong = now - quiet.since >= WEEK;
+  const live = link ? threadState(link) : null;
+  const dependencies = dependencyLinks(item.dependencyLinks).filter((dependency) => dependency.id !== link?.id);
   return (
-    <Row
-      lead={<RefLead link={link} />}
-      trail={
+    <li className={cx("grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3.5 py-2", OFFERED_GRID)}>
+      {/* Phone: title and activity, then the thread, its checks, and what it waits on. Wide: four columns. */}
+      <div className="order-3 col-span-2 min-w-0 md:order-none md:col-span-1 md:col-start-1 md:row-span-2 md:row-start-1">
+        {link ? <ThreadToken link={link} /> : <span className={cx("text-[0.8125rem]", TEXT_DIM)}>{item.disclosed ? "Nothing of ours" : ""}</span>}
+      </div>
+      <p className="order-1 min-w-0 md:order-none md:col-start-2 md:row-start-1">
+        <ItemTitleLink item={item} notPublic={item.isPublic === false} />
+      </p>
+      <div className="order-5 col-span-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 md:order-none md:col-span-1 md:col-start-2 md:row-start-2">
+        {asks.map((ask) => (
+          <AskTag key={ask.id}>{askAction(ask.kind, ask.label).action}</AskTag>
+        ))}
+        {asks.length > 0 && item.waitingOn === "jackson" ? null : <Waiting quiet={item.waitingOn === "maintainer"} waitingOn={item.waitingOn} />}
+        {item.upstreamChangedAt !== null ? <UpstreamChanged note={item.upstreamChangeNote} /> : null}
+        {dependencies.map((dependency) => (
+          <ThreadToken key={dependency.id} link={dependency} role state />
+        ))}
+      </div>
+      <div className="order-4 col-span-2 min-w-0 empty:hidden md:order-none md:col-span-1 md:col-start-3 md:row-span-2 md:row-start-1 md:empty:block">
+        {/* An open thread's state is in its icon. Anything else is worth its words. */}
+        {link && live && (link.state !== "open" || link.isDraft) ? (
+          <p className={cx("text-[0.8125rem] font-medium", TONE_TEXT[live.tone])}>{live.text}</p>
+        ) : null}
+        {link ? <ThreadSignals link={link} /> : null}
+      </div>
+      <div className="order-2 text-right text-[0.8125rem] md:order-none md:col-start-4 md:row-span-2 md:row-start-1">
         <Age
           at={quiet.since}
-          className={quietLong ? "font-semibold" : undefined}
+          className={quietLong ? "font-bold" : undefined}
           // Neutral wording on purpose: upstream owes no reply, so this states when
           // the thread last moved and never counts anyone's silence.
           label={
@@ -401,100 +343,46 @@ function OfferedRow({ item, owner, asks }: { item: ListItem; owner: boolean; ask
           prefix={quiet.replied ? "active" : "waiting"}
           suffix={quiet.replied ? "ago" : undefined}
         />
-      }
-    >
-      <p>
-        <ItemTitleLink item={item} />
-      </p>
-      <ChipList className="mt-1">
-        {item.isPublic === false ? (
-          <li>
-            <NotPublicChip />
-          </li>
-        ) : null}
-        {asks.map((ask) => (
-          <li key={ask.id}>
-            <Chip tone="you">Needs Jackson · {ASK_KIND_LABELS[ask.kind]}</Chip>
-          </li>
-        ))}
-        {asks.length > 0 && item.waitingOn === "jackson" ? null : (
-          <li>
-            <WaitingChip waitingOn={item.waitingOn} />
-          </li>
-        )}
-        {item.upstreamChangedAt !== null ? (
-          <li>
-            <UpstreamChangedChip note={item.upstreamChangeNote} />
-          </li>
-        ) : null}
-        {link && link.state !== null && (link.state !== "open" || link.isDraft) ? (
-          <li>
-            <LinkStateChip link={link} />
-          </li>
-        ) : null}
-        {link?.ci ? (
-          <li>
-            <CiChip ci={link.ci} />
-          </li>
-        ) : null}
-        {link?.reviewDecision ? (
-          <li>
-            <ReviewChip decision={link.reviewDecision} />
-          </li>
-        ) : null}
-        {link?.macroscopeVerdict ? (
-          <li>
-            <MacroscopeChip verdict={link.macroscopeVerdict} />
-          </li>
-        ) : null}
-        {link && (link.triageBucket !== null || link.triageRank !== null) ? (
-          <li>
-            <TriageChip bucket={link.triageBucket} rank={link.triageRank} />
-          </li>
-        ) : null}
-        {item.disclosed ? (
-          <SilentBoundary>
-            <Dependencies links={item.dependencyLinks} />
-          </SilentBoundary>
-        ) : null}
-      </ChipList>
-      {item.disclosed ? null : <RowNote>{UNDISCLOSED_NOTE}</RowNote>}
-    </Row>
+      </div>
+    </li>
   );
 }
 
-function Offered({ items, owner, asks }: { items: ListItem[]; owner: boolean; asks: ListAsk[] }) {
+function Offered({ items, asks }: { items: ListItem[]; asks: ListAsk[] }) {
   const offered = offeredQuietestFirst(items);
   const asksByItem = openAsksByItem(asks);
   const shown = offered.slice(0, OFFERED_SHOWN);
   return (
     <Section
-      note={offered.length > 0 ? `${offered.length} open · least recently active first` : undefined}
+      aside={
+        offered.length > shown.length ? (
+          <Link className={LINK} to={itemsHref({ stage: "offered" })}>
+            All {offered.length}
+          </Link>
+        ) : undefined
+      }
+      count={offered.length}
       title="Offered upstream"
     >
-      <Box>
-        {offered.length === 0 ? (
-          <EmptyNote>Nothing is offered upstream right now.</EmptyNote>
-        ) : (
-          <RowList>
+      {offered.length === 0 ? (
+        <EmptyNote>Nothing is offered upstream right now.</EmptyNote>
+      ) : (
+        <div className={cx(CARD, "overflow-hidden")}>
+          <div aria-hidden="true" className={cx("hidden border-b border-(color:--rule) px-3.5 py-1.5 text-xs", OFFERED_GRID, TEXT_DIM)}>
+            <span>Thread</span>
+            <span>Item</span>
+            <span>Checks</span>
+            <span className="text-right" title="The last comment or review by anyone other than Jackson, bots excluded. Least recently active first.">
+              Activity
+            </span>
+          </div>
+          <ul className={DIVIDE}>
             {shown.map((item) => (
-              <OfferedRow asks={asksByItem.get(item.id) ?? []} item={item} key={item.id} owner={owner} />
+              <OfferedRow asks={asksByItem.get(item.id) ?? []} item={item} key={item.id} />
             ))}
-          </RowList>
-        )}
-      </Box>
-      {offered.length > shown.length ? (
-        <p className="mt-2 text-xs">
-          <Link className={LINK} to={itemsHref({ stage: "offered" })}>
-            All {offered.length} offered items
-          </Link>
-        </p>
-      ) : null}
-      {offered.length > 0 ? (
-        <p className={cx("mt-2 text-xs", TEXT_MUTED)}>
-          Activity is the last comment or review by anyone other than Jackson, bots excluded.
-        </p>
-      ) : null}
+          </ul>
+        </div>
+      )}
     </Section>
   );
 }
@@ -505,64 +393,35 @@ function Offered({ items, owner, asks }: { items: ListItem[]; owner: boolean; as
 
 function CandidateRow({ item }: { item: ListItem }) {
   return (
-    <Row
-      lead={
-        <ChipList>
-          <li>
-            <Chip tone={item.waitingOn === "jackson" ? "you" : "neutral"}>{STAGE_LABELS[item.stage]}</Chip>
-          </li>
-        </ChipList>
-      }
-      trail={<Age at={item.foundAt} label="Found" prefix="found" suffix="ago" />}
-    >
-      <p>
-        <ItemTitleLink item={item} />
-        {item.isPublic === false ? (
-          <>
-            {" "}
-            <NotPublicChip />
-          </>
-        ) : null}
-      </p>
-      <RowNote>
-        {waitingPhrase(item.waitingOn)} ·{" "}
-        {!item.disclosed ? (
-          UNDISCLOSED_NOTE
-        ) : item.lastValidatedAt !== null ? (
-          <>
-            last validated <DateText at={item.lastValidatedAt} />
-          </>
+    <Entry item={item} trail={<Age at={item.foundAt} label="Found" prefix="found" suffix="ago" />}>
+      <div className={META}>
+        <StageTag hot={stageWaitsOnJackson(item.stage) && item.waitingOn === "jackson"} stage={item.stage} />
+        {stageWaitsOnJackson(item.stage) && item.waitingOn === "jackson" ? null : <Waiting waitingOn={item.waitingOn} />}
+        {!item.disclosed ? null : item.lastValidatedAt !== null ? (
+          <span className={cx("text-[0.8125rem]", TEXT_DIM)}>
+            validated <DateText at={item.lastValidatedAt} />
+          </span>
         ) : (
-          "not yet validated"
+          <span className={cx("text-[0.8125rem]", TEXT_DIM)}>not yet validated</span>
         )}
-      </RowNote>
-    </Row>
+      </div>
+    </Entry>
   );
 }
 
 function Candidates({ items }: { items: ListItem[] }) {
   const list = candidates(items);
-  const hidden = list.filter((item) => !item.disclosed).length;
   return (
-    <Section
-      note={
-        list.length > 0
-          ? `${plural(list.length, "item", "items")} not yet routed${hidden > 0 ? ` · ${hidden} undisclosed` : ""}`
-          : undefined
-      }
-      title="Candidates"
-    >
-      <Box>
-        {list.length === 0 ? (
-          <EmptyNote>No candidates are being checked right now.</EmptyNote>
-        ) : (
-          <RowList>
-            {list.map((item) => (
-              <CandidateRow item={item} key={item.id} />
-            ))}
-          </RowList>
-        )}
-      </Box>
+    <Section count={list.length} title="Candidates">
+      {list.length === 0 ? (
+        <EmptyNote>No candidates are being checked right now.</EmptyNote>
+      ) : (
+        <ul className={LIST}>
+          {list.map((item) => (
+            <CandidateRow item={item} key={item.id} />
+          ))}
+        </ul>
+      )}
     </Section>
   );
 }
@@ -574,38 +433,14 @@ function Candidates({ items }: { items: ListItem[] }) {
 function HeldRow({ item }: { item: ListItem }) {
   const links = dependencyLinks(item.dependencyLinks);
   return (
-    <Row
-      // Plain text, not a chip: the longer phrases would wrap inside a pill in this narrow column.
-      lead={
-        item.waitingOn === "jackson" ? (
-          <WaitingChip waitingOn={item.waitingOn} />
-        ) : (
-          <p className={cx("text-xs", TEXT_MUTED)}>{waitingPhrase(item.waitingOn)}</p>
-        )
-      }
-      trail={<Age at={item.waitingSince} label="Waiting since" prefix="for" />}
-    >
-      <p>
-        <ItemTitleLink item={item} />
-        {item.isPublic === false ? (
-          <>
-            {" "}
-            <NotPublicChip />
-          </>
-        ) : null}
-      </p>
-      {!item.disclosed ? (
-        <RowNote>{UNDISCLOSED_NOTE}</RowNote>
-      ) : links.length === 0 ? (
-        <RowNote>No covering or base thread is recorded for this item.</RowNote>
-      ) : (
-        <ChipList className="mt-1">
-          <SilentBoundary>
-            <Dependencies links={links} />
-          </SilentBoundary>
-        </ChipList>
-      )}
-    </Row>
+    <Entry item={item} trail={<Age at={item.waitingSince} label="Waiting since" prefix="waiting" />}>
+      <div className={META}>
+        {item.waitingOn === "jackson" || links.length === 0 ? <Waiting waitingOn={item.waitingOn} /> : null}
+        {links.map((link) => (
+          <ThreadToken key={link.id} link={link} role state />
+        ))}
+      </div>
+    </Entry>
   );
 }
 
@@ -614,14 +449,12 @@ function Held({ items }: { items: ListItem[] }) {
   const list = heldItems(items);
   if (list.length === 0) return null;
   return (
-    <Section note="valid, with nothing to offer until someone else's upstream change lands" title="Held">
-      <Box>
-        <RowList>
-          {list.map((item) => (
-            <HeldRow item={item} key={item.id} />
-          ))}
-        </RowList>
-      </Box>
+    <Section count={list.length} title="Held">
+      <ul className={LIST}>
+        {list.map((item) => (
+          <HeldRow item={item} key={item.id} />
+        ))}
+      </ul>
     </Section>
   );
 }
@@ -632,61 +465,40 @@ function Held({ items }: { items: ListItem[] }) {
 
 function ClosedRow({ item }: { item: ListItem }) {
   return (
-    <Row
-      lead={<RefLead link={item.primaryLink} />}
-      trail={<Age at={closedTime(item)} label="Closed" suffix="ago" />}
-    >
-      <p>
-        <ItemTitleLink item={item} />
-      </p>
-      <ChipList className="mt-1">
-        {item.isPublic === false ? (
-          <li>
-            <NotPublicChip />
-          </li>
-        ) : null}
-        {item.outcome ? (
-          <li>
-            <OutcomeChip outcome={item.outcome} />
-          </li>
-        ) : null}
-        {item.followUpState === "owed" || item.followUpState === "done" ? (
-          <li>
-            <FollowUpChip state={item.followUpState} />
-          </li>
-        ) : null}
-      </ChipList>
-      {!item.disclosed ? (
-        <RowNote>Details of this candidate were not disclosed.</RowNote>
-      ) : item.followUpNote ? (
-        <RowNote>J5 follow-up: {item.followUpNote}</RowNote>
-      ) : null}
-    </Row>
+    <Entry item={item} trail={<Age at={closedTime(item)} label="Closed" suffix="ago" />}>
+      <div className={META}>
+        {item.outcome ? <OutcomeTag outcome={item.outcome} /> : null}
+        {item.primaryLink ? <ThreadToken link={item.primaryLink} /> : null}
+        <FollowUp state={item.followUpState} />
+      </div>
+      {item.followUpNote ? <p className={cx("mt-0.5 text-[0.8125rem]", TEXT_DIM)}>J5 follow-up: {item.followUpNote}</p> : null}
+    </Entry>
   );
 }
 
 function RecentlyClosed({ items, total }: { items: ListItem[]; total: number }) {
   const list = recentlyClosed(items, CLOSED_SHOWN);
   return (
-    <Section note={total > 0 ? `latest ${list.length} of ${total}` : undefined} title="Recently closed">
-      <Box>
-        {list.length === 0 ? (
-          <EmptyNote>Nothing has closed yet.</EmptyNote>
-        ) : (
-          <RowList>
-            {list.map((item) => (
-              <ClosedRow item={item} key={item.id} />
-            ))}
-          </RowList>
-        )}
-      </Box>
-      {total > list.length ? (
-        <p className="mt-2 text-xs">
+    <Section
+      aside={
+        total > list.length ? (
           <Link className={LINK} to={itemsHref({ stage: "closed" })}>
-            All {total} closed items
+            All {total}
           </Link>
-        </p>
-      ) : null}
+        ) : undefined
+      }
+      count={total}
+      title="Recently closed"
+    >
+      {list.length === 0 ? (
+        <EmptyNote>Nothing has closed yet.</EmptyNote>
+      ) : (
+        <ul className={LIST}>
+          {list.map((item) => (
+            <ClosedRow item={item} key={item.id} />
+          ))}
+        </ul>
+      )}
     </Section>
   );
 }
@@ -694,6 +506,18 @@ function RecentlyClosed({ items, total }: { items: ListItem[]; total: number }) 
 // ---------------------------------------------------------------------------
 // The page
 // ---------------------------------------------------------------------------
+
+function Intro({ children }: { children?: ComponentChildren }) {
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-1 py-3">
+      <h1 className="sr-only">Overview</h1>
+      <p className={cx("text-[0.8125rem]", TEXT_DIM)}>
+        Bug fixes found while maintaining J5 Code, a fork of T3 Code, and offered back upstream.
+      </p>
+      {children}
+    </div>
+  );
+}
 
 function OverviewBody({
   overview,
@@ -711,42 +535,61 @@ function OverviewBody({
     return (
       <>
         {/* With nothing recorded there is no upstream state to be stale, so only a run that happened is reported. */}
-        {overview.sync.lastGithubSyncAt !== null ? <SyncLine owner={owner} sync={overview.sync} /> : null}
-        <Box className="mt-8">
-          <div className="px-3.5 py-4">
-            <h2 className="font-semibold">No items have been recorded yet</h2>
-            <p className={cx("mt-1", TEXT_MUTED)}>
-              Items appear here when a J5 agent records a candidate fix.{" "}
-              <Link className={LINK} to="/about">
-                How it works
-              </Link>
-            </p>
-          </div>
-        </Box>
+        <Intro>{overview.sync.lastGithubSyncAt !== null ? <SyncLine owner={owner} sync={overview.sync} /> : null}</Intro>
+        <div className={cx(CARD, "max-w-2xl px-3.5 py-4")}>
+          <h2 className={cx(SERIF, "text-lg font-bold")}>No items have been recorded yet</h2>
+          <p className={cx("mt-1", TEXT_DIM)}>
+            Items appear here when a J5 agent records a candidate fix.{" "}
+            <Link className={LINK} to="/about">
+              How it works
+            </Link>
+          </p>
+        </div>
       </>
     );
   }
   return (
     <>
-      <SyncLine owner={owner} sync={overview.sync} />
-      <Tiles items={items} overview={overview} />
-      <NeedsJackson asks={overview.openAsks} items={items} />
-      <OurMove items={items} />
-      <Pipeline pipeline={overview.pipeline} />
-      <Offered asks={overview.openAsks} items={items} owner={owner} />
-      <Candidates items={items} />
-      <Held items={items} />
-      <RecentlyClosed items={items} total={overview.stats.closed} />
+      <Intro>
+        <SyncLine owner={owner} sync={overview.sync} />
+      </Intro>
+      {/*
+        One column on a phone, in reading order. From xl: the queue and the quieter
+        lists on the left, the pipeline and the offered table on the right. From
+        1800 px: three columns, with the quieter lists in the third. The two outer
+        wrappers are columns only at xl; elsewhere their children sit in the grid directly.
+      */}
+      <div className="grid grid-cols-1 gap-x-8 gap-y-7 xl:grid-cols-[minmax(0,5fr)_minmax(0,8fr)] min-[112.5rem]:grid-cols-[minmax(0,5fr)_minmax(0,8fr)_minmax(0,5fr)] min-[112.5rem]:grid-rows-[auto_1fr]">
+        <div className="contents xl:block xl:space-y-7 min-[112.5rem]:contents">
+          <div className="order-1 space-y-7 min-[112.5rem]:col-start-1 min-[112.5rem]:row-span-2 min-[112.5rem]:row-start-1">
+            <NeedsJackson asks={overview.openAsks} items={items} />
+            <OurMove items={items} />
+          </div>
+          <div className="order-3 space-y-7 min-[112.5rem]:col-start-3 min-[112.5rem]:row-start-1">
+            <Candidates items={items} />
+            <Held items={items} />
+          </div>
+        </div>
+        <div className="contents xl:block xl:space-y-7 min-[112.5rem]:contents">
+          <div className="order-2 space-y-7 min-[112.5rem]:col-start-2 min-[112.5rem]:row-span-2 min-[112.5rem]:row-start-1">
+            <Pipeline items={items} overview={overview} />
+            <Offered asks={overview.openAsks} items={items} />
+          </div>
+          <div className="order-4 min-[112.5rem]:col-start-3 min-[112.5rem]:row-start-2">
+            <RecentlyClosed items={items} total={overview.stats.closed} />
+          </div>
+        </div>
+      </div>
     </>
   );
 }
 
 function OverviewSkeleton() {
   return (
-    <>
-      <Skeleton label="Loading the overview" rows={3} />
+    <div className="grid gap-x-8 xl:grid-cols-[minmax(0,5fr)_minmax(0,8fr)]">
       <Skeleton label="Loading the overview" rows={5} />
-    </>
+      <Skeleton label="Loading the overview" rows={5} />
+    </div>
   );
 }
 

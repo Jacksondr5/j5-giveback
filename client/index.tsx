@@ -17,7 +17,7 @@ import {
   useLocation
 } from "lakebed/client";
 import { Shell } from "./components/Shell";
-import { BUTTON, ErrorState, Skeleton, TEXT_MUTED, cx } from "./components/ui";
+import { BUTTON, CARD, ErrorState, SERIF, Skeleton, TEXT_DIM, cx } from "./components/ui";
 import { ViewerContext, client } from "./data";
 import { AboutPage } from "./pages/About";
 import { ItemPage } from "./pages/Item";
@@ -59,13 +59,13 @@ function Site() {
 function SessionProblem({ message }: { message: string }) {
   return (
     <Shell>
-      <div className="mt-8 rounded-md border border-stone-300 bg-white p-4 dark:border-stone-700 dark:bg-stone-900" role="alert">
-        <h1 className="font-semibold">The session could not be started</h1>
-        <p className={cx("mt-1", TEXT_MUTED)}>
+      <div className={cx(CARD, "mt-6 max-w-2xl p-4")} role="alert">
+        <h1 className={cx(SERIF, "text-lg font-bold")}>The session could not be started</h1>
+        <p className={cx("mt-1", TEXT_DIM)}>
           Reading this site needs no account, but the browser session behind it failed to start. Trying again usually
           fixes it.
         </p>
-        <p className={cx("mt-2 break-words font-mono text-xs", TEXT_MUTED)}>{message}</p>
+        <p className={cx("mt-2 break-words text-xs", TEXT_DIM)}>{message}</p>
         <p className="mt-3 flex flex-wrap gap-2">
           <button className={BUTTON} onClick={() => void retryAuth()} type="button">
             Try again
