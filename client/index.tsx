@@ -1,71 +1,111 @@
-// Placeholder client. It renders the public overview as JSON so the server can be
-// exercised, and shows a signed-in user their id for the OWNER_IDS allow-list.
-// The real pages are built in a separate task.
+// The giveback dashboard client. A read-only site: four pages, sign-in, and filters.
+//
+//   pages/       one file per page
+//   components/  the frame, chips and other shared pieces
+//   lib/         pure formatting and derivation, with no DOM and no Lakebed
+//   data.ts      the typed Lakebed client and shared hooks
 
-import { canAccessApp, createClient, retryAuth, SignInWithGoogle, signOut, useAuth } from "lakebed/client";
-import type app from "../server/index";
+import {
+  ErrorBoundary,
+  Route,
+  Router,
+  Routes,
+  SignInWithGoogle,
+  canAccessApp,
+  retryAuth,
+  useAuth,
+  useLocation
+} from "lakebed/client";
+import { Shell } from "./components/Shell";
+import { BUTTON, ErrorState, Skeleton, TEXT_MUTED, cx } from "./components/ui";
+import { ViewerContext, client } from "./data";
+import { AboutPage } from "./pages/About";
+import { ItemPage } from "./pages/Item";
+import { ItemsPage } from "./pages/Items";
+import { NotFoundPage } from "./pages/NotFound";
+import { OverviewPage } from "./pages/Overview";
 
-const client = createClient<typeof app>();
-
-function Json({ value }: { value: unknown }) {
+function Pages() {
+  const { pathname } = useLocation();
   return (
-    <pre className="overflow-x-auto whitespace-pre-wrap break-words border border-neutral-800 p-3 text-xs">
-      {value === undefined ? "Loading..." : JSON.stringify(value, null, 2)}
-    </pre>
+    // Keyed by path, so a failed page does not stay failed after navigating away.
+    <ErrorBoundary fallback={(error, retry) => <ErrorState error={error} retry={retry} />} key={pathname}>
+      <Routes>
+        <Route element={<OverviewPage />} path="/" />
+        <Route element={<ItemsPage />} path="/items" />
+        <Route element={<ItemPage />} path="/items/:ref" />
+        <Route element={<AboutPage />} path="/about" />
+        {/* Lakebed finishes Google sign-in here and then returns to the page the visitor was on. */}
+        <Route element={<Skeleton label="Signing in" rows={2} />} path="/auth/callback" />
+        <Route element={<NotFoundPage />} path="*" />
+      </Routes>
+    </ErrorBoundary>
   );
 }
 
-function Data() {
+/** Mounted only once the session exists. Asks the server who the caller is, then renders the pages. */
+function Site() {
   const viewer = client.useQuery("viewer");
-  const overview = client.useQuery("overview");
   return (
-    <div className="space-y-6">
-      <section>
-        <h2 className="mb-2 text-lg font-semibold">Viewer</h2>
-        <Json value={viewer} />
-        {viewer?.signedIn && !viewer.isOwner ? (
-          <p className="mt-2 text-sm text-neutral-400">
-            To see private fields, add the user id above to the OWNER_IDS server secret.
-          </p>
-        ) : null}
-      </section>
-      <section>
-        <h2 className="mb-2 text-lg font-semibold">Overview</h2>
-        <Json value={overview} />
-      </section>
-    </div>
+    <ViewerContext.Provider value={viewer}>
+      <Shell>
+        <Pages />
+      </Shell>
+    </ViewerContext.Provider>
+  );
+}
+
+/** The session could not be started or renewed. Data stays unmounted until it recovers. */
+function SessionProblem({ message }: { message: string }) {
+  return (
+    <Shell>
+      <div className="mt-8 rounded-md border border-stone-300 bg-white p-4 dark:border-stone-700 dark:bg-stone-900" role="alert">
+        <h1 className="font-semibold">The session could not be started</h1>
+        <p className={cx("mt-1", TEXT_MUTED)}>
+          Reading this site needs no account, but the browser session behind it failed to start. Trying again usually
+          fixes it.
+        </p>
+        <p className={cx("mt-2 break-words font-mono text-xs", TEXT_MUTED)}>{message}</p>
+        <p className="mt-3 flex flex-wrap gap-2">
+          <button className={BUTTON} onClick={() => void retryAuth()} type="button">
+            Try again
+          </button>
+          <SignInWithGoogle className={cx(BUTTON, "cursor-pointer")}>Sign in with Google</SignInWithGoogle>
+        </p>
+      </div>
+    </Shell>
+  );
+}
+
+function Gate() {
+  const auth = useAuth();
+  if (auth.isLoading) {
+    return (
+      <Shell>
+        <Skeleton rows={3} />
+      </Shell>
+    );
+  }
+  if (!canAccessApp()) {
+    return <SessionProblem message={auth.error ?? "No session is available."} />;
+  }
+  return (
+    <ErrorBoundary
+      fallback={(error, retry) => (
+        <Shell>
+          <ErrorState error={error} retry={retry} />
+        </Shell>
+      )}
+    >
+      <Site />
+    </ErrorBoundary>
   );
 }
 
 export function App() {
-  const auth = useAuth();
-  if (auth.isLoading) {
-    return null;
-  }
   return (
-    <main className="min-h-screen bg-black px-4 py-8 text-white">
-      <div className="mx-auto max-w-3xl">
-        <div className="mb-6 flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-bold">Giveback dashboard</h1>
-          {auth.isSignedIn ? (
-            <button className="border border-neutral-700 px-3 py-1.5 text-sm" type="button" onClick={() => void signOut()}>
-              Sign out {auth.displayName}
-            </button>
-          ) : (
-            <SignInWithGoogle className="border border-neutral-700 px-3 py-1.5 text-sm" />
-          )}
-        </div>
-        {canAccessApp() ? (
-          <Data />
-        ) : (
-          <section>
-            <p role="alert">{auth.error ?? "The session could not be started."}</p>
-            <button className="mt-3 border border-white px-3 py-1.5 text-sm" type="button" onClick={() => void retryAuth()}>
-              Retry
-            </button>
-          </section>
-        )}
-      </div>
-    </main>
+    <Router>
+      <Gate />
+    </Router>
   );
 }
