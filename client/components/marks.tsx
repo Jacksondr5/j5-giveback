@@ -183,12 +183,15 @@ export function ThreadSignals({ link, words = false, className }: { link: LinkVi
       ) : null}
       {triage ? (
         <li
-          className="inline-flex items-center gap-1 whitespace-nowrap text-sm leading-5"
+          className="inline-flex min-w-0 items-start gap-1 text-sm leading-5"
           title="Where upstream's triage board has this thread: its bucket, and its rank in the bucket"
         >
-          <Icon className={TEXT_DIM} name="project" size={14} />
-          Triage: {link.triageBucket ?? "unsorted"}
-          {link.triageRank !== null ? <span className="tabular-nums">#{link.triageRank}</span> : null}
+          <Icon className={cx("mt-[0.1875rem]", TEXT_DIM)} name="project" size={14} />
+          {/* A bucket name is free text and can be long: it wraps inside its column. */}
+          <span className="min-w-0 break-words">
+            Triage: {link.triageBucket ?? "unsorted"}
+            {link.triageRank !== null ? <span className="tabular-nums"> #{link.triageRank}</span> : null}
+          </span>
         </li>
       ) : null}
     </ul>
