@@ -266,7 +266,19 @@ async function main() {
   client.close();
 
   // The agent endpoints must refuse a caller with no secret.
-  for (const [method, route] of [["GET", "/api/agent/export"], ["POST", "/api/agent/items"], ["POST", "/api/agent/asks"], ["POST", "/api/agent/events"], ["POST", "/api/refresh"]]) {
+  // The watch list names the links and slugs of non-public items, so it matters as much as the export.
+  const guarded = [
+    ["GET", "/api/agent/export"],
+    ["GET", "/api/agent/watchlist"],
+    ["POST", "/api/agent/items"],
+    ["POST", "/api/agent/items/delete"],
+    ["POST", "/api/agent/asks"],
+    ["POST", "/api/agent/events"],
+    ["POST", "/api/agent/events/delete"],
+    ["POST", "/api/agent/links"],
+    ["POST", "/api/refresh"]
+  ];
+  for (const [method, route] of guarded) {
     const response = await fetch(`${baseUrl}${route}`, { method, ...(method === "POST" ? { body: "{}" } : {}) });
     const body = await response.text();
     responses.push({ label: `${method} ${route} (no bearer)`, raw: body });

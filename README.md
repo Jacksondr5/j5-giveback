@@ -28,7 +28,7 @@ A public, read-only dashboard of the items J5 Code gives back to upstream reposi
 
 | Query | Who | Returns |
 |---|---|---|
-| `overview` | Anyone | Stats, pipeline counts, open asks, sync state |
+| `overview` | Anyone | Stats, pipeline counts (the `held` side stop included), open asks, sync state |
 | `items` | Anyone | Every item with its primary link |
 | `item(ref)` | Anyone | One item by slug or id, with links, asks and public events |
 | `viewer` | Anyone | Whether the caller is signed in, their own user id, and whether they are an owner |
@@ -69,7 +69,7 @@ npx lakebed dev --port 4517
 
 # In another terminal:
 export GIVEBACK_URL=http://127.0.0.1:4517 GIVEBACK_ENV_FILE=.env.lakebed.server
-scripts/giveback load scripts/seed.json   # every stage and outcome, a non-public item, asks, events
+scripts/giveback load scripts/seed.json   # every stage and outcome, two held items, a non-public item, asks, events
 scripts/giveback refresh                  # reads the real upstream PRs in the seed
 scripts/privacy-check scripts/seed.json   # exits 0 when nothing private is exposed
 ```
