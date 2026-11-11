@@ -8,6 +8,10 @@
 //   GIVEBACK_URL=http://127.0.0.1:3000 GIVEBACK_ENV_FILE=.env.lakebed.server \
 //     scripts/privacy-check [scripts/seed.json]
 //
+// The search is by substring, so a private value that is an ordinary word (say
+// "changed", which is part of "stage_changed") is reported as a leak when it is
+// not one. Seed and test data should use distinctive private values.
+//
 // Local only: it connects with the `lakebed_guest` test override, which a hosted
 // deploy does not accept. Needs Node 22 or newer (global WebSocket).
 "use strict";
