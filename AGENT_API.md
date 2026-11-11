@@ -480,4 +480,4 @@ The whole dashboard may store 1 MiB, and Lakebed allows 1,000 write requests per
 
 Each error names the value by its path in the request. Fix every one and send the whole request again.
 
-There is no endpoint that deletes an item or renames a slug. Close a mistaken item with the outcome `dropped`.
+No endpoint renames a slug. To undo a mistaken item, use `POST /api/agent/items/delete`; an item that ran its course is closed with an outcome instead.
