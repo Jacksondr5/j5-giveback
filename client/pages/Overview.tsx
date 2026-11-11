@@ -36,6 +36,7 @@ import {
   dependencyLinks,
   heldItems,
   medianTimeToMerge,
+  offeredAndClosed,
   offeredQuietestFirst,
   openAsksByItem,
   ourMove,
@@ -296,7 +297,8 @@ function Pipeline({ overview, items }: { overview: OverviewView; items: ListItem
       />
       <div className="mt-3 flex flex-wrap gap-x-8 gap-y-1 border-t border-(color:--rule) px-1 pt-2.5 sm:px-2">
         <Figure
-          label={`merged, of ${stats.closed} closed`}
+          label={`merged, of ${offeredAndClosed(items)} offered and closed`}
+          title="Closed items that had something of ours posted upstream. Candidates closed without an offer are not counted."
           to={itemsHref({ outcome: "merged" })}
           value={String(stats.merged)}
         />

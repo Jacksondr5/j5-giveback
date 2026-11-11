@@ -23,7 +23,7 @@ function NavLink({ to, current, children }: { to: string; current: boolean; chil
 /** The return arrow of the favicon. */
 function Mark() {
   return (
-    <svg aria-hidden="true" className="shrink-0" height="22" viewBox="0 0 64 64" width="22">
+    <svg aria-hidden="true" className="shrink-0 self-center" height="22" viewBox="0 0 64 64" width="22">
       <rect fill="#1c1917" height="64" rx="14" width="64" />
       <g fill="none" stroke="#f5b301" stroke-linecap="round" stroke-linejoin="round" stroke-width="6.5">
         <path d="M43 46H27a12 12 0 0 1 0-24h18" />
@@ -112,9 +112,13 @@ export function Shell({ children }: { children: ComponentChildren }) {
           Skip to content
         </a>
         <header className="border-b border-(color:--rule) bg-(--card)">
-          <div className="mx-auto flex max-w-[150rem] flex-wrap items-center gap-x-8 px-4 pt-2.5 sm:px-6 xl:px-8">
-            <p className={cx(SERIF, "w-full pb-1 text-[1.0625rem] font-bold leading-6 sm:w-auto sm:pb-2")}>
-              <Link className={cx(FOCUS, "inline-flex items-center gap-2 rounded-sm")} to="/">
+          <div className="mx-auto flex max-w-[150rem] flex-wrap items-center gap-x-8 px-4 pt-2.5 sm:items-baseline sm:px-6 xl:px-8">
+            {/*
+              From sm the name and the nav links share a baseline. The mark centres
+              itself, so the name's baseline comes from its text, not from the mark.
+            */}
+            <p className={cx(SERIF, "w-full pb-1 text-[1.0625rem] font-bold leading-6 sm:w-auto sm:pb-0")}>
+              <Link className={cx(FOCUS, "inline-flex items-baseline gap-2 rounded-sm")} to="/">
                 <Mark />
                 {SITE_NAME}
               </Link>

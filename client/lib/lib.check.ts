@@ -13,6 +13,7 @@ import {
   heldItems,
   median,
   medianTimeToMerge,
+  offeredAndClosed,
   offeredQuietestFirst,
   openAsksByItem,
   ourMove,
@@ -177,6 +178,16 @@ const merged = [
 ];
 equal(medianTimeToMerge(merged), { medianMs: 6 * DAY, count: 2 }, "median time to merge");
 equal(medianTimeToMerge([item("e")]), { medianMs: null, count: 0 }, "no merged items");
+equal(
+  offeredAndClosed([
+    item("m", { stage: "closed", outcome: "merged", primaryLink: link({ state: "merged" }) }),
+    item("t", { stage: "closed", outcome: "fixed_upstream", primaryLink: link({ ownership: "theirs" }) }),
+    item("n", { stage: "closed", outcome: "dropped" }),
+    item("o", { stage: "offered", primaryLink: link() })
+  ]),
+  1,
+  "closed after an offer: only closed items with a thread of ours"
+);
 console.log("ok  statistics");
 
 // --- Offered: quietest first ------------------------------------------------------
@@ -388,8 +399,9 @@ equal(
 );
 equal(find("12 item"), ["pr-twelve"], "a bare number beside another word is text only");
 
-// Where an item's page is: the slug, the ID for an item with no slug, the row id until it has a number.
-equal(itemPath({ id: "row-1", slug: "some-fix", number: 4 }), "/items/some-fix", "a disclosed item links by slug");
+// Where an item's page is: its ID, or until it has a number its slug, or its row id when it has neither.
+equal(itemPath({ id: "row-1", slug: "some-fix", number: 4 }), `/items/${formatItemId(4)}`, "a numbered item links by ID");
+equal(itemPath({ id: "row-1", slug: "some-fix", number: null }), "/items/some-fix", "an item with no number yet links by slug");
 equal(itemPath({ id: "row-2", slug: null, number: 7 }), `/items/${formatItemId(7)}`, "an undisclosed item links by ID");
 equal(itemPath({ id: "row-3", slug: null, number: null }), "/items/row-3", "an undisclosed item with no number links by row id");
 equal(itemPath({ id: "row-4", slug: null }), "/items/row-4", "a reference with no number field");

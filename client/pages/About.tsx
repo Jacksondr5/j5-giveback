@@ -5,11 +5,10 @@ import { MAIN_PATH_STAGES, STAGE_LABELS, type Stage } from "../../shared/enums";
 import { formatItemId } from "../../shared/itemId";
 import { Icon, type IconName } from "../components/icons";
 import { SideGlyph } from "../components/marks";
-import { ExternalLink, ITEM_ID, PRIVATE_BLOCK, SERIF, TEXT_DIM, TONE_TEXT, YOU_TAG, cx } from "../components/ui";
+import { ITEM_ID, PRIVATE_BLOCK, SERIF, TEXT_DIM, TONE_TEXT, YOU_TAG, cx } from "../components/ui";
 import { useTitle } from "../data";
 import { stageIcon, type Tone } from "../lib/present";
 
-const CONTRIBUTING_URL = "https://github.com/pingdotgg/t3code/blob/main/CONTRIBUTING.md";
 
 /** One line per stage, written for a visitor. */
 const STAGE_PROSE: Record<Stage, string> = {
@@ -46,12 +45,12 @@ export function AboutPage() {
     <article className="pb-4 pt-4 text-[0.9375rem] leading-relaxed">
       <h1 className={cx(SERIF, "text-2xl font-bold leading-8")}>How it works</h1>
       <p className="mt-2 max-w-[44rem]">
-        J5 Code is a fork of T3 Code that Jackson maintains. Keeping a fork current means reading and running the
+        J5 Code is a fork of T3 Code that Jackson and others maintain. Keeping a fork current means reading and running the
         upstream code every day, and that turns up bugs. When a fix would be useful upstream too, it is offered back.
         This site is the record of those offers.
       </p>
 
-      <div className="mt-6 grid gap-x-12 gap-y-8 lg:grid-cols-2 min-[106rem]:grid-cols-3">
+      <div className="mt-6 grid gap-x-12 gap-y-8 lg:grid-cols-2">
         <section className="max-w-[40rem]">
           <Heading>The stages</Heading>
           <ol className="mt-2 space-y-1.5">
@@ -165,37 +164,6 @@ export function AboutPage() {
           </p>
         </section>
 
-        <section className="max-w-[40rem]">
-          <Heading>The rules it follows</Heading>
-          <p className="mt-2">
-            Every offer to T3 Code follows its <ExternalLink href={CONTRIBUTING_URL}>CONTRIBUTING</ExternalLink> rules:
-          </p>
-          <ul className="mt-2 list-disc space-y-1 pl-5">
-            <li>A small fix for an obvious bug goes straight to a pull request.</li>
-            <li>A substantial bug goes through an issue first, for a maintainer to triage.</li>
-            <li>A feature needs a maintainer's approval before any code is offered.</li>
-            <li>One problem per pull request.</li>
-            <li>Evidence is required: how the problem was established and how the change was checked.</li>
-          </ul>
-
-          <Heading>Who does the work</Heading>
-          <p className="mt-2">
-            AI agents do the work on Jackson's behalf: they find candidates, check them, and prepare the code and the
-            text. Nothing is posted upstream until Jackson has approved it, and every post says who wrote it.
-          </p>
-
-          <Heading>What upstream owes</Heading>
-          <p className="mt-2">
-            Nothing. Maintainers may merge, rewrite, defer or decline anything offered, in their own time. The ages
-            shown here measure this project's own waiting. They are not a request.
-          </p>
-
-          <Heading>Undisclosed candidates</Heading>
-          <p className="mt-2">
-            Some candidates are listed without a title. They are counted, and their details are withheld until they are
-            offered upstream.
-          </p>
-        </section>
       </div>
     </article>
   );

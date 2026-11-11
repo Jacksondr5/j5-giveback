@@ -134,6 +134,15 @@ export function median(values: readonly number[]): number | null {
   return lower === undefined ? upper : (lower + upper) / 2;
 }
 
+/**
+ * How many closed items had something of ours posted upstream. This is what a
+ * merged count is fairly compared with: a candidate that was closed without an
+ * offer was never something upstream could merge.
+ */
+export function offeredAndClosed(items: readonly ListItem[]): number {
+  return items.filter((item) => item.stage === "closed" && item.primaryLink?.ownership === "ours").length;
+}
+
 /** When a merged item's change landed: GitHub's merge time, or the item's close time until the first sync. */
 export function mergedTime(item: ListItem): number | null {
   if (item.outcome !== "merged") return null;

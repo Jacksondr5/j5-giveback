@@ -22,7 +22,7 @@ import type { ListItem } from "./derive";
  * its ID ("GB-12") is used, or its row id until it has a number.
  */
 export function itemPath(item: { id: string; slug: string | null; number?: number | null }): string {
-  return `/items/${encodeURIComponent(item.slug ?? itemIdOf(item) ?? item.id)}`;
+  return `/items/${encodeURIComponent(itemIdOf(item) ?? item.slug ?? item.id)}`;
 }
 
 /** A colour role. Always paired with an icon shape and words, never used alone. */

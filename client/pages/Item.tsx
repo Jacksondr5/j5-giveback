@@ -3,6 +3,7 @@
 
 import { Link, useParams } from "lakebed/client";
 import type { ComponentChildren } from "preact";
+import { useEffect } from "preact/hooks";
 import type { EventView, ItemDetailView, ItemPrivateView, LinkView, OwnerItemDetailView } from "../../shared/api";
 import {
   EVENT_ACTOR_LABELS,
@@ -42,7 +43,7 @@ import {
 import { client, useTitle, useViewer } from "../data";
 import { asksForItem, linksByRole, type ListAsk, type ListItem } from "../lib/derive";
 import { WEEK, originRefUrl, shortSha } from "../lib/format";
-import { askAction, commentHost, listThreads, roleHint, roleWord, threadSide } from "../lib/present";
+import { askAction, commentHost, itemPath, listThreads, roleHint, roleWord, threadSide } from "../lib/present";
 import { NotFound } from "./NotFound";
 
 type Detail = (ItemDetailView | OwnerItemDetailView) & { private?: ItemPrivateView | null };
@@ -400,22 +401,28 @@ function Undisclosed({ detail }: { detail: Detail }) {
   const { item } = detail;
   return (
     <>
-      <Header item={item} />
-      <p className="max-w-2xl">{UNDISCLOSED_TIP}</p>
-      <div className="mt-5 grid items-start gap-x-8 gap-y-6 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)]">
-        {/* The route of an undisclosed item is withheld, so its line never claims a decision. */}
-        <Tracker everOffered={false} routeChosen={false} stage={item.stage} />
-        <Facts>
-          <Fact term="Found">
-            <DateText at={item.foundAt} />
-          </Fact>
-          <Fact term="Waiting since">
-            <DateText at={item.waitingSince} /> <span className={TEXT_DIM}>(<Age at={item.waitingSince} />)</span>
-          </Fact>
-          <Fact term="Last updated">
-            <DateText at={item.updatedAt} />
-          </Fact>
-        </Facts>
+      <div className="grid items-start gap-x-8 gap-y-6 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)]">
+        <div className="min-w-0 space-y-5">
+          <div>
+            <Header item={item} />
+            <p className="max-w-2xl">{UNDISCLOSED_TIP}</p>
+          </div>
+          {/* The route of an undisclosed item is withheld, so its line never claims a decision. */}
+          <Tracker everOffered={false} routeChosen={false} stage={item.stage} />
+        </div>
+        <div className="min-w-0 xl:pt-4">
+          <Facts>
+            <Fact term="Found">
+              <DateText at={item.foundAt} />
+            </Fact>
+            <Fact term="Waiting since">
+              <DateText at={item.waitingSince} /> <span className={TEXT_DIM}>(<Age at={item.waitingSince} />)</span>
+            </Fact>
+            <Fact term="Last updated">
+              <DateText at={item.updatedAt} />
+            </Fact>
+          </Facts>
+        </div>
       </div>
     </>
   );
@@ -545,23 +552,24 @@ function Disclosed({ detail }: { detail: Detail }) {
   const hasPrivate = privateFields !== null && Boolean(privateFields.notes || privateFields.impact || privateFields.preparedBranch);
   return (
     <>
-      <Header item={item} links={detail.links} />
-      {item.summary ? <p className="max-w-[46rem] text-[0.9375rem] leading-6">{item.summary}</p> : null}
-      {item.upstreamChangedAt !== null ? (
-        <p className="mt-2 max-w-[46rem]">
-          <span className="font-semibold">Changed upstream</span> <Age at={item.upstreamChangedAt} suffix="ago" />:{" "}
-          {item.upstreamChangeNote ?? "an upstream thread this item depends on changed state."} The giveback agent has
-          not yet acted on it.
-        </p>
-      ) : null}
-
       {/*
-        One column on a phone: where it is, what it needs, its threads, then the
-        notes and details, then the history. From xl the notes and details are a
-        sidebar beside all of it.
+        One column on a phone: the title, where it is, what it needs, its threads,
+        then the notes and details, then the history. From xl the notes and details
+        are a sidebar that starts level with the title, so no space beside it is empty.
       */}
-      <div className="mt-5 grid gap-x-8 gap-y-7 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)] xl:grid-rows-[auto_1fr]">
+      <div className="grid gap-x-8 gap-y-7 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)] xl:grid-rows-[auto_1fr]">
         <div className="min-w-0 space-y-7 xl:col-start-1 xl:row-start-1">
+          <div>
+            <Header item={item} links={detail.links} />
+            {item.summary ? <p className="max-w-[46rem] text-[0.9375rem] leading-6">{item.summary}</p> : null}
+            {item.upstreamChangedAt !== null ? (
+              <p className="mt-2 max-w-[46rem]">
+                <span className="font-semibold">Changed upstream</span> <Age at={item.upstreamChangedAt} suffix="ago" />:{" "}
+                {item.upstreamChangeNote ?? "an upstream thread this item depends on changed state."} The giveback agent
+                has not yet acted on it.
+              </p>
+            ) : null}
+          </div>
           <OpenAsks asks={detail.asks} />
           <Tracker
             everOffered={detail.links.some((link) => link.ownership === "ours")}
@@ -571,7 +579,7 @@ function Disclosed({ detail }: { detail: Detail }) {
           <Threads links={detail.links} />
           <AnsweredAsks asks={detail.asks} />
         </div>
-        <div className="min-w-0 space-y-7 xl:col-start-2 xl:row-span-2 xl:row-start-1">
+        <div className="min-w-0 space-y-7 xl:col-start-2 xl:row-span-2 xl:row-start-1 xl:pt-4">
           {hasPrivate && privateFields ? <PrivateNotes fields={privateFields} /> : null}
           <Details item={item} />
         </div>
@@ -605,7 +613,28 @@ function ItemBody({ detail }: { detail: Detail | null | undefined }) {
   if (detail === null) {
     return <NotFound what="item" />;
   }
-  return detail.item.disclosed ? <Disclosed detail={detail} /> : <Undisclosed detail={detail} />;
+  return (
+    <>
+      <CanonicalAddress item={detail.item} />
+      {detail.item.disclosed ? <Disclosed detail={detail} /> : <Undisclosed detail={detail} />}
+    </>
+  );
+}
+
+/**
+ * An item opened by its slug or row id gets its ID in the address bar, so the
+ * address that is copied or shown in a screenshot never carries a title.
+ * The page does not reload: only the address changes.
+ */
+function CanonicalAddress({ item }: { item: ListItem }) {
+  const path = itemPath(item);
+  useEffect(() => {
+    if (item.number === null) return;
+    if (window.location.pathname !== path) {
+      window.history.replaceState(window.history.state, "", `${path}${window.location.search}${window.location.hash}`);
+    }
+  }, [item.number, path]);
+  return null;
 }
 
 function PublicItem({ itemRef }: { itemRef: string }) {
