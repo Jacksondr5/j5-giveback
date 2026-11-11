@@ -1,14 +1,15 @@
 // POST /api/refresh: bearer REFRESH_SECRET. Copies GitHub state onto links.
 //
-// One call handles one batch of links on items that are not closed: read the
-// batch, make one GraphQL request, then write. It records an event when a link
+// One call handles one batch of links that are due: every link on an item that
+// is not closed, and any link on a closed item that has never been read. It
+// reads the batch, makes one GraphQL request, then writes. It records an event when a link
 // merged, closed, reopened or began failing CI, and raises the item's
 // "state changed upstream" marker. It never changes an item's stage.
 
 import { json, type EndpointRequest, type EndpointResponse, type ServerContext } from "lakebed/server";
 import type { RefreshResponse } from "../shared/api";
 import type { EventType } from "../shared/enums";
-import { LIMITS } from "../shared/limits";
+import { CURSOR_PATTERN, LIMITS } from "../shared/limits";
 import { AUTO_KEY_PREFIX, touchSyncState } from "./agent";
 import { apiError, checkBearer } from "./auth";
 import { DEFAULT_SELF_LOGIN, aliasFor, buildQuery, fetchGithub, snapshotFrom, type Snapshot } from "./github";
@@ -88,14 +89,14 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
     return fail(503, "not_configured", "The server secret GITHUB_TOKEN is not set.");
   }
 
-  let page;
-  try {
-    page = await db.links
-      .withIndex("by_active", (q) => q.eq("active", true))
-      .paginate({ cursor, numItems: LIMITS.refreshLinksPerBatch });
-  } catch {
-    return apiError(400, "invalid_cursor", "The cursor is not valid any more. Start the refresh again without one.");
+  // A database error cannot be caught and recovered from inside a handler, so a
+  // cursor that is plainly not one of ours is refused before it reaches the database.
+  if (cursor !== null && !CURSOR_PATTERN.test(cursor)) {
+    return apiError(400, "invalid_cursor", "The cursor is not one this endpoint returned. Start the refresh again without one.");
   }
+  const page = await db.links
+    .withIndex("by_sync_due", (q) => q.eq("syncDue", true))
+    .paginate({ cursor, numItems: LIMITS.refreshLinksPerBatch });
   const links = page.page;
   const nextCursor = page.isDone ? null : page.continueCursor;
 
@@ -106,7 +107,8 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
 
   if (links.length > 0) {
     // Fetch first. Nothing has been written yet, so a failure here loses nothing.
-    const result = await fetchGithub(token, buildQuery(links));
+    // GITHUB_GRAPHQL_URL is for tests against a stand-in server. Leave it unset in a deploy.
+    const result = await fetchGithub(token, buildQuery(links), ctx.env.GITHUB_GRAPHQL_URL || undefined);
     if (!result.ok) {
       ctx.log.warn("GitHub refresh failed", { message: result.message, links: links.length });
       return fail(502, "github_failed", result.message);
@@ -123,8 +125,9 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
         // Keep the old snapshot. Only note that this link could not be read.
         const message = result.errorsByAlias.get(alias) ?? "GitHub returned nothing usable for this link.";
         failed.push({ url: link.url, message });
-        if (link.syncError !== message) {
-          await db.links.update(link.id, { syncError: message });
+        if (link.syncError !== message || link.syncDue !== link.active) {
+          // A link on a closed item is tried once. The agent can fix it and it becomes due again.
+          await db.links.update(link.id, { syncError: message, syncDue: link.active });
         }
         continue;
       }
@@ -148,7 +151,8 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
           : {}),
         ...(snapshot.macroscopeVerdict !== null ? { macroscopeVerdict: snapshot.macroscopeVerdict } : {}),
         syncedAt: now,
-        syncError: null
+        syncError: null,
+        syncDue: link.active
       });
       refreshed += 1;
 

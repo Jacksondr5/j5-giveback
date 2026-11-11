@@ -45,3 +45,5 @@ export const LOCAL_PATH_MARKERS = ["/home/", "/tmp/", "/mnt/", "/Users/", "/root
 export const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 export const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:#-]*$/;
 export const REPO_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9_.-]+$/;
+/** The shape of a Lakebed pagination cursor. */
+export const CURSOR_PATTERN = /^v1\.[A-Za-z0-9_.-]{8,2000}$/;

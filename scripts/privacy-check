@@ -1,0 +1,306 @@
+#!/usr/bin/env node
+// privacy-check: proves that the public queries of a LOCAL dev server leak nothing private.
+//
+// It collects every value that must stay private (from the full export, and from
+// the seed file when one is given), then runs every public query as an anonymous
+// guest and fails if any of those values appears in any response.
+//
+//   GIVEBACK_URL=http://127.0.0.1:3000 GIVEBACK_ENV_FILE=.env.lakebed.server \
+//     scripts/privacy-check [scripts/seed.json]
+//
+// Local only: it connects with the `lakebed_guest` test override, which a hosted
+// deploy does not accept. Needs Node 22 or newer (global WebSocket).
+"use strict";
+
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+const UNDISCLOSED_TITLE = "Undisclosed candidate";
+// Fields of an undisclosed item that may carry a value. Everything else must be null or empty.
+const UNDISCLOSED_ALLOWED = ["id", "disclosed", "title", "stage", "waitingOn", "waitingSince", "foundAt", "updatedAt"];
+const MIN_SENTINEL_LENGTH = 6;
+
+function fail(message) {
+  process.stderr.write(`privacy-check: ${message}\n`);
+  process.exit(2);
+}
+
+function setting(names) {
+  for (const name of names) if (process.env[name]) return process.env[name];
+  const file = process.env.GIVEBACK_ENV_FILE || path.join(os.homedir(), ".config", "j5-giveback", "env");
+  let text = "";
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (match && names.includes(match[1]) && match[2].trim()) return match[2].trim();
+  }
+  return null;
+}
+
+const baseUrl = (setting(["GIVEBACK_URL"]) || fail("GIVEBACK_URL is not set.")).replace(/\/+$/, "");
+const agentSecret = setting(["GIVEBACK_AGENT_SECRET", "AGENT_SECRET"]) || fail("The agent secret is not set.");
+
+async function exportAll() {
+  const tables = {};
+  let cursor = null;
+  for (let page = 0; page < 200; page += 1) {
+    const url = `${baseUrl}/api/agent/export${cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`}`;
+    const response = await fetch(url, { headers: { authorization: `Bearer ${agentSecret}` } });
+    const payload = await response.json();
+    if (response.status !== 200 || !payload.ok) fail(`export failed with HTTP ${response.status}.`);
+    for (const [name, rows] of Object.entries(payload.tables)) tables[name] = (tables[name] || []).concat(rows);
+    cursor = payload.nextCursor;
+    if (cursor === null) return tables;
+  }
+  return fail("the export did not finish.");
+}
+
+/** Runs queries over the app's WebSocket as one anonymous local guest. */
+function connect(guest) {
+  const url = `${baseUrl.replace(/^http/, "ws")}/__lakebed/ws?lakebed_guest=${guest}`;
+  const socket = new WebSocket(url);
+  const pending = new Map();
+  let nextId = 1;
+  const opened = new Promise((resolve, reject) => {
+    socket.addEventListener("open", resolve);
+    socket.addEventListener("error", () => reject(new Error(`cannot open ${url}`)));
+  });
+  socket.addEventListener("message", (event) => {
+    const message = JSON.parse(String(event.data));
+    const entry = pending.get(message.id);
+    if (!entry) return;
+    pending.delete(message.id);
+    // Only what the server returned is searched. The frame also echoes the caller's own
+    // query arguments (in subscriptionId), which tells the caller nothing new.
+    const returned = message.ok === true ? message.data : { error: message.error };
+    entry({ ok: message.ok === true, data: message.data, error: message.error, raw: JSON.stringify(returned ?? null) });
+  });
+  return {
+    async query(name, args) {
+      await opened;
+      const id = nextId++;
+      const result = new Promise((resolve) => pending.set(id, resolve));
+      socket.send(JSON.stringify({ op: "query.subscribe", id, name, args, patches: false }));
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error(`query ${name} timed out`)), 10000));
+      return Promise.race([result, timeout]);
+    },
+    close() {
+      socket.close();
+    }
+  };
+}
+
+function addSentinel(sentinels, value, why) {
+  if (typeof value !== "string") return;
+  const text = value.trim();
+  if (text.length < MIN_SENTINEL_LENGTH) return;
+  if (!sentinels.has(text)) sentinels.set(text, why);
+}
+
+function sentinelsFromExport(tables, sentinels) {
+  const hidden = new Set();
+  const publicValues = new Set();
+  const collect = (row) => {
+    for (const value of Object.values(row)) if (typeof value === "string") publicValues.add(value.trim());
+  };
+  for (const item of tables.items || []) {
+    if (item.isPublic) {
+      collect(item);
+      continue;
+    }
+    hidden.add(item.id);
+    for (const field of ["slug", "title", "summary", "routeReason", "validationVerdict", "followUpNote", "upstreamChangeNote"]) {
+      addSentinel(sentinels, item[field], `items.${field} of non-public item`);
+    }
+    for (const ref of (item.originRefs || "").split("\n")) addSentinel(sentinels, ref, "items.originRefs of non-public item");
+  }
+  for (const link of tables.links || []) {
+    if (!hidden.has(link.itemId)) {
+      collect(link);
+      continue;
+    }
+    for (const field of ["url", "ghTitle", "triageBucket", "ghHeadSha"]) {
+      addSentinel(sentinels, link[field], `links.${field} of non-public item`);
+    }
+  }
+  for (const ask of tables.asks || []) {
+    addSentinel(sentinels, ask.key, "asks.key");
+    if (!hidden.has(ask.itemId)) continue;
+    addSentinel(sentinels, ask.publicLabel, "asks.publicLabel of non-public item");
+    addSentinel(sentinels, ask.resolution, "asks.resolution of non-public item");
+  }
+  for (const event of tables.events || []) {
+    addSentinel(sentinels, event.key, "events.key");
+    if (hidden.has(event.itemId) || !event.isPublic) {
+      addSentinel(sentinels, event.note, hidden.has(event.itemId) ? "events.note of non-public item" : "events.note of private event");
+      addSentinel(sentinels, event.id, "events.id of hidden event");
+    } else {
+      collect({ note: event.note, url: event.url });
+    }
+  }
+  for (const row of tables.itemPrivate || []) {
+    for (const field of ["notes", "impact", "preparedBranch"]) addSentinel(sentinels, row[field], `itemPrivate.${field}`);
+  }
+  for (const row of tables.askPrivate || []) {
+    for (const field of ["recommendation", "draftPointer"]) addSentinel(sentinels, row[field], `askPrivate.${field}`);
+  }
+  // A value that is also legitimately public elsewhere (a link shared with a public item, say) proves nothing.
+  for (const value of publicValues) sentinels.delete(value);
+  return hidden;
+}
+
+function sentinelsFromSeed(seed, sentinels) {
+  const hiddenSlugs = new Set();
+  for (const item of seed.items || []) {
+    for (const value of Object.values(item.private || {})) addSentinel(sentinels, value, "seed private field");
+    if (item.isPublic !== false) continue;
+    hiddenSlugs.add(item.slug);
+    for (const field of ["slug", "title", "summary", "routeReason", "validationVerdict", "followUpNote"]) {
+      addSentinel(sentinels, item[field], `seed ${field} of non-public item`);
+    }
+  }
+  for (const ask of seed.asks || []) {
+    for (const value of Object.values(ask.private || {})) addSentinel(sentinels, value, "seed ask private field");
+  }
+  for (const event of seed.events || []) {
+    if (event.isPublic === false || hiddenSlugs.has(event.item)) addSentinel(sentinels, event.note, "seed hidden event note");
+  }
+  addSentinel(sentinels, "SEED-PRIVATE", "seed marker");
+  return hiddenSlugs;
+}
+
+async function main() {
+  const failures = [];
+  const check = (condition, message) => {
+    if (!condition) failures.push(message);
+  };
+
+  const tables = await exportAll();
+  const sentinels = new Map();
+  const hiddenIds = sentinelsFromExport(tables, sentinels);
+  const hiddenSlugs = new Set((tables.items || []).filter((item) => !item.isPublic).map((item) => item.slug));
+  const seedPath = process.argv[2];
+  if (seedPath) {
+    for (const slug of sentinelsFromSeed(JSON.parse(fs.readFileSync(seedPath, "utf8")), sentinels)) hiddenSlugs.add(slug);
+  }
+  if (hiddenIds.size === 0) fail("the database has no non-public item, so there is nothing to prove. Load the seed first.");
+
+  const client = connect(`privacy-check-${Date.now()}`);
+  const responses = [];
+  const run = async (name, args) => {
+    const result = await client.query(name, args);
+    responses.push({ label: `${name}(${args.map((arg) => JSON.stringify(arg)).join(", ")})`, raw: result.raw });
+    return result;
+  };
+
+  // Every public query, with every argument that could reach a hidden item.
+  const viewer = await run("viewer", []);
+  check(viewer.ok && viewer.data.isOwner === false && viewer.data.userId === null, "viewer: an anonymous guest must not be an owner.");
+  const overview = await run("overview", []);
+  check(overview.ok, `overview failed: ${overview.error}`);
+  const list = await run("items", []);
+  check(list.ok, `items failed: ${list.error}`);
+
+  const items = list.ok ? list.data : [];
+  check(items.length === (tables.items || []).length, `items: expected ${(tables.items || []).length} items, got ${items.length}.`);
+  const undisclosed = items.filter((item) => !item.disclosed);
+  check(undisclosed.length === hiddenIds.size, `items: expected ${hiddenIds.size} undisclosed, got ${undisclosed.length}.`);
+  if (overview.ok) {
+    check(overview.data.stats.undisclosed === hiddenIds.size, "overview: stats.undisclosed does not match.");
+    check(overview.data.stats.total === items.length, "overview: stats.total does not match the list.");
+  }
+
+  const checkUndisclosed = (item, where) => {
+    check(item.title === UNDISCLOSED_TITLE, `${where}: undisclosed title is "${item.title}".`);
+    for (const [field, value] of Object.entries(item)) {
+      if (UNDISCLOSED_ALLOWED.includes(field)) continue;
+      const empty = value === null || (Array.isArray(value) && value.length === 0);
+      check(empty, `${where}: undisclosed item exposes ${field}.`);
+    }
+  };
+  for (const item of undisclosed) checkUndisclosed(item, "items");
+
+  for (const item of items) {
+    const detail = await run("item", [item.id]);
+    check(detail.ok && detail.data !== null, `item(${item.id}) failed.`);
+    if (!detail.ok || detail.data === null) continue;
+    if (hiddenIds.has(item.id)) {
+      checkUndisclosed(detail.data.item, `item(${item.id})`);
+      check(detail.data.links.length === 0, `item(${item.id}): undisclosed item returned links.`);
+      check(detail.data.events.length === 0, `item(${item.id}): undisclosed item returned events.`);
+      for (const ask of detail.data.asks) {
+        check(ask.label === null && ask.resolution === null, `item(${item.id}): undisclosed ask exposes its label or resolution.`);
+        check(ask.item.slug === null && ask.item.title === UNDISCLOSED_TITLE, `item(${item.id}): ask exposes the item.`);
+      }
+    } else {
+      check(detail.data.events.every((event) => event.isPublic === true), `item(${item.id}): returned a private event.`);
+    }
+    if (item.slug) {
+      const bySlug = await run("item", [item.slug]);
+      check(bySlug.ok && bySlug.data !== null && bySlug.data.item.id === item.id, `item(${item.slug}) did not find the public item.`);
+    }
+  }
+  for (const slug of hiddenSlugs) {
+    const result = await run("item", [slug]);
+    check(result.ok && result.data === null, `item("${slug}"): the slug of a non-public item must find nothing.`);
+  }
+  for (const ref of ["", "no-such-item", "00000000-0000-0000-0000-000000000000"]) {
+    const result = await run("item", [ref]);
+    check(result.ok && result.data === null, `item(${JSON.stringify(ref)}) should be null.`);
+  }
+
+  // The owner queries must refuse a guest.
+  for (const [name, args] of [["ownerOverview", []], ["ownerItems", []], ["ownerItem", [[...hiddenIds][0]]]]) {
+    const result = await run(name, args);
+    check(!result.ok, `${name} answered an anonymous guest.`);
+  }
+  client.close();
+
+  // The agent endpoints must refuse a caller with no secret.
+  for (const [method, route] of [["GET", "/api/agent/export"], ["POST", "/api/agent/items"], ["POST", "/api/agent/asks"], ["POST", "/api/agent/events"], ["POST", "/api/refresh"]]) {
+    const response = await fetch(`${baseUrl}${route}`, { method, ...(method === "POST" ? { body: "{}" } : {}) });
+    const body = await response.text();
+    responses.push({ label: `${method} ${route} (no bearer)`, raw: body });
+    check(response.status === 401, `${method} ${route} without a bearer returned HTTP ${response.status}.`);
+  }
+
+  // Self-test of the matcher: every private value must be findable in the export it came from.
+  const exportText = JSON.stringify(tables);
+  const seedText = seedPath ? fs.readFileSync(seedPath, "utf8") : "";
+  const found = (text, sentinel) => text.includes(sentinel) || text.includes(JSON.stringify(sentinel).slice(1, -1));
+  let matcherMisses = 0;
+  for (const sentinel of sentinels.keys()) {
+    if (!found(exportText, sentinel) && !found(seedText, sentinel)) matcherMisses += 1;
+  }
+  check(matcherMisses === 0, `matcher self-test: ${matcherMisses} private values were not found in their own source.`);
+
+  // No private value may appear anywhere in anything an anonymous caller received.
+  let hits = 0;
+  for (const { label, raw } of responses) {
+    for (const [sentinel, why] of sentinels) {
+      if (found(raw, sentinel)) {
+        hits += 1;
+        failures.push(`LEAK in ${label}: ${why}: "${sentinel.slice(0, 60)}"`);
+      }
+    }
+  }
+
+  const summary = {
+    ok: failures.length === 0,
+    responsesChecked: responses.length,
+    privateValuesSearchedFor: sentinels.size,
+    items: items.length,
+    undisclosedItems: undisclosed.length,
+    leaks: hits,
+    failures
+  };
+  process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+  process.exit(failures.length === 0 ? 0 : 1);
+}
+
+main().catch((error) => fail(error && error.stack ? error.stack : String(error)));

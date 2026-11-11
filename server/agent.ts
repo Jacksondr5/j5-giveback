@@ -15,7 +15,7 @@ import {
   type WriteStatus
 } from "../shared/api";
 import { ASK_KIND_LABELS, OUTCOME_LABELS, STAGE_LABELS, type AskKind, type Outcome, type Stage } from "../shared/enums";
-import { LIMITS } from "../shared/limits";
+import { CURSOR_PATTERN, LIMITS } from "../shared/limits";
 import { apiError, checkBearer } from "./auth";
 import type { AskRow, ItemRow, LinkRow, ReadDb, WriteDb } from "./schema";
 import {
@@ -229,6 +229,24 @@ function stageEventNote(previous: ItemState | null, next: ItemState): string {
   return `${STAGE_LABELS[previous.stage]} → ${STAGE_LABELS[next.stage]}${outcome}.`;
 }
 
+const SNAPSHOT_FIELDS = [
+  "ghTitle",
+  "ghState",
+  "ghIsDraft",
+  "ghMergedAt",
+  "ghClosedAt",
+  "ghCi",
+  "ghReviewDecision",
+  "ghLabels",
+  "ghHeadSha",
+  "ghLastActivityAt",
+  "ghOtherActivityAt",
+  "ghOtherActivityBy",
+  "macroscopeVerdict",
+  "syncedAt",
+  "syncError"
+] as const satisfies readonly (keyof LinkRow)[];
+
 /** Makes the item's links match `wanted`, keeping the GitHub snapshot of links that stay. */
 async function replaceLinks(
   db: WriteDb,
@@ -251,6 +269,7 @@ async function replaceLinks(
         ownership: link.ownership,
         role: link.role,
         active,
+        syncDue: true,
         ...(link.triageBucket ? { triageBucket: link.triageBucket } : {}),
         ...(typeof link.triageRank === "number" ? { triageRank: link.triageRank } : {})
       });
@@ -265,6 +284,15 @@ async function replaceLinks(
     if (row.ownership !== link.ownership) patch.ownership = link.ownership;
     if (row.role !== link.role) patch.role = link.role;
     if (row.active !== active) patch.active = active;
+    // A different repo or number is a different thread: the stored snapshot no longer describes it.
+    const retargeted = row.repo !== link.repo || row.number !== link.number;
+    if (retargeted && row.syncedAt !== undefined) {
+      for (const field of SNAPSHOT_FIELDS) {
+        if (row[field] !== undefined) patch[field] = null;
+      }
+    }
+    const syncDue = active || retargeted || row.syncedAt === undefined;
+    if (row.syncDue !== syncDue) patch.syncDue = syncDue;
     if (link.triageBucket !== undefined && (row.triageBucket ?? null) !== link.triageBucket) {
       patch.triageBucket = link.triageBucket;
     }
@@ -395,7 +423,7 @@ export async function handleItems(ctx: ServerContext, req: EndpointRequest): Pro
         if (await replaceLinks(db, itemId, rows, input.links, active)) changed = true;
       } else {
         for (const row of rows) {
-          await db.links.update(row.id, { active });
+          await db.links.update(row.id, { active, syncDue: active || row.syncedAt === undefined });
         }
       }
     } else if (!existing && input.links !== undefined) {
@@ -661,7 +689,12 @@ export async function handleExport(ctx: QueryServerContext, req: EndpointRequest
     tableIndex = Number(separator === -1 ? cursor : cursor.slice(0, separator));
     const rest = separator === -1 ? "" : cursor.slice(separator + 1);
     pageCursor = rest.length > 0 ? rest : null;
-    if (!Number.isInteger(tableIndex) || tableIndex < 0 || tableIndex >= EXPORT_TABLES.length) {
+    if (
+      !Number.isInteger(tableIndex) ||
+      tableIndex < 0 ||
+      tableIndex >= EXPORT_TABLES.length ||
+      (pageCursor !== null && !CURSOR_PATTERN.test(pageCursor))
+    ) {
       return apiError(400, "invalid_cursor", "The cursor is not one this endpoint returned.");
     }
   }
@@ -669,29 +702,22 @@ export async function handleExport(ctx: QueryServerContext, req: EndpointRequest
   const tables: ExportResponse["tables"] = {};
   let budget: number = LIMITS.exportRowsPerPage;
   let nextCursor: string | null = null;
-  try {
-    // One step per table at most. (Capsule server code has no while loops.)
-    for (let step = 0; step < EXPORT_TABLES.length && tableIndex < EXPORT_TABLES.length; step += 1) {
-      const name: ExportTable = EXPORT_TABLES[tableIndex] as ExportTable;
-      const page = await db[name].withIndex("by_creation").paginate({ cursor: pageCursor, numItems: budget });
-      tables[name] = page.page as Record<string, unknown>[];
-      budget -= page.page.length;
-      if (!page.isDone) {
-        nextCursor = `${tableIndex}:${page.continueCursor ?? ""}`;
-        break;
-      }
-      tableIndex += 1;
-      pageCursor = null;
-      if (budget <= 0 && tableIndex < EXPORT_TABLES.length) {
-        nextCursor = `${tableIndex}:`;
-        break;
-      }
+  // One step per table at most. (Capsule server code has no while loops.)
+  for (let step = 0; step < EXPORT_TABLES.length && tableIndex < EXPORT_TABLES.length; step += 1) {
+    const name: ExportTable = EXPORT_TABLES[tableIndex] as ExportTable;
+    const page = await db[name].withIndex("by_creation").paginate({ cursor: pageCursor, numItems: budget });
+    tables[name] = page.page as Record<string, unknown>[];
+    budget -= page.page.length;
+    if (!page.isDone) {
+      nextCursor = `${tableIndex}:${page.continueCursor ?? ""}`;
+      break;
     }
-  } catch (error) {
-    if (cursor) {
-      return apiError(400, "invalid_cursor", "The cursor is not valid any more. Start the export again without one.");
+    tableIndex += 1;
+    pageCursor = null;
+    if (budget <= 0 && tableIndex < EXPORT_TABLES.length) {
+      nextCursor = `${tableIndex}:`;
+      break;
     }
-    throw error;
   }
 
   const response: ExportResponse = { ok: true, exportedAt: Date.now(), tables, nextCursor };

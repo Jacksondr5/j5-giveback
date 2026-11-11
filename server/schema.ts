@@ -44,8 +44,11 @@ export const schema = {
     kind: string(),
     ownership: string(),
     role: string(),
-    // True while the item is not closed. The refresh reads only active links.
+    // True while the item is not closed.
     active: boolean(),
+    // True when the refresh should read this link: the item is not closed, or the
+    // link has never been read. A link on a closed item is read once and then left.
+    syncDue: boolean(),
     triageBucket: string().optional(),
     triageRank: number().optional(),
     // GitHub snapshot, written by the refresh.
@@ -67,7 +70,7 @@ export const schema = {
     syncError: string().optional()
   })
     .index("by_item", ["itemId"])
-    .index("by_active", ["active"])
+    .index("by_sync_due", ["syncDue"])
     .index("by_role", ["role"]),
 
   asks: table({

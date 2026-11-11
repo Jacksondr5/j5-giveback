@@ -216,14 +216,14 @@ export type GithubResult =
  * or a response with no data comes back as `{ ok: false }` with a short message
  * that is safe to store and show. Response bodies are not copied into it.
  */
-export async function fetchGithub(token: string, query: string): Promise<GithubResult> {
+export async function fetchGithub(token: string, query: string, url: string = GITHUB_GRAPHQL_URL): Promise<GithubResult> {
   // Timers are not available in capsule server code, so the timeout is an AbortSignal.
   const signal =
     typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
       ? AbortSignal.timeout(FETCH_TIMEOUT_MS)
       : null;
   try {
-    const response = await fetch(GITHUB_GRAPHQL_URL, {
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
@@ -243,7 +243,12 @@ export async function fetchGithub(token: string, query: string): Promise<GithubR
             : "";
       return { ok: false, message: `GitHub returned HTTP ${response.status}${hint}.` };
     }
-    const payload: unknown = await response.json();
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return { ok: false, message: "GitHub returned a response that is not JSON." };
+    }
     if (!isObj(payload)) {
       return { ok: false, message: "GitHub returned a response that is not a JSON object." };
     }
