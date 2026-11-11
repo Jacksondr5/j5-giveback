@@ -22,7 +22,8 @@ const path = require("node:path");
 
 const UNDISCLOSED_TITLE = "Undisclosed candidate";
 // Fields of an undisclosed item that may carry a value. Everything else must be null or empty.
-const UNDISCLOSED_ALLOWED = ["id", "disclosed", "title", "stage", "waitingOn", "waitingSince", "foundAt", "updatedAt"];
+// Stage, what it waits on, and dates. closedAt is a date: the closed list needs it to order the item.
+const UNDISCLOSED_ALLOWED = ["id", "disclosed", "title", "stage", "waitingOn", "waitingSince", "foundAt", "updatedAt", "closedAt"];
 const MIN_SENTINEL_LENGTH = 6;
 
 function fail(message) {
@@ -237,6 +238,7 @@ async function main() {
       checkUndisclosed(detail.data.item, `item(${item.id})`);
       check(detail.data.links.length === 0, `item(${item.id}): undisclosed item returned links.`);
       check(detail.data.events.length === 0, `item(${item.id}): undisclosed item returned events.`);
+      check(detail.data.asks.length === 0, `item(${item.id}): undisclosed item returned asks.`);
       for (const ask of detail.data.asks) {
         check(ask.label === null && ask.resolution === null, `item(${item.id}): undisclosed ask exposes its label or resolution.`);
         check(ask.item.slug === null && ask.item.title === UNDISCLOSED_TITLE, `item(${item.id}): ask exposes the item.`);
