@@ -389,14 +389,17 @@ function OfferedRow({ item, owner, asks }: { item: ListItem; owner: boolean; ask
         <Age
           at={quiet.since}
           className={quietLong ? "font-semibold" : undefined}
+          // Neutral wording on purpose: upstream owes no reply, so this states when
+          // the thread last moved and never counts anyone's silence.
           label={
             quiet.replied
-              ? `Last heard from ${quiet.by ?? "someone else"}`
+              ? `Last upstream activity, by ${quiet.by ?? "someone else"}`
               : quiet.synced
-                ? "No reply yet. Waiting since"
+                ? "No upstream activity yet. Waiting since"
                 : "Upstream activity has not been read yet. Waiting since"
           }
-          suffix={quiet.replied ? "quiet" : quiet.synced ? "no reply" : "waiting"}
+          prefix={quiet.replied ? "active" : "waiting"}
+          suffix={quiet.replied ? "ago" : undefined}
         />
       }
     >
@@ -466,7 +469,7 @@ function Offered({ items, owner, asks }: { items: ListItem[]; owner: boolean; as
   const shown = offered.slice(0, OFFERED_SHOWN);
   return (
     <Section
-      note={offered.length > 0 ? `${offered.length} open · quietest first` : undefined}
+      note={offered.length > 0 ? `${offered.length} open · least recently active first` : undefined}
       title="Offered upstream"
     >
       <Box>
@@ -489,7 +492,7 @@ function Offered({ items, owner, asks }: { items: ListItem[]; owner: boolean; as
       ) : null}
       {offered.length > 0 ? (
         <p className={cx("mt-2 text-xs", TEXT_MUTED)}>
-          Quiet counts from the last comment or review by anyone other than Jackson, bots excluded.
+          Activity is the last comment or review by anyone other than Jackson, bots excluded.
         </p>
       ) : null}
     </Section>

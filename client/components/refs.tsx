@@ -17,7 +17,7 @@ export function RefLink({ link }: { link: LinkView }) {
 /** The lead cell of a row: the ref with its kind under it. Side by side on a phone. */
 export function RefLead({ link }: { link: LinkView | null }) {
   if (!link) {
-    return <p className={cx("text-xs", TEXT_MUTED)}>No upstream thread</p>;
+    return <p className={cx("text-xs", TEXT_MUTED)}>No thread of ours</p>;
   }
   return (
     <p className="flex flex-wrap items-baseline gap-x-2 sm:block">

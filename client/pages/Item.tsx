@@ -74,7 +74,15 @@ type Detail = (ItemDetailView | OwnerItemDetailView) & { private?: ItemPrivateVi
  * Validating are, because a held item is valid. Deciding is only when a route
  * was recorded; otherwise it was skipped, and it shows as not reached.
  */
-function StageTracker({ stage, routeChosen }: { stage: Stage; routeChosen: boolean }) {
+// Stages a closed item passes only if it was really offered upstream.
+const OFFER_PATH: readonly Stage[] = ["preparing", "approving", "offered"];
+
+/**
+ * `routeChosen` and `everOffered` keep the tracker honest about a held or closed
+ * item: it marks Deciding as passed only when a route was chosen, and Preparing
+ * to Offered only when something of ours was posted upstream.
+ */
+function StageTracker({ stage, routeChosen, everOffered }: { stage: Stage; routeChosen: boolean; everOffered: boolean }) {
   const held = stage === "held";
   const shown: readonly Stage[] = held ? STAGES : MAIN_PATH_STAGES;
   const current = shown.indexOf(stage);
@@ -84,7 +92,10 @@ function StageTracker({ stage, routeChosen }: { stage: Stage; routeChosen: boole
         {shown.map((entry, index) => {
           const here = index === current;
           const hot = here && stageWaitsOnJackson(entry);
-          const passed = index < current && !(held && entry === "deciding" && !routeChosen);
+          const skipped =
+            ((held || stage === "closed") && entry === "deciding" && !routeChosen) ||
+            (stage === "closed" && OFFER_PATH.includes(entry) && !everOffered);
+          const passed = index < current && !skipped;
           return (
             <li
               aria-current={here ? "step" : undefined}
@@ -382,7 +393,7 @@ function Undisclosed({ detail }: { detail: Detail }) {
       </p>
       <Section title="Where it is">
         {/* The route of an undisclosed item is withheld, so its tracker never claims a decision. */}
-        <StageTracker routeChosen={false} stage={item.stage} />
+        <StageTracker everOffered={false} routeChosen={false} stage={item.stage} />
       </Section>
       <Section title="Dates">
         <Box>
@@ -421,7 +432,11 @@ function Disclosed({ detail }: { detail: Detail }) {
       ) : null}
 
       <Section title="Where it is">
-        <StageTracker routeChosen={item.route !== null} stage={item.stage} />
+        <StageTracker
+          everOffered={detail.links.some((link) => link.ownership === "ours")}
+          routeChosen={item.route !== null && item.route !== "hold" && item.route !== "drop"}
+          stage={item.stage}
+        />
       </Section>
 
       {hasPrivate && privateFields ? (

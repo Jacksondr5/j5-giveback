@@ -91,7 +91,8 @@ function undisclosedItemView(row: ItemRow): ItemView {
     route: null,
     routeReason: null,
     outcome: null,
-    closedAt: null,
+    // A date, like the others an undisclosed item shows. Without it the closed list cannot order the item.
+    closedAt: row.closedAt ?? null,
     targetRepo: null,
     originRefs: [],
     lastValidatedAt: null,

@@ -104,7 +104,7 @@ The site is public. Read these before writing.
 
 Every request carries `Authorization: Bearer <secret>`. The agent endpoints take `AGENT_SECRET`. The refresh endpoint takes `REFRESH_SECRET`. Request and response bodies are JSON.
 
-Times in a request are either epoch **milliseconds** or an ISO 8601 string such as `"2026-11-09T15:38:46Z"`. Times in a response are epoch milliseconds.
+Times in a request are either epoch **milliseconds** or an ISO 8601 string such as `"2026-11-09T15:38:46Z"`. Times in a response are epoch milliseconds. The site shows dates in the reader's own time zone, so for a date with no time of day send midday UTC (`"2026-10-30T12:00:00Z"`): midnight UTC shows as the day before in the Americas.
 
 Each write request is one transaction. If anything in it is invalid, the response is `400` with a list of errors and **nothing is applied**.
 

@@ -134,7 +134,7 @@ function None({ label }: { label: string }) {
 
 function UpstreamRef({ item }: { item: ListItem }) {
   const link = item.primaryLink;
-  if (!link) return <None label="No upstream thread" />;
+  if (!link) return <None label="No thread of ours" />;
   const state = linkState(link);
   return (
     <>
