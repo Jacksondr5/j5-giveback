@@ -8,20 +8,38 @@ import { json, type EndpointRequest, type EndpointResponse, type QueryServerCont
 import {
   EXPORT_TABLES,
   type AsksResponse,
+  type EventsDeleteResponse,
   type EventsResponse,
   type ExportResponse,
   type ExportTable,
   type ItemsResponse,
+  type LinksPatchResponse,
+  type WatchlistLink,
+  type WatchlistResponse,
   type WriteStatus
 } from "../shared/api";
-import { ASK_KIND_LABELS, OUTCOME_LABELS, STAGE_LABELS, type AskKind, type Outcome, type Stage } from "../shared/enums";
+import {
+  ASK_KIND_LABELS,
+  LINK_ROLES,
+  OUTCOME_LABELS,
+  STAGE_LABELS,
+  type AskKind,
+  type GhState,
+  type LinkKind,
+  type LinkOwnership,
+  type LinkRole,
+  type Outcome,
+  type Stage
+} from "../shared/enums";
 import { CURSOR_PATTERN, LIMITS, SLUG_PATTERN } from "../shared/limits";
 import { apiError, checkBearer } from "./auth";
 import type { AskRow, ItemRow, LinkRow, ReadDb, WriteDb } from "./schema";
 import {
   parseAsksRequest,
+  parseEventsDeleteRequest,
   parseEventsRequest,
   parseItemsRequest,
+  parseLinksPatchRequest,
   type Issues,
   type ParsedAsk,
   type ParsedItem,
@@ -456,7 +474,8 @@ export async function handleItems(ctx: ServerContext, req: EndpointRequest): Pro
       await db.events.insert({
         key: `${AUTO_KEY_PREFIX}stage:${itemId}:${now}`,
         itemId,
-        at: now,
+        // The key keeps the time of the request, so it stays unique; `at` is when the change happened.
+        at: input.stageEventAt ?? now,
         actor: "agent",
         type: "stage_changed",
         note: clip(input.stageNote ?? stageEventNote(previous, next), LIMITS.eventNote),
@@ -671,6 +690,116 @@ export async function handleEvents(ctx: ServerContext, req: EndpointRequest): Pr
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/agent/events/delete
+// ---------------------------------------------------------------------------
+
+// Keys are unique by construction, not by a constraint, so a key is read as a short list.
+const MAX_EVENTS_PER_KEY = 5;
+
+/**
+ * Removes events by key, the server's own "auto:" events included. A key that
+ * names no event is reported in its result and is not an error, so a retry of
+ * a request that already ran succeeds.
+ */
+export async function handleDeleteEvents(ctx: ServerContext, req: EndpointRequest): Promise<EndpointResponse> {
+  const denied = checkBearer(ctx.env, req, "AGENT_SECRET");
+  if (denied) return denied;
+  const read = await readBody(req);
+  if (!read.ok) return read.response;
+  const db = ctx.db as unknown as WriteDb;
+
+  const { keys, issues } = parseEventsDeleteRequest(read.body);
+  if (issues.length > 0) return validationFailed(issues);
+
+  // Read everything before the first write.
+  const found: string[][] = [];
+  for (const key of keys) {
+    const rows = await db.events.withIndex("by_key", (q) => q.eq("key", key)).take(MAX_EVENTS_PER_KEY);
+    found.push(rows.map((row) => row.id));
+  }
+
+  const results: EventsDeleteResponse["results"] = [];
+  let deleted = 0;
+  for (const [index, key] of keys.entries()) {
+    const ids = found[index] ?? [];
+    for (const id of ids) await db.events.delete(id);
+    deleted += ids.length;
+    results.push({ key, status: ids.length > 0 ? "deleted" : "not_found" });
+  }
+
+  await touchSyncState(db, { lastAgentPushAt: Date.now() });
+  const response: EventsDeleteResponse = { ok: true, deleted, results };
+  return json(response);
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/agent/links
+// ---------------------------------------------------------------------------
+
+/**
+ * Sets the triage fields of links found by URL, leaving every other link of
+ * their items alone. A URL can sit on more than one item; every copy is patched.
+ */
+export async function handlePatchLinks(ctx: ServerContext, req: EndpointRequest): Promise<EndpointResponse> {
+  const denied = checkBearer(ctx.env, req, "AGENT_SECRET");
+  if (denied) return denied;
+  const read = await readBody(req);
+  if (!read.ok) return read.response;
+  const db = ctx.db as unknown as WriteDb;
+  const now = Date.now();
+
+  const { links, issues } = parseLinksPatchRequest(read.body);
+  if (issues.length > 0) return validationFailed(issues);
+
+  // Read everything before the first write.
+  const matches: LinkRow[][] = [];
+  for (const [index, input] of links.entries()) {
+    const rows = await db.links.withIndex("by_url", (q) => q.eq("url", input.url)).take(LIMITS.linkMatchesPerUrl + 1);
+    if (rows.length > LIMITS.linkMatchesPerUrl) {
+      issues.push({
+        path: `links[${index}].url`,
+        message: `More than ${LIMITS.linkMatchesPerUrl} items carry this URL, which is more than one request can patch. Set it through each item instead.`
+      });
+    }
+    matches.push(rows);
+  }
+  if (issues.length > 0) return validationFailed(issues);
+
+  const results: LinksPatchResponse["results"] = [];
+  const touchedItems = new Set<string>();
+  for (const [index, input] of links.entries()) {
+    const rows = matches[index] ?? [];
+    let updated = false;
+    for (const row of rows) {
+      const patch: { triageBucket?: string | null; triageRank?: number | null } = {};
+      if (input.triageBucket !== undefined && (row.triageBucket ?? null) !== input.triageBucket) {
+        patch.triageBucket = input.triageBucket;
+      }
+      if (input.triageRank !== undefined && (row.triageRank ?? null) !== input.triageRank) {
+        patch.triageRank = input.triageRank;
+      }
+      if (Object.keys(patch).length === 0) continue;
+      await db.links.update(row.id, patch);
+      touchedItems.add(row.itemId);
+      updated = true;
+    }
+    results.push({
+      url: input.url,
+      status: rows.length === 0 ? "not_found" : updated ? "updated" : "unchanged",
+      matched: rows.length
+    });
+  }
+  // As with an upsert that changes a link: the item's "last updated" moves.
+  for (const itemId of touchedItems) {
+    await db.items.update(itemId, { agentUpdatedAt: now });
+  }
+
+  await touchSyncState(db, { lastAgentPushAt: now });
+  const response: LinksPatchResponse = { ok: true, results };
+  return json(response);
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/agent/items/delete
 // ---------------------------------------------------------------------------
 
@@ -787,5 +916,93 @@ export async function handleExport(ctx: QueryServerContext, req: EndpointRequest
 
   const state = await db.syncState.withIndex("by_creation").first();
   const response: ExportResponse = { ok: true, exportedAt: Date.now(), revision: state?.revision ?? 0, tables, nextCursor };
+  return json(response);
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/agent/watchlist
+// ---------------------------------------------------------------------------
+
+/**
+ * Every link on an item that is not closed: the threads worth polling.
+ * Links are read one role at a time through the (role, active) index, so no
+ * closed item's link is read. The cursor is "<role index>:<page cursor within that role>".
+ */
+export async function handleWatchlist(ctx: QueryServerContext, req: EndpointRequest): Promise<EndpointResponse> {
+  const denied = checkBearer(ctx.env, req, "AGENT_SECRET");
+  if (denied) return denied;
+  const db = ctx.db as unknown as ReadDb;
+
+  let roleIndex = 0;
+  let pageCursor: string | null = null;
+  const cursor = req.query.get("cursor");
+  if (cursor) {
+    const separator = cursor.indexOf(":");
+    roleIndex = Number(separator === -1 ? cursor : cursor.slice(0, separator));
+    const rest = separator === -1 ? "" : cursor.slice(separator + 1);
+    pageCursor = rest.length > 0 ? rest : null;
+    if (
+      !Number.isInteger(roleIndex) ||
+      roleIndex < 0 ||
+      roleIndex >= LINK_ROLES.length ||
+      (pageCursor !== null && !CURSOR_PATTERN.test(pageCursor))
+    ) {
+      return apiError(400, "invalid_cursor", "The cursor is not one this endpoint returned.");
+    }
+  }
+
+  const rows: LinkRow[] = [];
+  let budget: number = LIMITS.watchlistLinksPerPage;
+  let nextCursor: string | null = null;
+  // One step per role at most. (Capsule server code has no while loops.)
+  for (let step = 0; step < LINK_ROLES.length && roleIndex < LINK_ROLES.length; step += 1) {
+    const role: LinkRole = LINK_ROLES[roleIndex] as LinkRole;
+    const page = await db.links
+      .withIndex("by_role_active", (q) => q.eq("role", role).eq("active", true))
+      .paginate({ cursor: pageCursor, numItems: budget });
+    rows.push(...page.page);
+    budget -= page.page.length;
+    if (!page.isDone) {
+      nextCursor = `${roleIndex}:${page.continueCursor ?? ""}`;
+      break;
+    }
+    roleIndex += 1;
+    pageCursor = null;
+    if (budget <= 0 && roleIndex < LINK_ROLES.length) {
+      nextCursor = `${roleIndex}:`;
+      break;
+    }
+  }
+
+  const items = await db.items.withIndex("by_creation").take(LIMITS.maxItems);
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const links: WatchlistLink[] = [];
+  for (const row of rows) {
+    const item = itemById.get(row.itemId);
+    // `active` is kept in step with the item's stage on every write. The stage is checked all the same.
+    if (!item || item.stage === "closed") continue;
+    links.push({
+      url: row.url,
+      repo: row.repo,
+      number: row.number,
+      kind: row.kind as LinkKind,
+      ownership: row.ownership as LinkOwnership,
+      role: row.role as LinkRole,
+      itemSlug: item.slug,
+      itemStage: item.stage as Stage,
+      ghState: (row.ghState as GhState | undefined) ?? null,
+      lastOtherActivityAt: row.ghOtherActivityAt ?? null,
+      syncedAt: row.syncedAt ?? null
+    });
+  }
+
+  const state = await db.syncState.withIndex("by_creation").first();
+  const response: WatchlistResponse = {
+    ok: true,
+    generatedAt: Date.now(),
+    revision: state?.revision ?? 0,
+    links,
+    nextCursor
+  };
   return json(response);
 }

@@ -78,6 +78,8 @@ export type ItemInput = {
   closedAt?: TimeInput | null;
   /** Public note for the stage-change event this request causes, if it causes one. */
   stageNote?: string;
+  /** When that event happened, if this request causes one. Defaults to now. Must not be in the future. */
+  stageEventAt?: TimeInput;
   /** `true` clears the "state changed upstream" marker the refresh raised. */
   clearUpstreamChange?: boolean;
   /** When present, replaces the item's whole link set. */
@@ -133,6 +135,19 @@ export type EventInput = {
 
 export type EventsRequest = { events: EventInput[] };
 
+/** `POST /api/agent/events/delete`. Keys of events to remove, the server's own "auto:" keys included. */
+export type EventsDeleteRequest = { keys: string[] };
+
+/** One link in `POST /api/agent/links`. Send `url` and at least one of the two triage fields. `null` clears a field. */
+export type LinkPatchInput = {
+  /** The link's URL, exactly as stored. Every link with this URL is patched, on whichever items it sits. */
+  url: string;
+  triageBucket?: string | null;
+  triageRank?: number | null;
+};
+
+export type LinksPatchRequest = { links: LinkPatchInput[] };
+
 // ---------------------------------------------------------------------------
 // Agent endpoint responses
 // ---------------------------------------------------------------------------
@@ -162,6 +177,50 @@ export type AsksResponse = {
 export type EventsResponse = {
   ok: true;
   results: { key: string; id: string; status: "created" | "exists" }[];
+};
+
+export type EventsDeleteResponse = {
+  ok: true;
+  /** Event rows removed by this request. */
+  deleted: number;
+  results: { key: string; status: "deleted" | "not_found" }[];
+};
+
+export type LinksPatchResponse = {
+  ok: true;
+  results: {
+    url: string;
+    /** "not_found" when no link has this URL. That is reported here, not as an error. */
+    status: "updated" | "unchanged" | "not_found";
+    /** How many links have this URL. One per item that carries it. */
+    matched: number;
+  }[];
+};
+
+/** One link on an item that is not closed. Null means GitHub has not been read for it yet, or has nothing to say. */
+export type WatchlistLink = {
+  url: string;
+  repo: string;
+  number: number;
+  kind: LinkKind;
+  ownership: LinkOwnership;
+  role: LinkRole;
+  itemSlug: string;
+  itemStage: Stage;
+  ghState: GhState | null;
+  /** Last comment or review by someone other than the fork owner, bots excluded. */
+  lastOtherActivityAt: number | null;
+  syncedAt: number | null;
+};
+
+/** One page of `GET /api/agent/watchlist`. Follow `nextCursor` until it is null. */
+export type WatchlistResponse = {
+  ok: true;
+  generatedAt: number;
+  /** As in the export: pages of one read must all carry the same value. */
+  revision: number;
+  links: WatchlistLink[];
+  nextCursor: string | null;
 };
 
 export const EXPORT_TABLES = ["items", "links", "asks", "events", "itemPrivate", "askPrivate", "syncState"] as const;
