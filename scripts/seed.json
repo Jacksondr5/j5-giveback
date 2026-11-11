@@ -45,6 +45,66 @@
       }
     },
     {
+      "slug": "seed-held-hidden-tab-resize",
+      "title": "A hidden preview tab keeps its old size",
+      "summary": "Seed item on a real PR. Valid, with nothing to offer: a maintainer's open PR covers the same bug. Held until that PR merges or is dropped. The relationship is invented.",
+      "stage": "held",
+      "waitingOn": "covering_pr",
+      "waitingSince": "2026-11-05T09:00:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "originRefs": [
+        "Jacksondr5/j5code#2874"
+      ],
+      "foundAt": "2026-11-03T13:00:00Z",
+      "lastValidatedAt": "2026-11-05T08:30:00Z",
+      "lastValidatedSha": "37b3be30ae7e",
+      "validationVerdict": "Valid. An open upstream PR already covers it.",
+      "isPublic": true,
+      "stageNote": "Held: pingdotgg/t3code#8469 covers this.",
+      "stageEventAt": "2026-11-05T09:00:00Z",
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/8469",
+          "repo": "pingdotgg/t3code",
+          "number": 8469,
+          "kind": "pr",
+          "ownership": "theirs",
+          "role": "covering"
+        }
+      ],
+      "private": {
+        "notes": "SEED-PRIVATE notes: the fork carries its own fix until the covering PR lands."
+      }
+    },
+    {
+      "slug": "seed-held-until-base-lands",
+      "title": "Remote pairing link ignores a Tailscale Serve address",
+      "summary": "Seed item on a real PR. Route chosen: direct PR. The fix builds on a maintainer's open PR, so there is nothing to offer until that one lands. The relationship is invented.",
+      "stage": "held",
+      "route": "direct_pr",
+      "routeReason": "Small fix on top of an open upstream PR. It cannot be opened until that base merges.",
+      "waitingOn": "base_pr",
+      "waitingSince": "2026-11-08T11:00:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-11-06T15:00:00Z",
+      "lastValidatedAt": "2026-11-08T10:30:00Z",
+      "lastValidatedSha": "37b3be30ae7e",
+      "validationVerdict": "Valid. Depends on pingdotgg/t3code#10083.",
+      "isPublic": true,
+      "stageNote": "Held until pingdotgg/t3code#10083 lands.",
+      "stageEventAt": "2026-11-08T11:00:00Z",
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/10083",
+          "repo": "pingdotgg/t3code",
+          "number": 10083,
+          "kind": "pr",
+          "ownership": "theirs",
+          "role": "base"
+        }
+      ]
+    },
+    {
       "slug": "seed-worktree-prune-on-delete",
       "title": "Deleting a thread leaves its worktree behind",
       "summary": "Seed item. Route chosen: direct PR, because the fix is small and obvious. Branch, tests and the post text are being produced.",

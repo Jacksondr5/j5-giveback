@@ -6,8 +6,11 @@
 // It prints one line per group and throws on the first failure.
 
 import type { ItemView, LinkView, SyncView } from "../../shared/api";
+import { MAIN_PATH_STAGES, STAGES, STAGE_DESCRIPTIONS, STAGE_LABELS } from "../../shared/enums";
 import {
   candidates,
+  dependencyLinks,
+  heldItems,
   median,
   medianTimeToMerge,
   offeredQuietestFirst,
@@ -199,21 +202,62 @@ const mixed = [
   item("closed-new", { stage: "closed", outcome: "dropped", closedAt: NOW - DAY }),
   // An undisclosed closed item hides its close date; its last update stands in.
   item("closed-hidden", { stage: "closed", disclosed: false, slug: null, closedAt: null, updatedAt: NOW - 4 * DAY }),
-  item("closed-agent", { stage: "closed", outcome: "parked", waitingOn: "giveback_agent", closedAt: NOW - 20 * DAY })
+  item("closed-agent", { stage: "closed", outcome: "parked", waitingOn: "giveback_agent", closedAt: NOW - 20 * DAY }),
+  item("held-new", { stage: "held", waitingOn: "base_pr", waitingSince: NOW - 2 * DAY, foundAt: NOW - 30 * DAY }),
+  item("held-old", { stage: "held", waitingOn: "covering_pr", waitingSince: NOW - 6 * DAY, foundAt: NOW - 8 * DAY }),
+  // The covering PR merged: the refresh raised the marker, and the next step is ours.
+  item("held-changed", { stage: "held", waitingOn: "covering_pr", waitingSince: NOW - 4 * DAY, upstreamChangedAt: NOW - 2 * HOUR })
 ];
+// A held item is not a candidate: it does not wait on a check or on a decision.
 equal(ids(candidates(mixed)), ["deciding-old", "deciding-new", "validating", "found"], "candidates");
+equal(ids(heldItems(mixed)), ["held-old", "held-changed", "held-new"], "held, longest-waiting first");
+equal(ids(heldItems([item("a", { stage: "deciding" }), item("b", { stage: "closed", outcome: "parked" })])), [], "nothing held");
 equal(ids(recentlyClosed(mixed, 3)), ["closed-new", "closed-hidden", "closed-old"], "recently closed");
 equal(
   ourMove(mixed).map((move) => `${move.item.id}:${move.reason}`),
-  ["changed:upstream_changed", "validating:agent", "found:agent"],
+  ["held-changed:upstream_changed", "changed:upstream_changed", "validating:agent", "found:agent"],
   "our move"
 );
 equal(
   ids(sortForList(mixed)),
-  ["found", "validating", "deciding-old", "deciding-new", "changed", "closed-new", "closed-hidden", "closed-old", "closed-agent"],
-  "list order"
+  [
+    "found",
+    "validating",
+    "deciding-old",
+    "deciding-new",
+    // Within a stage the list runs oldest-found first, whatever the wait.
+    "held-new",
+    "held-changed",
+    "held-old",
+    "changed",
+    "closed-new",
+    "closed-hidden",
+    "closed-old",
+    "closed-agent"
+  ],
+  "list order: held follows deciding"
 );
-console.log("ok  candidates, closed, our move, list order");
+console.log("ok  candidates, held, closed, our move, list order");
+
+// --- The held stage ----------------------------------------------------------------------
+
+equal(STAGES.indexOf("held"), STAGES.indexOf("deciding") + 1, "held is listed after deciding");
+equal(MAIN_PATH_STAGES.includes("held"), false, "held is not on the main path");
+equal(MAIN_PATH_STAGES.length, STAGES.length - 1, "the main path is every other stage");
+equal(MAIN_PATH_STAGES, ["found", "validating", "deciding", "preparing", "approving", "offered", "closed"], "main path order");
+equal(STAGE_LABELS.held, "Held", "held label");
+equal(STAGES.every((stage) => STAGE_LABELS[stage].length > 0 && STAGE_DESCRIPTIONS[stage].length > 0), true, "every stage has words");
+equal(
+  dependencyLinks([
+    link({ id: "r", role: "related", number: 3 }),
+    link({ id: "c", role: "covering", number: 2 }),
+    link({ id: "b", role: "base", number: 9 }),
+    link({ id: "p", role: "primary", number: 1 })
+  ]).map((entry) => entry.id),
+  ["b", "c"],
+  "a held row shows its base and covering links only"
+);
+console.log("ok  held stage");
 
 // --- Asks ------------------------------------------------------------------------------
 
@@ -260,15 +304,19 @@ equal(parsed, { stage: "offered", waiting: "jackson", outcome: "merged", repo: "
 equal(parseFilters(filtersToSearch(parsed)), parsed, "round trip");
 equal(parseFilters("?stage=bogus&waiting=&outcome=nope"), { stage: null, waiting: null, outcome: null, repo: null, q: "" }, "unknown values");
 equal(itemsHref({ stage: "deciding" }), "/items?stage=deciding", "stage link");
+equal(itemsHref({ stage: "held" }), "/items?stage=held", "held stage link");
+equal(parseFilters("?stage=held").stage, "held", "held is a stage filter");
 equal(itemsHref(), "/items", "no filters");
 const list = [
   item("stream", { title: "A revoked session's preview stream closes", primaryLink: link({ number: 32245 }) }),
   item("stop", { title: "An agent's Stop", primaryLink: link({ number: 33420 }) }),
   item("expo", { targetRepo: "expo/expo-device-hub", stage: "closed", outcome: "merged", waitingOn: "nobody" }),
-  item("hidden", { disclosed: false, slug: null, title: "Undisclosed candidate", targetRepo: null, stage: "deciding", waitingOn: "jackson" })
+  item("hidden", { disclosed: false, slug: null, title: "Undisclosed candidate", targetRepo: null, stage: "deciding", waitingOn: "jackson" }),
+  item("parked", { title: "Waits for a covering PR", stage: "held", waitingOn: "covering_pr" })
 ];
 const run = (search: string) => ids(applyFilters(list, parseFilters(search)));
-equal(run(""), ["stream", "stop", "expo", "hidden"], "no filter");
+equal(run(""), ["stream", "stop", "expo", "hidden", "parked"], "no filter");
+equal(run("?stage=held"), ["parked"], "held stage");
 equal(run("?q=STREAM+closes"), ["stream"], "every word, any case");
 equal(run("?q=%2333420"), ["stop"], "bare number");
 equal(run("?q=t3code%2333420"), ["stop"], "short ref");

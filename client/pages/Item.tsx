@@ -17,6 +17,7 @@ import {
   LINK_KIND_LABELS,
   LINK_OWNERSHIP_LABELS,
   LINK_ROLE_LABELS,
+  MAIN_PATH_STAGES,
   OUTCOME_LABELS,
   ROUTE_LABELS,
   STAGES,
@@ -64,14 +65,26 @@ type Detail = (ItemDetailView | OwnerItemDetailView) & { private?: ItemPrivateVi
 // Stage tracker
 // ---------------------------------------------------------------------------
 
-function StageTracker({ stage }: { stage: Stage }) {
-  const current = STAGES.indexOf(stage);
+/**
+ * The main path as numbered steps. Held is a side stop, so it appears only on a
+ * held item, where it is the current position: on any other item it would read
+ * as a step that was passed or is still to come, and it is neither.
+ *
+ * On a held item the steps before Held are not all behind it. Found and
+ * Validating are, because a held item is valid. Deciding is only when a route
+ * was recorded; otherwise it was skipped, and it shows as not reached.
+ */
+function StageTracker({ stage, routeChosen }: { stage: Stage; routeChosen: boolean }) {
+  const held = stage === "held";
+  const shown: readonly Stage[] = held ? STAGES : MAIN_PATH_STAGES;
+  const current = shown.indexOf(stage);
   return (
     <>
-      <ol aria-label="Stage" className="grid grid-cols-4 gap-1 md:grid-cols-7">
-        {STAGES.map((entry, index) => {
+      <ol aria-label="Stage" className={cx("grid grid-cols-4 gap-1", held ? "md:grid-cols-8" : "md:grid-cols-7")}>
+        {shown.map((entry, index) => {
           const here = index === current;
           const hot = here && stageWaitsOnJackson(entry);
+          const passed = index < current && !(held && entry === "deciding" && !routeChosen);
           return (
             <li
               aria-current={here ? "step" : undefined}
@@ -81,23 +94,30 @@ function StageTracker({ stage }: { stage: Stage }) {
                   ? "border-amber-600 bg-amber-100 font-semibold text-amber-950 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-100"
                   : here
                     ? "border-stone-900 bg-white font-semibold dark:border-stone-100 dark:bg-stone-900"
-                    : index < current
+                    : passed
                       ? "border-stone-300 bg-stone-100 dark:border-stone-700 dark:bg-stone-800"
                       : cx("border-dashed border-stone-300 dark:border-stone-700", TEXT_MUTED)
               )}
               key={entry}
             >
-              <span className="block tabular-nums">{index + 1}</span>
+              {entry === "held" ? (
+                <span className="block font-normal">side stop</span>
+              ) : (
+                <span className="block tabular-nums">{MAIN_PATH_STAGES.indexOf(entry) + 1}</span>
+              )}
               <span className="block">{STAGE_LABELS[entry]}</span>
               <span className="block text-[0.6875rem] font-normal">
-                {here ? "now" : index < current ? "passed" : <span aria-hidden="true">&nbsp;</span>}
+                {here ? "now" : passed ? "passed" : <span aria-hidden="true">&nbsp;</span>}
               </span>
             </li>
           );
         })}
       </ol>
       <p className={cx("mt-2 text-xs", TEXT_MUTED)}>
-        {STAGE_LABELS[stage]}: {STAGE_DESCRIPTIONS[stage]} An item can move back a stage when upstream changes.
+        {STAGE_LABELS[stage]}: {STAGE_DESCRIPTIONS[stage]}{" "}
+        {held
+          ? "Held is off the main path. The item closes or goes back onto the path when that change merges or is dropped."
+          : "An item can move back a stage when upstream changes."}
       </p>
     </>
   );
@@ -361,7 +381,8 @@ function Undisclosed({ detail }: { detail: Detail }) {
         and its dates are public; its title, summary and upstream threads are not.
       </p>
       <Section title="Where it is">
-        <StageTracker stage={item.stage} />
+        {/* The route of an undisclosed item is withheld, so its tracker never claims a decision. */}
+        <StageTracker routeChosen={false} stage={item.stage} />
       </Section>
       <Section title="Dates">
         <Box>
@@ -400,7 +421,7 @@ function Disclosed({ detail }: { detail: Detail }) {
       ) : null}
 
       <Section title="Where it is">
-        <StageTracker stage={item.stage} />
+        <StageTracker routeChosen={item.route !== null} stage={item.stage} />
       </Section>
 
       {hasPrivate && privateFields ? (
