@@ -92,7 +92,7 @@ Each write request is one transaction. If anything in it is invalid, the respons
 
 ### `POST /api/agent/items`
 
-Creates or changes up to 25 items. `slug` identifies an item.
+Creates or changes up to 25 items, carrying at most 200 links between them. `slug` identifies an item.
 
 - **To create**: send `slug`, `title`, `summary`, `stage`, `waitingOn`, `targetRepo` and `isPublic`.
 - **To change**: send `slug` and the fields that change. An omitted field keeps its value. `null` clears an optional field.
@@ -208,6 +208,18 @@ Response:
 
 `status` is `created`, `updated` or `unchanged`.
 
+### `POST /api/agent/items/delete`
+
+Removes one item together with its links, asks, events and private fields. Use it only to undo a mistake, such as a wrong slug or a duplicate. An item that ran its course is closed with an outcome, never deleted, because its history is the record.
+
+```json
+{ "slug": "merge-back-tooltip", "confirm": "merge-back-tooltip" }
+```
+
+`confirm` must repeat the slug. The response is `{"ok": true, "deleted": {"slug": "...", "links": 2, "asks": 1, "events": 5}}`. An unknown slug returns 404. An item with more than 45 asks or 800 events returns 409 and is not deleted. To rename a slug, export the item, delete it, and upsert it under the new slug with its asks and events.
+
+With the script: `scripts/giveback delete merge-back-tooltip`.
+
 ### `POST /api/agent/asks`
 
 Opens and closes up to 30 asks. `key` is a stable name you choose, 3 to 80 characters of letters, digits and `. _ : # -`. A retry with the same key does not make a second ask.
@@ -294,12 +306,15 @@ GET /api/agent/export?cursor=<nextCursor from the previous response>
 {
   "ok": true,
   "exportedAt": 1794414478790,
+  "revision": 42,
   "tables": { "items": [], "links": [], "asks": [], "events": [] },
   "nextCursor": "3:v1.hUIlEltc..."
 }
 ```
 
 The tables are `items`, `links`, `asks`, `events`, `itemPrivate`, `askPrivate` and `syncState`. A table can be split across two responses; concatenate its rows. Rows join on `links.itemId`, `asks.itemId`, `events.itemId`, `itemPrivate.itemId` and `askPrivate.askId`.
+
+Each response is a separate read. `revision` goes up on every agent write, so if two pages of one export carry different values, a write landed between them and the copy is not consistent: start again. `scripts/giveback export` does this for you.
 
 `scripts/giveback export` follows the cursors and nests the result: each item carries its `links`, `private`, `asks` (each with its `private`) and `events`. `--raw` gives the tables instead.
 
@@ -308,6 +323,8 @@ In a row, a field with no value is absent. `items.originRefs` and `links.ghLabel
 ### `POST /api/refresh`
 
 Bearer `REFRESH_SECRET`. No body. A scheduler calls this; an agent rarely needs to.
+
+Each call counts against Lakebed's limit of 1,000 writes a day, and one call handles 20 links. With up to 100 links on open items, a full refresh every 15 minutes uses at most 480 calls a day. Beyond that, lengthen the interval.
 
 It reads GitHub state for a batch of at most 20 links and stores it on each link: state (`open`, `closed`, `merged`), draft flag, merged and closed times, CI rollup, review decision, labels, head SHA, last activity time, the last comment or review by someone other than `Jacksondr5` that is not from a bot, and Macroscope's approvability verdict.
 

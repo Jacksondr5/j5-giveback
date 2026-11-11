@@ -16,6 +16,7 @@ const USAGE = `giveback: read and write the giveback dashboard.
 
 Usage:
   giveback upsert <file|->            Create or change items. JSON: {"items":[...]}, an array, or one item.
+  giveback delete <slug>              Remove one item and its whole history. For mistakes only.
   giveback ask open  --key K --item SLUG --kind KIND --label TEXT
                      [--recommendation TEXT] [--draft TEXT] [--opened-at TIME]
   giveback ask close --key K [--resolution TEXT] [--closed-at TIME]
@@ -298,22 +299,38 @@ async function load(args) {
   print(out);
 }
 
-async function exportRaw() {
+// Each page is its own read. If an agent writes between two pages, the pages
+// carry different revisions and the copy is not consistent, so it is taken again.
+const EXPORT_ATTEMPTS = 4;
+
+async function exportOnce() {
   const tables = {};
   let exportedAt = null;
+  let revision = null;
   let cursor = null;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const route = `/api/agent/export${cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`}`;
     const { status, payload } = await call("GET", route, "agent");
     if (status !== 200 || payload.ok !== true) reportFailure("GET", "/api/agent/export", status, payload);
     exportedAt = exportedAt ?? payload.exportedAt;
+    if (revision === null) revision = payload.revision;
+    if (payload.revision !== revision) return null;
     for (const [name, rows] of Object.entries(payload.tables)) {
       tables[name] = (tables[name] || []).concat(rows);
     }
     cursor = payload.nextCursor;
-    if (cursor === null) return { exportedAt, tables };
+    if (cursor === null) return { exportedAt, revision, tables };
   }
   fail(`the export did not finish within ${MAX_PAGES} pages.`);
+}
+
+async function exportRaw() {
+  for (let attempt = 0; attempt < EXPORT_ATTEMPTS; attempt += 1) {
+    const result = await exportOnce();
+    if (result) return result;
+    process.stderr.write("giveback: the data changed during the export; starting it again.\n");
+  }
+  fail(`the data kept changing during the export (${EXPORT_ATTEMPTS} attempts). Try again when no agent is writing.`);
 }
 
 function without(row, names) {
@@ -405,11 +422,22 @@ async function refresh() {
   fail(`the refresh did not finish within ${MAX_PAGES} batches.`);
 }
 
+async function deleteItem(args) {
+  const slug = args[0];
+  if (!slug || args.length !== 1) return usageError("delete takes exactly one slug.");
+  const { status, payload } = await call("POST", "/api/agent/items/delete", "agent", { slug, confirm: slug });
+  if (status !== 200 || payload.ok !== true) reportFailure("POST", "/api/agent/items/delete", status, payload);
+  print(payload);
+  return undefined;
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   switch (command) {
     case "upsert":
       return upsert(args);
+    case "delete":
+      return deleteItem(args);
     case "ask":
       return ask(args);
     case "event":

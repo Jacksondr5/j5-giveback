@@ -15,7 +15,7 @@ import {
   type WriteStatus
 } from "../shared/api";
 import { ASK_KIND_LABELS, OUTCOME_LABELS, STAGE_LABELS, type AskKind, type Outcome, type Stage } from "../shared/enums";
-import { CURSOR_PATTERN, LIMITS } from "../shared/limits";
+import { CURSOR_PATTERN, LIMITS, SLUG_PATTERN } from "../shared/limits";
 import { apiError, checkBearer } from "./auth";
 import type { AskRow, ItemRow, LinkRow, ReadDb, WriteDb } from "./schema";
 import {
@@ -64,10 +64,12 @@ export async function touchSyncState(
   }
 ): Promise<void> {
   const row = await db.syncState.withIndex("by_creation").first();
+  // An agent write moves the revision, which lets an export detect a write between its pages.
+  const bump = patch.lastAgentPushAt !== undefined;
   if (row) {
-    await db.syncState.update(row.id, patch);
+    await db.syncState.update(row.id, bump ? { ...patch, revision: (row.revision ?? 0) + 1 } : patch);
   } else {
-    await db.syncState.insert(patch);
+    await db.syncState.insert(bump ? { ...patch, revision: 1 } : patch);
   }
 }
 
@@ -668,6 +670,68 @@ export async function handleEvents(ctx: ServerContext, req: EndpointRequest): Pr
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/agent/items/delete
+// ---------------------------------------------------------------------------
+
+// One index scan per ask for its private row, and a handler may make 100 scans.
+const DELETE_MAX_ASKS = 45;
+const DELETE_MAX_EVENTS = 800;
+
+/**
+ * Removes one item with its links, asks, events and private rows. It is for
+ * mistakes, such as a wrong slug or a duplicate. An item that ran its course
+ * is closed with an outcome, not deleted. The body repeats the slug in
+ * `confirm` so a stray call cannot delete anything.
+ */
+export async function handleDeleteItem(ctx: ServerContext, req: EndpointRequest): Promise<EndpointResponse> {
+  const denied = checkBearer(ctx.env, req, "AGENT_SECRET");
+  if (denied) return denied;
+  const read = await readBody(req);
+  if (!read.ok) return read.response;
+  const body = read.body as { slug?: unknown; confirm?: unknown } | null;
+  const slug = body && typeof body === "object" ? body.slug : undefined;
+  if (typeof slug !== "string" || !SLUG_PATTERN.test(slug) || body?.confirm !== slug) {
+    return apiError(400, "validation_failed", 'Send {"slug": "<slug>", "confirm": "<the same slug>"}. Nothing was deleted.');
+  }
+  const db = ctx.db as unknown as WriteDb;
+  const item = await db.items.withIndex("by_slug", (q) => q.eq("slug", slug)).first();
+  if (!item) {
+    return apiError(404, "not_found", `No item has the slug "${slug}".`);
+  }
+
+  // Read everything before the first write.
+  const links = await db.links.withIndex("by_item", (q) => q.eq("itemId", item.id)).take(LIMITS.linksPerItem * 2);
+  const asks = await db.asks.withIndex("by_item", (q) => q.eq("itemId", item.id)).take(DELETE_MAX_ASKS + 1);
+  const events = await db.events.withIndex("by_item", (q) => q.eq("itemId", item.id)).take(DELETE_MAX_EVENTS + 1);
+  if (asks.length > DELETE_MAX_ASKS || events.length > DELETE_MAX_EVENTS) {
+    return apiError(
+      409,
+      "too_large",
+      `This item has more history than one request can delete (over ${DELETE_MAX_ASKS} asks or ${DELETE_MAX_EVENTS} events). Close it with an outcome instead.`
+    );
+  }
+  const privateRows = await db.itemPrivate.withIndex("by_item", (q) => q.eq("itemId", item.id)).take(5);
+  const askPrivateIds: string[] = [];
+  for (const ask of asks) {
+    const rows = await db.askPrivate.withIndex("by_ask", (q) => q.eq("askId", ask.id)).take(5);
+    for (const row of rows) askPrivateIds.push(row.id);
+  }
+
+  for (const id of askPrivateIds) await db.askPrivate.delete(id);
+  for (const row of privateRows) await db.itemPrivate.delete(row.id);
+  for (const row of events) await db.events.delete(row.id);
+  for (const row of asks) await db.asks.delete(row.id);
+  for (const row of links) await db.links.delete(row.id);
+  await db.items.delete(item.id);
+  await touchSyncState(db, { lastAgentPushAt: Date.now() });
+
+  return json({
+    ok: true,
+    deleted: { slug, links: links.length, asks: asks.length, events: events.length }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/agent/export
 // ---------------------------------------------------------------------------
 
@@ -720,6 +784,7 @@ export async function handleExport(ctx: QueryServerContext, req: EndpointRequest
     }
   }
 
-  const response: ExportResponse = { ok: true, exportedAt: Date.now(), tables, nextCursor };
+  const state = await db.syncState.withIndex("by_creation").first();
+  const response: ExportResponse = { ok: true, exportedAt: Date.now(), revision: state?.revision ?? 0, tables, nextCursor };
   return json(response);
 }

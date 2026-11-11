@@ -120,10 +120,13 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
     for (const [index, link] of links.entries()) {
       const alias = aliasFor(index);
       const repository = result.data[alias];
-      const snapshot = isObj(repository) ? snapshotFrom(repository.node, selfLogin) : null;
+      // An error anywhere under this link's alias means some of its fields came back
+      // null. A snapshot built from that would overwrite good values, so the link fails whole.
+      const aliasError = result.errorsByAlias.get(alias);
+      const snapshot = aliasError === undefined && isObj(repository) ? snapshotFrom(repository.node, selfLogin) : null;
       if (!snapshot) {
         // Keep the old snapshot. Only note that this link could not be read.
-        const message = result.errorsByAlias.get(alias) ?? "GitHub returned nothing usable for this link.";
+        const message = aliasError ?? "GitHub returned nothing usable for this link.";
         failed.push({ url: link.url, message });
         if (link.syncError !== message || link.syncDue !== link.active) {
           // A link on a closed item is tried once. The agent can fix it and it becomes due again.
@@ -186,10 +189,9 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
   const first = failed[0];
   const patch: Parameters<typeof touchSyncState>[1] = { lastGithubSyncAt: now, refreshRunFailed: runFailed };
   if (batchFailed && first) {
-    patch.lastError = `${failed.length} of ${links.length} links could not be refreshed. First: ${first.url}: ${first.message}`.slice(
-      0,
-      MAX_ERROR_LENGTH
-    );
+    // This text is public. It must not name a link: the link may belong to a
+    // non-public item. Each link's own error is stored on the link row.
+    patch.lastError = `${failed.length} of ${links.length} links could not be refreshed. ${first.message}`.slice(0, MAX_ERROR_LENGTH);
     patch.lastErrorAt = now;
   } else if (done && !runFailed) {
     // A whole run with no failure clears the last error.

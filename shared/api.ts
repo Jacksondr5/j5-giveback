@@ -171,6 +171,8 @@ export type ExportTable = (typeof EXPORT_TABLES)[number];
 export type ExportResponse = {
   ok: true;
   exportedAt: number;
+  /** Changes on every agent write. Pages of one export must all carry the same value. */
+  revision: number;
   tables: Partial<Record<ExportTable, Record<string, unknown>[]>>;
   nextCursor: string | null;
 };
