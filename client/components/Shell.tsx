@@ -96,7 +96,7 @@ export function Shell({ children }: { children: ComponentChildren }) {
         </a>
         <div className="mx-auto max-w-5xl px-4 pb-16 pt-5 sm:px-6 sm:pt-7">
           <header className="flex flex-wrap items-start justify-between gap-x-8 gap-y-2">
-            <div className="min-w-0 max-w-2xl">
+            <div className="min-w-0 max-w-2xl flex-1 basis-72">
               {home ? (
                 <>
                   <h1 className="text-xl font-semibold tracking-tight">{SITE_NAME}</h1>

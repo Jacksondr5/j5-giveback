@@ -14,7 +14,7 @@ import {
 } from "../../shared/enums";
 import { NotPublicChip, OutcomeChip, StageChip, WaitingChip, linkState } from "../components/chips";
 import { RefLink } from "../components/refs";
-import { Age, Box, ChipList, FOCUS, ItemTitleLink, LINK, Skeleton, TEXT_MUTED, cx } from "../components/ui";
+import { Age, Box, Chip, ChipList, FOCUS, ItemTitleLink, LINK, Skeleton, TEXT_MUTED, cx } from "../components/ui";
 import { client, useTitle, useViewer } from "../data";
 import { repositories, sortForList, type ListItem } from "../lib/derive";
 import { applyFilters, filtersToSearch, hasFilters, parseFilters, type ItemFilters } from "../lib/filters";
@@ -26,7 +26,7 @@ import { shortKind } from "../lib/format";
 
 const CONTROL = cx(
   FOCUS,
-  "mt-1 block h-8 w-full min-w-0 rounded border border-stone-400 bg-white px-2 text-[0.8125rem] text-stone-900 dark:border-stone-500 dark:bg-stone-900 dark:text-stone-100"
+  "mt-1 block h-8 w-full min-w-0 rounded border border-stone-400 bg-white px-2 text-[0.8125rem] text-stone-900 placeholder:text-stone-500 dark:border-stone-500 dark:bg-stone-900 dark:text-stone-100 dark:placeholder:text-stone-400"
 );
 
 function Field({ label, children, className }: { label: string; children: ComponentChildren; className?: string }) {
@@ -182,7 +182,7 @@ function Table({ items }: { items: ListItem[] }) {
       <tbody className="divide-y divide-stone-200 dark:divide-stone-800">
         {items.map((item) => (
           <tr key={item.id}>
-            <th className={cx(TD, "w-[32%] text-left font-normal")} scope="row">
+            <th className={cx(TD, "text-left font-normal")} scope="row">
               <ItemTitleLink item={item} />
               {item.isPublic === false ? (
                 <span className="mt-1 block">
@@ -190,22 +190,22 @@ function Table({ items }: { items: ListItem[] }) {
                 </span>
               ) : null}
             </th>
-            <td className={TD}>{STAGE_LABELS[item.stage]}</td>
+            <td className={cx(TD, "whitespace-nowrap")}>{STAGE_LABELS[item.stage]}</td>
             <td className={TD}>{item.route ? ROUTE_LABELS[item.route] : <None label="No route yet" />}</td>
-            <td className={TD}>
+            <td className={cx(TD, "whitespace-nowrap")}>
               {item.waitingOn === "jackson" ? (
-                <WaitingChip waitingOn="jackson" />
+                <Chip tone="you">{WAITING_ON_LABELS.jackson}</Chip>
               ) : item.waitingOn === "nobody" ? (
                 <None label="Nobody" />
               ) : (
                 WAITING_ON_LABELS[item.waitingOn]
               )}
             </td>
-            <td className={TD}>
+            <td className={cx(TD, "whitespace-nowrap")}>
               <UpstreamRef item={item} />
             </td>
             <td className={TD}>{item.outcome ? OUTCOME_LABELS[item.outcome] : <None label="No outcome" />}</td>
-            <td className={cx(TD, "text-right text-xs")}>
+            <td className={cx(TD, "whitespace-nowrap text-right text-xs")}>
               <Age at={item.foundAt} label="Found" />
             </td>
           </tr>

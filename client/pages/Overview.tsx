@@ -190,7 +190,7 @@ function Tiles({ overview, items }: { overview: OverviewView; items: ListItem[] 
 // Needs Jackson
 // ---------------------------------------------------------------------------
 
-function AskRow({ ask }: { ask: ListAsk }) {
+function AskRow({ ask, notPublic }: { ask: ListAsk; notPublic: boolean }) {
   const now = useNowValue();
   const old = now - ask.openedAt >= WEEK;
   const recommendation = ask.private?.recommendation ?? null;
@@ -216,6 +216,12 @@ function AskRow({ ask }: { ask: ListAsk }) {
     >
       <p>
         <ItemTitleLink item={ask.item} />
+        {notPublic ? (
+          <>
+            {" "}
+            <NotPublicChip />
+          </>
+        ) : null}
       </p>
       <RowNote>
         {STAGE_LABELS[ask.item.stage]} · {ask.label ?? UNDISCLOSED_NOTE}
@@ -224,7 +230,9 @@ function AskRow({ ask }: { ask: ListAsk }) {
   );
 }
 
-function NeedsJackson({ asks }: { asks: ListAsk[] }) {
+function NeedsJackson({ asks, items }: { asks: ListAsk[]; items: ListItem[] }) {
+  // Only the owner's list says which items are not public; for everyone else this set is empty.
+  const notPublic = new Set(items.filter((item) => item.isPublic === false).map((item) => item.id));
   const now = useNowValue();
   const sorted = asksOldestFirst(asks);
   const oldest = sorted[0];
@@ -243,7 +251,7 @@ function NeedsJackson({ asks }: { asks: ListAsk[] }) {
         <Box accent>
           <RowList>
             {sorted.map((ask) => (
-              <AskRow ask={ask} key={ask.id} />
+              <AskRow ask={ask} key={ask.id} notPublic={notPublic.has(ask.item.id)} />
             ))}
           </RowList>
         </Box>
@@ -659,7 +667,7 @@ function OverviewBody({
     <>
       <SyncLine owner={owner} sync={overview.sync} />
       <Tiles items={items} overview={overview} />
-      <NeedsJackson asks={overview.openAsks} />
+      <NeedsJackson asks={overview.openAsks} items={items} />
       <OurMove items={items} />
       <Pipeline pipeline={overview.pipeline} />
       <Offered asks={overview.openAsks} items={items} owner={owner} />
