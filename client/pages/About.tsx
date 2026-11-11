@@ -149,13 +149,14 @@ export function AboutPage() {
               A review that approved, asked for changes, or is still required. The same three marks give the review
               bot's verdict.
             </Key>
-            <Key mark={<span className={cx(PRIVATE_BLOCK, "text-[0.8125rem]")}>dashed</span>}>
+            <Key mark={<span className={cx(PRIVATE_BLOCK, "text-sm")}>dashed</span>}>
               A dashed edge or underline marks what only the signed-in owner is sent. Visitors never receive it.
             </Key>
           </ul>
           <p className="mt-3">
             Live state comes from GitHub. "Active" is the last comment or review by anyone other than Jackson, bots
-            excluded; "waiting" counts from when the current wait began. An item's age counts from when it was found.
+            excluded; "waiting" counts from when the current wait began. An offered item waits on a maintainer unless
+            its row says otherwise. An item's age counts from when it was found.
           </p>
         </section>
 

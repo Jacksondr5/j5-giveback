@@ -119,7 +119,7 @@ export function Shell({ children }: { children: ComponentChildren }) {
                 {SITE_NAME}
               </Link>
             </p>
-            <nav aria-label="Main" className={cx("flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-1 text-[0.8125rem]", TEXT_DIM)}>
+            <nav aria-label="Main" className={cx("flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-1 text-sm", TEXT_DIM)}>
               <ul className="flex flex-wrap items-center gap-x-5 gap-y-1">
                 <NavLink current={home} to="/">
                   Overview

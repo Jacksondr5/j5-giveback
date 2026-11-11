@@ -18,12 +18,13 @@ import {
   FOCUS,
   ItemTitleLink,
   LINK,
+  PRIVATE_BLOCK,
+  PRIVATE_TIP,
   PrivateBlock,
   SERIF,
   Section,
   Skeleton,
   TEXT_DIM,
-  TONE_TEXT,
   cx,
   useNowValue
 } from "../components/ui";
@@ -47,7 +48,7 @@ import {
 } from "../lib/derive";
 import { itemsHref } from "../lib/filters";
 import { WEEK, formatAge, formatAgo, formatDateTime, formatSpan, plural } from "../lib/format";
-import { askAction, listThreads, stageWaitsOnJackson, threadState } from "../lib/present";
+import { askAction, askKindAction, listThreads, stageWaitsOnJackson } from "../lib/present";
 
 const OFFERED_SHOWN = 12;
 const CLOSED_SHOWN = 8;
@@ -95,7 +96,7 @@ function SyncLine({ sync, owner }: { sync: SyncView; owner: boolean }) {
 
   return (
     <div className={cx("text-xs", TEXT_DIM)}>
-      <p className="flex flex-wrap items-center gap-x-1.5 xl:justify-end">
+      <p className="flex flex-wrap items-center gap-x-1.5 lg:justify-end">
         <Icon className={status.kind === "ok" ? undefined : "text-(color:--ink)"} name={status.kind === "ok" ? "sync" : "alert"} size={12} />
         <span>
           {github}
@@ -116,16 +117,33 @@ function SyncLine({ sync, owner }: { sync: SyncView; owner: boolean }) {
 // Needs Jackson
 // ---------------------------------------------------------------------------
 
+/** Owner only: the agent's recommendation, clipped to a line until opened, and where the draft is. */
+function AskAdvice({ recommendation, draftPointer }: { recommendation: string | null; draftPointer: string | null }) {
+  if (!recommendation && !draftPointer) return null;
+  return (
+    <details className={cx(PRIVATE_BLOCK, "group mt-1.5 max-w-[46rem] text-sm leading-5")} title={PRIVATE_TIP}>
+      <summary className={cx(FOCUS, "flex cursor-pointer list-none items-start gap-1 rounded-sm [&::-webkit-details-marker]:hidden")}>
+        <Icon className={cx("mt-0.5 transition-transform group-open:rotate-90 motion-reduce:transition-none", TEXT_DIM)} name="chevronRight" />
+        <span className="min-w-0 truncate group-open:whitespace-pre-wrap group-open:break-words">
+          <span className="sr-only">Only you see this: </span>
+          {recommendation ? `Recommendation: ${recommendation}` : `Draft: ${draftPointer}`}
+        </span>
+      </summary>
+      {recommendation && draftPointer ? <p className="break-words pl-5">Draft: {draftPointer}</p> : null}
+    </details>
+  );
+}
+
 function AskRow({ ask, index, item }: { ask: ListAsk; index: number; item: ListItem | undefined }) {
   const now = useNowValue();
   const old = now - ask.openedAt >= WEEK;
   const { action, detail } = askAction(ask.kind, ask.label);
-  const recommendation = ask.private?.recommendation ?? null;
-  const draftPointer = ask.private?.draftPointer ?? null;
   const thread = item ? listThreads(item)[0] : undefined;
+  // A route decision is the Deciding stage and a text approval is Approving: the action already says so.
+  const stageImplied = stageWaitsOnJackson(ask.item.stage);
   return (
     <li className="grid grid-cols-[3.25rem_minmax(0,1fr)] gap-x-3 px-3 py-2.5 sm:grid-cols-[1rem_3.5rem_minmax(0,1fr)]">
-      <span aria-hidden="true" className={cx("hidden pt-0.5 text-right text-xs tabular-nums sm:block", TEXT_DIM)}>
+      <span aria-hidden="true" className={cx("hidden pt-1 text-right text-xs tabular-nums sm:block", TEXT_DIM)}>
         {index + 1}
       </span>
       <div>
@@ -140,23 +158,18 @@ function AskRow({ ask, index, item }: { ask: ListAsk; index: number; item: ListI
         />
       </div>
       <div className="min-w-0">
-        <p className="text-[0.9375rem] leading-6">
-          <strong className="font-bold">{action}</strong>
-          {detail ? <span className="ml-2">{detail}</span> : null}
-        </p>
+        <p className="max-w-[46rem] text-[0.9375rem] font-bold leading-6">{action}</p>
         <p>
           <ItemTitleLink item={ask.item} notPublic={item?.isPublic === false} />
         </p>
-        <div className={META}>
-          <StageTag stage={ask.item.stage} />
-          {thread ? <ThreadToken link={thread} state /> : null}
-        </div>
-        {recommendation || draftPointer ? (
-          <PrivateBlock className="mt-1.5">
-            {recommendation ? <p className="whitespace-pre-wrap break-words">Recommendation: {recommendation}</p> : null}
-            {draftPointer ? <p className="break-words">Draft: {draftPointer}</p> : null}
-          </PrivateBlock>
-        ) : null}
+        {detail ? <p className={cx("max-w-[46rem] text-sm", TEXT_DIM)}>{detail}</p> : null}
+        {stageImplied && !thread ? null : (
+          <div className={META}>
+            {stageImplied ? null : <StageTag stage={ask.item.stage} />}
+            {thread ? <ThreadToken link={thread} /> : null}
+          </div>
+        )}
+        <AskAdvice draftPointer={ask.private?.draftPointer ?? null} recommendation={ask.private?.recommendation ?? null} />
       </div>
     </li>
   );
@@ -199,7 +212,7 @@ function Entry({ item, trail, children }: { item: ListItem; trail: ComponentChil
         </p>
         {children}
       </div>
-      <div className="pt-0.5 text-right text-[0.8125rem]">{trail}</div>
+      <div className="pt-0.5 text-right text-sm">{trail}</div>
     </li>
   );
 }
@@ -217,11 +230,9 @@ function MoveRow({ move }: { move: Move }) {
         {reason === "upstream_changed" ? (
           <>
             <UpstreamChanged note={null} />
-            {item.upstreamChangeNote ? <span className="text-[0.8125rem]">{item.upstreamChangeNote}</span> : null}
+            {item.upstreamChangeNote ? <span className="text-sm">{item.upstreamChangeNote}</span> : null}
           </>
-        ) : (
-          <Waiting waitingOn={item.waitingOn} />
-        )}
+        ) : null}
       </div>
     </Entry>
   );
@@ -233,7 +244,7 @@ function OurMove({ items }: { items: ListItem[] }) {
   if (moves.length === 0) return null;
   return (
     <Section count={moves.length} title="Our move">
-      <ul className={LIST}>
+      <ul className={LIST} title="Upstream changed under the item, or the giveback agent has the next step">
         {moves.map((move) => (
           <MoveRow key={move.item.id} move={move} />
         ))}
@@ -250,7 +261,7 @@ function Figure({ value, label, title, to }: { value: string; label: string; tit
   const body = (
     <>
       <span className={cx(SERIF, "text-2xl font-bold leading-7 tabular-nums")}>{value}</span>
-      <span className="text-[0.8125rem]">{label}</span>
+      <span className="text-sm">{label}</span>
     </>
   );
   const frame = "flex items-baseline gap-x-2 rounded-sm";
@@ -294,42 +305,46 @@ function Pipeline({ overview, items }: { overview: OverviewView; items: ListItem
 // Offered upstream
 // ---------------------------------------------------------------------------
 
-const OFFERED_GRID = "md:grid md:grid-cols-[11rem_minmax(0,1fr)_8.5rem_6rem] md:gap-x-4";
+// The four columns apply when the list itself is wide enough, whatever the
+// screen: it is a container query, so a narrow column stacks the row instead.
+const OFFERED_GRID = "@3xl:grid @3xl:grid-cols-[13.5rem_minmax(0,1fr)_9rem_6rem] @3xl:gap-x-4";
 
 function OfferedRow({ item, asks }: { item: ListItem; asks: ListAsk[] }) {
   const now = useNowValue();
   const link = item.primaryLink;
   const quiet = quietState(item);
   const quietLong = now - quiet.since >= WEEK;
-  const live = link ? threadState(link) : null;
   const dependencies = dependencyLinks(item.dependencyLinks).filter((dependency) => dependency.id !== link?.id);
+  // Offered items wait on a maintainer unless something says otherwise, so only the exceptions are spelled out.
+  const waiting = item.waitingOn !== "maintainer" && !(asks.length > 0 && item.waitingOn === "jackson");
+  const meta = asks.length > 0 || waiting || item.upstreamChangedAt !== null || dependencies.length > 0;
   return (
     <li className={cx("grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3.5 py-2", OFFERED_GRID)}>
-      {/* Phone: title and activity, then the thread, its checks, and what it waits on. Wide: four columns. */}
-      <div className="order-3 col-span-2 min-w-0 md:order-none md:col-span-1 md:col-start-1 md:row-span-2 md:row-start-1">
-        {link ? <ThreadToken link={link} /> : <span className={cx("text-[0.8125rem]", TEXT_DIM)}>{item.disclosed ? "Nothing of ours" : ""}</span>}
+      {/* Stacked: title and activity, then the thread, its checks, and what it waits on. Wide: four columns. */}
+      <div className="order-3 col-span-2 min-w-0 @3xl:order-none @3xl:col-span-1 @3xl:col-start-1 @3xl:row-span-2 @3xl:row-start-1">
+        {link ? <ThreadToken link={link} /> : <span className={cx("text-sm", TEXT_DIM)}>{item.disclosed ? "Nothing of ours" : ""}</span>}
       </div>
-      <p className="order-1 min-w-0 md:order-none md:col-start-2 md:row-start-1">
+      <p className="order-1 min-w-0 @3xl:order-none @3xl:col-start-2 @3xl:row-start-1">
         <ItemTitleLink item={item} notPublic={item.isPublic === false} />
       </p>
-      <div className="order-5 col-span-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 md:order-none md:col-span-1 md:col-start-2 md:row-start-2">
-        {asks.map((ask) => (
-          <AskTag key={ask.id}>{askAction(ask.kind, ask.label).action}</AskTag>
-        ))}
-        {asks.length > 0 && item.waitingOn === "jackson" ? null : <Waiting quiet={item.waitingOn === "maintainer"} waitingOn={item.waitingOn} />}
-        {item.upstreamChangedAt !== null ? <UpstreamChanged note={item.upstreamChangeNote} /> : null}
-        {dependencies.map((dependency) => (
-          <ThreadToken key={dependency.id} link={dependency} role state />
-        ))}
-      </div>
-      <div className="order-4 col-span-2 min-w-0 empty:hidden md:order-none md:col-span-1 md:col-start-3 md:row-span-2 md:row-start-1 md:empty:block">
-        {/* An open thread's state is in its icon. Anything else is worth its words. */}
-        {link && live && (link.state !== "open" || link.isDraft) ? (
-          <p className={cx("text-[0.8125rem] font-medium", TONE_TEXT[live.tone])}>{live.text}</p>
-        ) : null}
+      {meta ? (
+        <div className="order-5 col-span-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 @3xl:order-none @3xl:col-span-1 @3xl:col-start-2 @3xl:row-start-2">
+          {asks.map((ask) => (
+            <AskTag key={ask.id} title={askAction(ask.kind, ask.label).action}>
+              {askKindAction(ask.kind)}
+            </AskTag>
+          ))}
+          {waiting ? <Waiting waitingOn={item.waitingOn} /> : null}
+          {item.upstreamChangedAt !== null ? <UpstreamChanged note={item.upstreamChangeNote} /> : null}
+          {dependencies.map((dependency) => (
+            <ThreadToken key={dependency.id} link={dependency} role />
+          ))}
+        </div>
+      ) : null}
+      <div className="order-4 col-span-2 min-w-0 empty:hidden @3xl:order-none @3xl:col-span-1 @3xl:col-start-3 @3xl:row-span-2 @3xl:row-start-1 @3xl:empty:block">
         {link ? <ThreadSignals link={link} /> : null}
       </div>
-      <div className="order-2 text-right text-[0.8125rem] md:order-none md:col-start-4 md:row-span-2 md:row-start-1">
+      <div className="order-2 text-right text-sm @3xl:order-none @3xl:col-start-4 @3xl:row-span-2 @3xl:row-start-1">
         <Age
           at={quiet.since}
           className={quietLong ? "font-bold" : undefined}
@@ -369,14 +384,17 @@ function Offered({ items, asks }: { items: ListItem[]; asks: ListAsk[] }) {
       {offered.length === 0 ? (
         <EmptyNote>Nothing is offered upstream right now.</EmptyNote>
       ) : (
-        <div className={cx(CARD, "overflow-hidden")}>
+        <div className={cx(CARD, "@container overflow-hidden")}>
           <div aria-hidden="true" className={cx("hidden border-b border-(color:--rule) px-3.5 py-1.5 text-xs", OFFERED_GRID, TEXT_DIM)}>
             <span className="flex flex-wrap gap-x-3">
               Thread <SideKey />
             </span>
             <span>Item</span>
             <span>Checks</span>
-            <span className="text-right" title="The last comment or review by anyone other than Jackson, bots excluded. Least recently active first.">
+            <span
+              className="text-right"
+              title="The last comment or review by anyone other than Jackson, bots excluded. Least recently active first. Offered items wait on a maintainer unless the row says otherwise."
+            >
               Activity
             </span>
           </div>
@@ -402,11 +420,11 @@ function CandidateRow({ item }: { item: ListItem }) {
         <StageTag hot={stageWaitsOnJackson(item.stage) && item.waitingOn === "jackson"} stage={item.stage} />
         {stageWaitsOnJackson(item.stage) && item.waitingOn === "jackson" ? null : <Waiting waitingOn={item.waitingOn} />}
         {!item.disclosed ? null : item.lastValidatedAt !== null ? (
-          <span className={cx("text-[0.8125rem]", TEXT_DIM)}>
+          <span className={cx("text-sm", TEXT_DIM)}>
             validated <DateText at={item.lastValidatedAt} />
           </span>
         ) : (
-          <span className={cx("text-[0.8125rem]", TEXT_DIM)}>not yet validated</span>
+          <span className={cx("text-sm", TEXT_DIM)}>not yet validated</span>
         )}
       </div>
     </Entry>
@@ -441,7 +459,7 @@ function HeldRow({ item }: { item: ListItem }) {
       <div className={META}>
         {item.waitingOn === "jackson" || links.length === 0 ? <Waiting waitingOn={item.waitingOn} /> : null}
         {links.map((link) => (
-          <ThreadToken key={link.id} link={link} role state />
+          <ThreadToken key={link.id} link={link} role />
         ))}
       </div>
     </Entry>
@@ -475,7 +493,7 @@ function ClosedRow({ item }: { item: ListItem }) {
         {item.primaryLink ? <ThreadToken link={item.primaryLink} /> : null}
         <FollowUp state={item.followUpState} />
       </div>
-      {item.followUpNote ? <p className={cx("mt-0.5 text-[0.8125rem]", TEXT_DIM)}>J5 follow-up: {item.followUpNote}</p> : null}
+      {item.followUpNote ? <p className={cx("mt-0.5 text-sm", TEXT_DIM)}>J5 follow-up: {item.followUpNote}</p> : null}
     </Entry>
   );
 }
@@ -515,7 +533,7 @@ function Intro({ children }: { children?: ComponentChildren }) {
   return (
     <div className="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-1 py-3">
       <h1 className="sr-only">Overview</h1>
-      <p className={cx("text-[0.8125rem]", TEXT_DIM)}>
+      <p className={cx("text-sm", TEXT_DIM)}>
         Bug fixes found while maintaining J5 Code, a fork of T3 Code, and offered back upstream.
       </p>
       {children}
@@ -558,13 +576,13 @@ function OverviewBody({
         <SyncLine owner={owner} sync={overview.sync} />
       </Intro>
       {/*
-        One column on a phone, in reading order. From xl: the queue and the quieter
+        One column on a phone, in reading order. From lg: the queue and the quieter
         lists on the left, the pipeline and the offered table on the right. From
         1800 px: three columns, with the quieter lists in the third. The two outer
-        wrappers are columns only at xl; elsewhere their children sit in the grid directly.
+        wrappers are columns only between lg and 1800 px; elsewhere their children sit in the grid directly.
       */}
-      <div className="grid grid-cols-1 gap-x-8 gap-y-7 xl:grid-cols-[minmax(0,5fr)_minmax(0,8fr)] min-[112.5rem]:grid-cols-[minmax(0,5fr)_minmax(0,8fr)_minmax(0,5fr)] min-[112.5rem]:grid-rows-[auto_1fr]">
-        <div className="contents xl:block xl:space-y-7 min-[112.5rem]:contents">
+      <div className="grid grid-cols-1 gap-x-8 gap-y-7 lg:grid-cols-[minmax(0,5fr)_minmax(0,8fr)] min-[112.5rem]:grid-cols-[minmax(0,5fr)_minmax(0,8fr)_minmax(0,5fr)] min-[112.5rem]:grid-rows-[auto_1fr]">
+        <div className="contents lg:block lg:space-y-7 min-[112.5rem]:contents">
           <div className="order-1 space-y-7 min-[112.5rem]:col-start-1 min-[112.5rem]:row-span-2 min-[112.5rem]:row-start-1">
             <NeedsJackson asks={overview.openAsks} items={items} />
             <OurMove items={items} />
@@ -574,7 +592,7 @@ function OverviewBody({
             <Held items={items} />
           </div>
         </div>
-        <div className="contents xl:block xl:space-y-7 min-[112.5rem]:contents">
+        <div className="contents lg:block lg:space-y-7 min-[112.5rem]:contents">
           <div className="order-2 space-y-7 min-[112.5rem]:col-start-2 min-[112.5rem]:row-span-2 min-[112.5rem]:row-start-1">
             <Pipeline items={items} overview={overview} />
             <Offered asks={overview.openAsks} items={items} />
@@ -590,7 +608,7 @@ function OverviewBody({
 
 function OverviewSkeleton() {
   return (
-    <div className="grid gap-x-8 xl:grid-cols-[minmax(0,5fr)_minmax(0,8fr)]">
+    <div className="grid gap-x-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,8fr)]">
       <Skeleton label="Loading the overview" rows={5} />
       <Skeleton label="Loading the overview" rows={5} />
     </div>

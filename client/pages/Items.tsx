@@ -14,12 +14,12 @@ import {
   type Stage
 } from "../../shared/enums";
 import { Icon } from "../components/icons";
-import { OutcomeTag, SideKey, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
+import { AskTag, OutcomeTag, SideKey, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
 import { Age, CARD, FOCUS, ItemTitleLink, LINK, SERIF, Skeleton, TEXT_DIM, YOU_TAG, cx } from "../components/ui";
 import { client, useTitle, useViewer } from "../data";
-import { repositories, sortForList, type ListItem } from "../lib/derive";
+import { openAsksByItem, repositories, sortForList, type ListAsk, type ListItem } from "../lib/derive";
 import { applyFilters, filtersToSearch, hasFilters, parseFilters, type ItemFilters } from "../lib/filters";
-import { groupByStage, listThreads, stageCounts, stageIcon, stageWaitsOnJackson } from "../lib/present";
+import { askAction, askKindAction, groupByStage, listThreads, stageCounts, stageIcon, stageWaitsOnJackson } from "../lib/present";
 
 // ---------------------------------------------------------------------------
 // Filters
@@ -27,7 +27,7 @@ import { groupByStage, listThreads, stageCounts, stageIcon, stageWaitsOnJackson 
 
 const CONTROL = cx(
   FOCUS,
-  "block h-8 w-full min-w-0 rounded border border-(color:--edge) bg-(--card) px-2 text-[0.8125rem] text-(color:--ink) placeholder:text-(color:--dim)"
+  "block h-8 w-full min-w-0 rounded border border-(color:--edge) bg-(--card) px-2 text-sm text-(color:--ink) placeholder:text-(color:--dim)"
 );
 
 function Select({
@@ -61,7 +61,7 @@ function Select({
   );
 }
 
-const STAGE_TAB = cx(FOCUS, "flex items-center gap-1.5 whitespace-nowrap rounded border px-2 py-1 text-[0.8125rem] leading-5");
+const STAGE_TAB = cx(FOCUS, "flex items-center gap-1.5 whitespace-nowrap rounded border px-2 py-1 text-sm leading-5");
 
 function StageTabs({ filters, counts, total }: { filters: ItemFilters; counts: Map<Stage, number>; total: number }) {
   const tab = (stage: Stage | null, label: string, count: number, icon: ComponentChildren) => {
@@ -170,7 +170,7 @@ function Threads({ item }: { item: ListItem }) {
     <ul className="space-y-1">
       {threads.map((link) => (
         <li key={link.id}>
-          <ThreadToken link={link} role state />
+          <ThreadToken link={link} role />
         </li>
       ))}
     </ul>
@@ -190,11 +190,21 @@ function Checks({ item }: { item: ListItem }) {
   );
 }
 
-/** What an open item waits on, or how a closed one ended. */
-function Status({ item }: { item: ListItem }) {
+/** How a closed item ended; for an open one, what Jackson is asked to do about it and what it waits on. */
+function Status({ item, asks }: { item: ListItem; asks: ListAsk[] }) {
   if (item.outcome) return <OutcomeTag outcome={item.outcome} />;
-  if (item.waitingOn === "nobody") return <None label="Waits on nobody" />;
-  return <Waiting bare waitingOn={item.waitingOn} />;
+  const jackson = item.waitingOn === "jackson";
+  if (asks.length === 0 && item.waitingOn === "nobody") return <None label="Waits on nobody" />;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      {asks.map((ask) => (
+        <AskTag key={ask.id} title={askAction(ask.kind, ask.label).action}>
+          {askKindAction(ask.kind)}
+        </AskTag>
+      ))}
+      {jackson && asks.length > 0 ? null : item.waitingOn === "nobody" ? null : <Waiting bare waitingOn={item.waitingOn} />}
+    </div>
+  );
 }
 
 function GroupHeading({ stage, count }: { stage: Stage; count: number }) {
@@ -205,15 +215,17 @@ function GroupHeading({ stage, count }: { stage: Stage; count: number }) {
         <Icon name={stageIcon(stage)} />
         {STAGE_LABELS[stage]}
       </span>
-      <span className={cx("text-[0.8125rem] font-normal tabular-nums", TEXT_DIM)}>{count}</span>
+      <span className={cx("text-sm font-normal tabular-nums", TEXT_DIM)}>{count}</span>
     </span>
   );
 }
 
+type Group = { stage: Stage; items: ListItem[] };
+
 const TH = "px-3 py-1.5 text-left align-bottom text-xs font-normal";
 const TD = "px-3 py-2 align-top";
 
-function Table({ groups }: { groups: { stage: Stage; items: ListItem[] }[] }) {
+function Table({ groups, asks }: { groups: Group[]; asks: Map<string, ListAsk[]> }) {
   return (
     <table className="w-full table-fixed border-collapse">
       <caption className="sr-only">Giveback items, grouped by stage</caption>
@@ -223,7 +235,7 @@ function Table({ groups }: { groups: { stage: Stage; items: ListItem[] }[] }) {
         <col className="w-[15%]" />
         <col className="w-[13%]" />
         <col className="w-[9%]" />
-        <col className="w-[5.5rem]" />
+        <col className="w-[6.5rem]" />
       </colgroup>
       <thead>
         <tr className={cx("border-b border-(color:--rule)", TEXT_DIM)}>
@@ -239,13 +251,13 @@ function Table({ groups }: { groups: { stage: Stage; items: ListItem[] }[] }) {
             Checks
           </th>
           <th className={TH} scope="col">
-            Waits on, or outcome
+            Needs, waits on, or outcome
           </th>
           <th className={TH} scope="col">
             Route
           </th>
-          <th className={cx(TH, "text-right")} scope="col" title="Since the item was found">
-            Age
+          <th className={cx(TH, "text-right")} scope="col">
+            Found
           </th>
         </tr>
       </thead>
@@ -268,11 +280,11 @@ function Table({ groups }: { groups: { stage: Stage; items: ListItem[] }[] }) {
                 <Checks item={item} />
               </td>
               <td className={TD}>
-                <Status item={item} />
+                <Status asks={asks.get(item.id) ?? []} item={item} />
               </td>
-              <td className={cx(TD, "text-[0.8125rem]")}>{item.route ? ROUTE_LABELS[item.route] : <None label="No route yet" />}</td>
-              <td className={cx(TD, "whitespace-nowrap text-right text-[0.8125rem]")}>
-                <Age at={item.foundAt} label="Found" />
+              <td className={cx(TD, "text-sm")}>{item.route ? ROUTE_LABELS[item.route] : <None label="No route yet" />}</td>
+              <td className={cx(TD, "whitespace-nowrap text-right text-sm")}>
+                <Age at={item.foundAt} label="Found" suffix="ago" />
               </td>
             </tr>
           ))}
@@ -283,7 +295,7 @@ function Table({ groups }: { groups: { stage: Stage; items: ListItem[] }[] }) {
 }
 
 /** The same rows for a narrow screen: each item is a short stack, so nothing scrolls sideways. */
-function Stack({ groups }: { groups: { stage: Stage; items: ListItem[] }[] }) {
+function Stack({ groups, asks }: { groups: Group[]; asks: Map<string, ListAsk[]> }) {
   return (
     <>
       {groups.map((group) => (
@@ -298,11 +310,24 @@ function Stack({ groups }: { groups: { stage: Stage; items: ListItem[] }[] }) {
                   <p className="min-w-0">
                     <ItemTitleLink item={item} notPublic={item.isPublic === false} />
                   </p>
-                  <Age at={item.foundAt} className="pt-0.5 text-[0.8125rem]" label="Found" />
+                  <Age at={item.foundAt} className={cx("pt-0.5 text-sm", TEXT_DIM)} label="Found" prefix="found" suffix="ago" />
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-                  {item.outcome ? <OutcomeTag outcome={item.outcome} /> : item.waitingOn !== "nobody" ? <Waiting waitingOn={item.waitingOn} /> : null}
-                  {item.route ? <span className={cx("text-[0.8125rem]", TEXT_DIM)}>{ROUTE_LABELS[item.route]}</span> : null}
+                  {item.outcome ? (
+                    <OutcomeTag outcome={item.outcome} />
+                  ) : (
+                    <>
+                      {(asks.get(item.id) ?? []).map((ask) => (
+                        <AskTag key={ask.id} title={askAction(ask.kind, ask.label).action}>
+                          {askKindAction(ask.kind)}
+                        </AskTag>
+                      ))}
+                      {item.waitingOn === "nobody" || (item.waitingOn === "jackson" && (asks.get(item.id) ?? []).length > 0) ? null : (
+                        <Waiting waitingOn={item.waitingOn} />
+                      )}
+                    </>
+                  )}
+                  {item.route ? <span className={cx("text-sm", TEXT_DIM)}>{ROUTE_LABELS[item.route]}</span> : null}
                 </div>
                 {listThreads(item).length > 0 || item.upstreamChangedAt !== null ? (
                   <div className="mt-1.5 space-y-1">
@@ -324,7 +349,7 @@ function Stack({ groups }: { groups: { stage: Stage; items: ListItem[] }[] }) {
 // The page
 // ---------------------------------------------------------------------------
 
-function ItemsBody({ items }: { items: ListItem[] | undefined }) {
+function ItemsBody({ items, openAsks }: { items: ListItem[] | undefined; openAsks: ListAsk[] | undefined }) {
   const { search } = useLocation();
   const filters = parseFilters(search);
   if (items === undefined) {
@@ -335,11 +360,13 @@ function ItemsBody({ items }: { items: ListItem[] | undefined }) {
   }
   const shown = sortForList(applyFilters(items, filters));
   const groups = groupByStage(shown);
+  // The open asks arrive with the overview query. Until they do, rows show what they wait on and no action.
+  const asks = openAsksByItem(openAsks ?? []);
   const filtered = hasFilters(filters);
   return (
     <>
       <Filters filters={filters} items={items} />
-      <p aria-live="polite" className={cx("mt-3 text-[0.8125rem]", TEXT_DIM)}>
+      <p aria-live="polite" className={cx("mt-3 text-sm", TEXT_DIM)}>
         {filtered ? `${shown.length} of ${items.length} items` : `${items.length} items`}
         {filtered ? (
           <>
@@ -356,10 +383,10 @@ function ItemsBody({ items }: { items: ListItem[] | undefined }) {
         ) : (
           <>
             <div className="hidden lg:block">
-              <Table groups={groups} />
+              <Table asks={asks} groups={groups} />
             </div>
             <div className="lg:hidden">
-              <Stack groups={groups} />
+              <Stack asks={asks} groups={groups} />
             </div>
           </>
         )}
@@ -369,11 +396,11 @@ function ItemsBody({ items }: { items: ListItem[] | undefined }) {
 }
 
 function PublicItems() {
-  return <ItemsBody items={client.useQuery("items")} />;
+  return <ItemsBody items={client.useQuery("items")} openAsks={client.useQuery("overview")?.openAsks} />;
 }
 
 function OwnerItems() {
-  return <ItemsBody items={client.useQuery("ownerItems")} />;
+  return <ItemsBody items={client.useQuery("ownerItems")} openAsks={client.useQuery("ownerOverview")?.openAsks} />;
 }
 
 export function ItemsPage() {

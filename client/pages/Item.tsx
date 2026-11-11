@@ -91,7 +91,7 @@ function Facts({ children }: { children: ComponentChildren }) {
 function Fact({ term, children }: { term: string; children: ComponentChildren }) {
   return (
     <div className="grid gap-x-4 gap-y-0.5 px-3.5 py-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
-      <dt className={cx("text-[0.8125rem]", TEXT_DIM)}>{term}</dt>
+      <dt className={cx("text-sm", TEXT_DIM)}>{term}</dt>
       <dd className="min-w-0 break-words">{children}</dd>
     </div>
   );
@@ -107,8 +107,7 @@ function ThreadCard({ link, links }: { link: LinkView; links: readonly LinkView[
   return (
     <li className="px-3.5 py-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <ThreadToken full link={link} state />
-        {host ? <span className={cx("text-[0.8125rem]", TEXT_DIM)}>on their {host.kind === "pr" ? "PR" : host.kind}</span> : null}
+        <ThreadToken full host={host} link={link} />
         {word ? (
           <span className="rounded border border-(color:--edge) px-1.5 text-xs leading-5" title={roleHint(link.role)}>
             {word}
@@ -173,14 +172,15 @@ function Lane({ ours, links, all }: { ours: boolean; links: LinkView[]; all: rea
   return (
     <div className={cx(CARD, "overflow-hidden", ours && "border-t-[3px] border-t-(color:--ink)")}>
       <h3 className="flex items-center gap-2 border-b border-(color:--rule) px-3.5 py-2 font-bold">
+        {/* The same block the tokens use, so the heading is the key to them. */}
         <SideGlyph ours={ours} tone="dim">
-          {null}
+          <Icon name="prOpen" size={14} />
         </SideGlyph>
         {ours ? "Ours" : "Theirs"}
         <span className={cx("font-normal tabular-nums", TEXT_DIM)}>{links.length}</span>
       </h3>
       {links.length === 0 ? (
-        <p className={cx("px-3.5 py-3 text-[0.8125rem]", TEXT_DIM)}>
+        <p className={cx("px-3.5 py-3 text-sm", TEXT_DIM)}>
           {ours ? "Nothing of ours is posted upstream." : "No one else's thread is tied to this item."}
         </p>
       ) : (
@@ -198,10 +198,14 @@ function Threads({ links }: { links: LinkView[] }) {
   const sorted = linksByRole(links);
   return (
     <Section count={sorted.length} title="Upstream threads">
-      <div className="grid items-start gap-4 md:grid-cols-2">
-        <Lane all={sorted} links={sorted.filter((link) => threadSide(link) !== "theirs")} ours />
-        <Lane all={sorted} links={sorted.filter((link) => threadSide(link) === "theirs")} ours={false} />
-      </div>
+      {sorted.length === 0 ? (
+        <p className={cx(CARD, "px-3.5 py-3", TEXT_DIM)}>Nothing is posted upstream, and no upstream thread is tied to this item.</p>
+      ) : (
+        <div className="grid items-start gap-4 md:grid-cols-2">
+          <Lane all={sorted} links={sorted.filter((link) => threadSide(link) !== "theirs")} ours />
+          <Lane all={sorted} links={sorted.filter((link) => threadSide(link) === "theirs")} ours={false} />
+        </div>
+      )}
     </Section>
   );
 }
@@ -240,10 +244,8 @@ function OpenAsk({ ask }: { ask: ListAsk }) {
         />
       </div>
       <div className="min-w-0">
-        <p className="text-[0.9375rem] leading-6">
-          <strong className="font-bold">{action}</strong>
-          {detail ? <span className="ml-2">{detail}</span> : null}
-        </p>
+        <p className="max-w-[46rem] text-[0.9375rem] font-bold leading-6">{action}</p>
+        {detail ? <p className={cx("max-w-[46rem] text-sm", TEXT_DIM)}>{detail}</p> : null}
         <PrivateAsk ask={ask} />
       </div>
     </li>
@@ -271,7 +273,7 @@ function AnsweredAsk({ ask }: { ask: ListAsk }) {
           ) : null}
         </p>
       </div>
-      {ask.resolution ? <p className="mt-0.5 pl-[1.375rem] text-[0.8125rem]">Answer: {ask.resolution}</p> : null}
+      {ask.resolution ? <p className="mt-0.5 pl-[1.375rem] text-sm">Answer: {ask.resolution}</p> : null}
       <div className="pl-[1.375rem]">
         <PrivateAsk ask={ask} />
       </div>
@@ -313,11 +315,11 @@ function Asks({ asks }: { asks: ListAsk[] }) {
 function TimelineEntry({ event }: { event: EventView }) {
   return (
     <li className="grid gap-x-3 gap-y-0.5 px-3.5 py-2 sm:grid-cols-[6.5rem_minmax(0,1fr)]">
-      <p className={cx("text-[0.8125rem]", TEXT_DIM)}>
+      <p className={cx("text-sm", TEXT_DIM)}>
         <DateText at={event.at} />
       </p>
       <div className={cx("min-w-0", event.isPublic ? undefined : PRIVATE_BLOCK)} title={event.isPublic ? undefined : PRIVATE_TIP}>
-        <p className="text-[0.8125rem]">
+        <p className="text-sm">
           {event.isPublic ? null : <span className="sr-only">Only you see this: </span>}
           <span className="font-semibold">{EVENT_TYPE_LABELS[event.type]}</span>{" "}
           <span className={TEXT_DIM}>by {EVENT_ACTOR_LABELS[event.actor]}</span>
@@ -340,13 +342,13 @@ function TimelineEntry({ event }: { event: EventView }) {
 // The page
 // ---------------------------------------------------------------------------
 
-function Header({ item }: { item: ListItem }) {
+function Header({ item, links = [] }: { item: ListItem; links?: readonly LinkView[] }) {
   const notPublic = item.isPublic === false;
   const threads = listThreads(item);
   const hot = stageWaitsOnJackson(item.stage) && item.waitingOn === "jackson";
   return (
     <header className="pb-4 pt-4">
-      <p className={cx("text-[0.8125rem]", TEXT_DIM)}>
+      <p className={cx("text-sm", TEXT_DIM)}>
         <Link className={LINK} to="/items">
           All items
         </Link>
@@ -369,7 +371,7 @@ function Header({ item }: { item: ListItem }) {
         {item.stage !== "closed" || item.waitingOn !== "nobody" ? (
           <span className="inline-flex flex-wrap items-center gap-x-1.5">
             {hot ? null : <Waiting waitingOn={item.waitingOn} />}
-            <span className={cx("text-[0.8125rem]", TEXT_DIM)}>
+            <span className={cx("text-sm", TEXT_DIM)}>
               {hot ? "waiting" : "for"} <Age at={item.waitingSince} label="Waiting since" />
             </span>
           </span>
@@ -380,7 +382,7 @@ function Header({ item }: { item: ListItem }) {
         <ul aria-label="Main upstream threads" className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1">
           {threads.map((link) => (
             <li key={link.id}>
-              <ThreadToken link={link} role state />
+              <ThreadToken host={commentHost(link, links)} link={link} role />
             </li>
           ))}
         </ul>
@@ -420,19 +422,19 @@ function PrivateNotes({ fields }: { fields: ItemPrivateView }) {
       <dl className={cx(PRIVATE_BOX, "space-y-2 bg-(--card) px-3.5 py-3")} title={PRIVATE_TIP}>
         {fields.notes ? (
           <div>
-            <dt className={cx("text-[0.8125rem]", TEXT_DIM)}>Notes</dt>
+            <dt className={cx("text-sm", TEXT_DIM)}>Notes</dt>
             <dd className="whitespace-pre-wrap break-words">{fields.notes}</dd>
           </div>
         ) : null}
         {fields.impact ? (
           <div>
-            <dt className={cx("text-[0.8125rem]", TEXT_DIM)}>Impact on J5</dt>
+            <dt className={cx("text-sm", TEXT_DIM)}>Impact on J5</dt>
             <dd className="whitespace-pre-wrap break-words">{fields.impact}</dd>
           </div>
         ) : null}
         {fields.preparedBranch ? (
           <div>
-            <dt className={cx("text-[0.8125rem]", TEXT_DIM)}>Prepared branch</dt>
+            <dt className={cx("text-sm", TEXT_DIM)}>Prepared branch</dt>
             <dd className={cx(REF, "break-all")}>{fields.preparedBranch}</dd>
           </div>
         ) : null}
@@ -538,7 +540,7 @@ function Disclosed({ detail }: { detail: Detail }) {
   const hasPrivate = privateFields !== null && Boolean(privateFields.notes || privateFields.impact || privateFields.preparedBranch);
   return (
     <>
-      <Header item={item} />
+      <Header item={item} links={detail.links} />
       {item.summary ? <p className="max-w-[46rem] text-[0.9375rem] leading-6">{item.summary}</p> : null}
       {item.upstreamChangedAt !== null ? (
         <p className="mt-2 max-w-[46rem]">
@@ -548,8 +550,13 @@ function Disclosed({ detail }: { detail: Detail }) {
         </p>
       ) : null}
 
-      <div className="mt-5 grid gap-x-8 gap-y-7 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)]">
-        <div className="min-w-0 space-y-7">
+      {/*
+        One column on a phone: where it is, what it needs, its threads, then the
+        notes and details, then the history. From xl the notes and details are a
+        sidebar beside all of it.
+      */}
+      <div className="mt-5 grid gap-x-8 gap-y-7 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)] xl:grid-rows-[auto_1fr]">
+        <div className="min-w-0 space-y-7 xl:col-start-1 xl:row-start-1">
           <Tracker
             everOffered={detail.links.some((link) => link.ownership === "ours")}
             routeChosen={item.route !== null && item.route !== "hold" && item.route !== "drop"}
@@ -557,22 +564,22 @@ function Disclosed({ detail }: { detail: Detail }) {
           />
           <Asks asks={detail.asks} />
           <Threads links={detail.links} />
-          <Section count={events.length} title="Timeline">
-            {events.length === 0 ? (
-              <p className={cx(CARD, "px-3.5 py-3", TEXT_DIM)}>No history has been recorded for this item.</p>
-            ) : (
-              <ol className={cx(CARD, DIVIDE)} reversed>
-                {events.map((event) => (
-                  <TimelineEntry event={event} key={event.id} />
-                ))}
-              </ol>
-            )}
-          </Section>
         </div>
-        <div className="min-w-0 space-y-7">
+        <div className="min-w-0 space-y-7 xl:col-start-2 xl:row-span-2 xl:row-start-1">
           {hasPrivate && privateFields ? <PrivateNotes fields={privateFields} /> : null}
           <Details item={item} />
         </div>
+        <Section className="min-w-0 xl:col-start-1 xl:row-start-2" count={events.length} title="Timeline">
+          {events.length === 0 ? (
+            <p className={cx(CARD, "px-3.5 py-3", TEXT_DIM)}>No history has been recorded for this item.</p>
+          ) : (
+            <ol className={cx(CARD, DIVIDE)} reversed>
+              {events.map((event) => (
+                <TimelineEntry event={event} key={event.id} />
+              ))}
+            </ol>
+          )}
+        </Section>
       </div>
     </>
   );

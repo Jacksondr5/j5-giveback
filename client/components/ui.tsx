@@ -34,7 +34,7 @@ export const ROOT_TOKENS = [
   "[--paper:#f1f3f6]",
   "[--card:#ffffff]",
   "[--ink:#17202b]",
-  "[--dim:#566170]",
+  "[--dim:#4c5665]",
   "[--rule:#d5dbe2]",
   "[--edge:#8d98a5]",
   "[--you-bg:#ffedb8]",
@@ -49,7 +49,7 @@ export const ROOT_TOKENS = [
   "dark:[--paper:#0f151c]",
   "dark:[--card:#17202a]",
   "dark:[--ink:#e7ecf2]",
-  "dark:[--dim:#9ba7b5]",
+  "dark:[--dim:#a9b4c1]",
   "dark:[--rule:#2a3542]",
   "dark:[--edge:#5d6b7b]",
   "dark:[--you-bg:#3a2b06]",
@@ -233,7 +233,7 @@ export function Section({
       <div className="mb-2 flex items-baseline gap-x-2">
         <h2 className={cx(SERIF, "text-lg font-bold leading-6")}>{title}</h2>
         {count !== undefined ? <span className={cx("text-sm tabular-nums", TEXT_DIM)}>{count}</span> : null}
-        {aside ? <div className="ml-auto text-[0.8125rem]">{aside}</div> : null}
+        {aside ? <div className="ml-auto text-sm">{aside}</div> : null}
       </div>
       {children}
     </section>
@@ -248,7 +248,7 @@ export function EmptyNote({ children }: { children: ComponentChildren }) {
 /** Text only the owner is sent, set off by the dashed edge. */
 export function PrivateBlock({ children, className }: { children: ComponentChildren; className?: string }) {
   return (
-    <div className={cx(PRIVATE_BLOCK, "text-[0.8125rem] leading-5", className)} title={PRIVATE_TIP}>
+    <div className={cx(PRIVATE_BLOCK, "text-sm leading-5", className)} title={PRIVATE_TIP}>
       <span className="sr-only">Only you see this: </span>
       {children}
     </div>
@@ -310,5 +310,5 @@ export class SilentBoundary extends Component<{ children: ComponentChildren }, {
 
 export const BUTTON = cx(
   FOCUS,
-  "cursor-pointer rounded border border-(color:--edge) px-2.5 py-1 text-[0.8125rem] font-medium hover:bg-(--paper)"
+  "cursor-pointer rounded border border-(color:--edge) px-2.5 py-1 text-sm font-medium hover:bg-(--paper)"
 );

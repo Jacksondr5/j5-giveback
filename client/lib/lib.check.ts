@@ -27,6 +27,7 @@ import { applyFilters, filtersToSearch, itemsHref, parseFilters } from "./filter
 import { DAY, HOUR, MINUTE, WEEK, YEAR, formatAgo, formatSpan, originRefUrl, shortRef } from "./format";
 import {
   askAction,
+  askKindAction,
   ciSignal,
   commentHost,
   groupByStage,
@@ -345,14 +346,18 @@ console.log("ok  filters");
 
 // --- Presentation -------------------------------------------------------------
 
-// The action an ask needs: the agent's label wins when it is the same instruction, and is never repeated.
-equal(askAction("route_decision", "Decide which of the two fixes to offer"), { action: "Choose a route", detail: "Decide which of the two fixes to offer" }, "label adds to the action");
-equal(askAction("route_decision", "Choose a route: direct PR or issue first"), { action: "Choose a route", detail: "Direct PR or issue first" }, "label split at the colon");
-equal(askAction("route_decision", "Choose a route for the reconnect backoff"), { action: "Choose a route for the reconnect backoff", detail: null }, "label is the instruction");
+// The action an ask needs: one instruction. A label that is itself an instruction is the action;
+// a label that states a fact follows the kind of action as context.
+equal(askAction("route_decision", "Decide which of the two fixes to offer"), { action: "Decide which of the two fixes to offer", detail: null }, "instruction label is the action");
+equal(askAction("route_decision", "Choose a route: direct PR or issue first"), { action: "Choose a route: direct PR or issue first", detail: null }, "instruction label with a colon");
 equal(askAction("text_approval", "Approve the issue text"), { action: "Approve the issue text", detail: null }, "same verb, label wins");
-equal(askAction("bot_ci_findings", "Two review-bot findings need a decision"), { action: "Decide on bot or CI findings", detail: "Two review-bot findings need a decision" }, "bot findings");
+equal(askAction("side_choice", "Rebase onto main or keep the stack"), { action: "Rebase onto main or keep the stack", detail: null }, "another instruction verb");
+equal(askAction("bot_ci_findings", "Two review-bot findings need a decision"), { action: "Decide on bot or CI findings", detail: "Two review-bot findings need a decision" }, "a fact follows the kind of action");
+equal(askAction("device_needed", "Needs a check on a physical iPhone"), { action: "Test on a device", detail: "Needs a check on a physical iPhone" }, "a fact, not an instruction");
+equal(askAction("maintainer_question", "A maintainer asked whether delegated stops should name the parent"), { action: "Answer a maintainer", detail: "A maintainer asked whether delegated stops should name the parent" }, "maintainer question");
 equal(askAction("device_needed", null), { action: "Test on a device", detail: null }, "undisclosed ask has no label");
 equal(askAction("side_choice", "   "), { action: "Choose between options", detail: null }, "blank label");
+equal(askKindAction("route_decision"), "Choose a route", "kind of action for a tag");
 
 // Ours or theirs.
 equal(threadSide(link()), "ours", "our PR");
@@ -361,7 +366,9 @@ equal(threadSide(link({ kind: "comment", ownership: "theirs" })), "theirs", "the
 equal(threadSide(link({ ownership: "theirs", role: "covering" })), "theirs", "their covering PR");
 equal(threadName(link()), "Our PR", "name: our PR");
 equal(threadName(link({ kind: "issue", ownership: "theirs" })), "Their issue", "name: their issue");
-equal(threadName(link({ kind: "comment" })), "Our comment on", "name: our comment");
+equal(threadName(link({ kind: "comment" })), "Our comment on their thread", "name: our comment");
+equal(threadName(link({ kind: "comment" }), link({ kind: "issue", ownership: "theirs" })), "Our comment on their issue", "name: our comment, host known");
+equal(threadName(link({ kind: "comment" }), link({ kind: "pr" })), "Our comment on our PR", "name: our comment on our own thread");
 equal(threadName(link({ kind: "discussion" })), "Our discussion", "name: our discussion");
 equal(roleWord("primary"), null, "primary has no role word");
 equal(roleWord("covering"), "covers this", "covering");
@@ -375,8 +382,8 @@ equal(threadState(link({ state: "closed" })), { icon: "prClosed", tone: "closed"
 equal(threadState(link({ kind: "issue", state: "closed" })), { icon: "issueClosed", tone: "merged", text: "Closed" }, "closed issue is not red");
 equal(threadState(link({ kind: "issue" })), { icon: "issueOpen", tone: "open", text: "Open" }, "open issue");
 equal(threadState(link({ kind: "discussion" })), { icon: "discussion", tone: "open", text: "Open" }, "open discussion");
-equal(threadState(link({ kind: "comment" })), { icon: "comment", tone: "open", text: "Thread open" }, "comment reports its thread");
-equal(threadState(link({ kind: "comment", state: "merged" })).text, "Thread merged", "comment on a merged thread");
+equal(threadState(link({ kind: "comment" })), { icon: "comment", tone: "open", text: "Open" }, "comment reports its thread");
+equal(threadState(link({ kind: "comment", state: "merged" })).text, "Merged", "comment on a merged thread");
 equal(threadState(link({ state: null })), { icon: "prOpen", tone: "dim", text: "Not yet synced" }, "unsynced");
 equal(ciSignal("failure").text, "CI failing", "CI failing");
 equal(macroscopeSignal("Approved at dccdab7").tone, "open", "macroscope yes");

@@ -38,27 +38,44 @@ function firstWord(text: string): string {
   return (text.trim().split(/\s+/)[0] ?? "").toLowerCase();
 }
 
-function capitalize(text: string): string {
-  return text.length > 0 ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+// Verbs an agent's label opens with when the label is itself the instruction.
+const INSTRUCTION_VERBS = new Set([
+  "answer",
+  "approve",
+  "check",
+  "choose",
+  "confirm",
+  "decide",
+  "open",
+  "pick",
+  "rebase",
+  "reply",
+  "review",
+  "say",
+  "test",
+  "verify"
+]);
+
+/** The kind of action alone, short enough for a tag: "Choose a route". */
+export function askKindAction(kind: AskKind): string {
+  return ASK_ACTIONS[kind];
 }
 
 /**
- * What an ask needs from Jackson, as an imperative, and the agent's own words when they add to it.
+ * What an ask needs from Jackson: one instruction, and the agent's context when it has some.
  *
- * The agent's label wins when it is already an instruction with the same verb
- * ("Approve the issue text"), so the same thing is never said twice. A label of
- * the form "Choose a route: direct PR or issue first" is split at the colon.
- * A null label is an undisclosed item: only the kind of action is shown.
+ * When the agent's label is itself an instruction ("Rebase onto main or keep
+ * the stack", "Approve the issue text"), it is the action and nothing is
+ * added, so the row never gives two instructions. When the label states a fact
+ * ("Two review-bot findings need a decision"), the kind of action leads and the
+ * label follows as context. A null label is an undisclosed item: only the kind
+ * of action is shown.
  */
 export function askAction(kind: AskKind, label: string | null): { action: string; detail: string | null } {
   const action = ASK_ACTIONS[kind];
   const text = label?.trim() ?? "";
   if (text.length === 0) return { action, detail: null };
-  if (text.toLowerCase().startsWith(`${action.toLowerCase()}:`)) {
-    const rest = text.slice(action.length + 1).trim();
-    return { action, detail: rest.length > 0 ? capitalize(rest) : null };
-  }
-  if (firstWord(text) === firstWord(action)) return { action: text, detail: null };
+  if (INSTRUCTION_VERBS.has(firstWord(text).replace(/[^a-z]/g, ""))) return { action: text, detail: null };
   return { action, detail: text };
 }
 
@@ -81,10 +98,20 @@ export function threadSide(link: Pick<LinkView, "ownership" | "kind">): ThreadSi
 
 const KIND_WORDS: Record<LinkKind, string> = { pr: "PR", issue: "issue", comment: "comment", discussion: "discussion" };
 
-/** "Our PR", "Their issue", "Our comment on". The ref follows it on screen. */
-export function threadName(link: Pick<LinkView, "ownership" | "kind">): string {
+/**
+ * "Our PR", "Their issue", or for our comment "Our comment on their thread".
+ * The ref follows it on screen.
+ *
+ * A comment is on a thread that already existed, so it reads "their thread".
+ * `host` is that thread when the item lists it too: then it reads "their issue",
+ * or "our PR" for a comment on a thread J5 opened.
+ */
+export function threadName(link: Pick<LinkView, "ownership" | "kind">, host?: Pick<LinkView, "ownership" | "kind"> | null): string {
   const side = threadSide(link);
-  if (side === "our_comment") return "Our comment on";
+  if (side === "our_comment") {
+    if (!host) return "Our comment on their thread";
+    return `Our comment on ${host.ownership === "ours" ? "our" : "their"} ${KIND_WORDS[host.kind]}`;
+  }
   return `${side === "ours" ? "Our" : "Their"} ${KIND_WORDS[link.kind]}`;
 }
 
@@ -145,8 +172,9 @@ export function threadState(link: Pick<LinkView, "kind" | "state" | "isDraft">):
         ? { icon: "discussion", tone: "open", text: "Open" }
         : { icon: "discussion", tone: "merged", text: "Closed" };
     case "comment":
-      if (link.state === "open") return { icon: "comment", tone: "open", text: "Thread open" };
-      return { icon: "comment", tone: "merged", text: link.state === "merged" ? "Thread merged" : "Thread closed" };
+      // The state is the thread's: the name already says "on their thread".
+      if (link.state === "open") return { icon: "comment", tone: "open", text: "Open" };
+      return { icon: "comment", tone: "merged", text: link.state === "merged" ? "Merged" : "Closed" };
   }
 }
 
@@ -164,8 +192,8 @@ export function listThreads(item: ListItem): LinkView[] {
 }
 
 /**
- * For our comment: the kind of thread it sits on, when the item also lists that
- * thread as someone else's ("their issue"). Null when the item does not say whose thread it is.
+ * For our comment: the thread it sits on, when the item lists that thread too.
+ * Null when the item does not list it.
  */
 export function commentHost(comment: LinkView, links: readonly LinkView[]): LinkView | null {
   if (threadSide(comment) !== "our_comment") return null;

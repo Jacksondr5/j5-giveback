@@ -64,19 +64,20 @@ export function SideGlyph({ ours, tone, children }: { ours: boolean; tone: Tone;
 }
 
 /**
- * One upstream thread: the ours-or-theirs block, "Our PR" or "Their issue", and
- * the ref, linking out to GitHub. `role` adds what the thread is to the item
- * ("covers this"); `state` adds its live state in words.
+ * One upstream thread: the ours-or-theirs block, "Our PR" or "Their issue", the
+ * ref, and its live state in words, linking out to GitHub. `role` adds what the
+ * thread is to the item ("covers this"). `host`, for our comment, is the thread
+ * it sits on when the item lists it.
  */
 export function ThreadToken({
   link,
+  host = null,
   role = false,
-  state = false,
   full = false
 }: {
   link: LinkView;
+  host?: LinkView | null;
   role?: boolean;
-  state?: boolean;
   /** "pingdotgg/t3code#33420" in place of "t3code#33420". */
   full?: boolean;
 }) {
@@ -84,24 +85,23 @@ export function ThreadToken({
   const ours = threadSide(link) !== "theirs";
   const word = role ? roleWord(link.role) : null;
   return (
-    <span className="inline-flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 align-middle text-[0.8125rem] leading-5">
+    <span className="inline-flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 align-middle text-sm leading-5">
       <ExternalLink
         className={cx(FOCUS, "group inline-flex min-w-0 items-center gap-1.5 rounded-sm")}
         href={link.url}
-        title={`${fullRef(link.repo, link.number)}${link.title ? `: ${link.title}` : ""} (${live.text})`}
+        title={`${fullRef(link.repo, link.number)}${link.title ? `: ${link.title}` : ""}`}
       >
         <SideGlyph ours={ours} tone={live.tone}>
           <Icon name={live.icon} size={14} />
         </SideGlyph>
         <span className="min-w-0 break-words">
-          <span className={ours ? "font-semibold" : undefined}>{threadName(link)}</span>{" "}
+          <span className={ours ? "font-semibold" : undefined}>{threadName(link, host)}</span>{" "}
           <span className={cx(REF, "underline decoration-(color:--edge) underline-offset-2 group-hover:decoration-(color:--ink)")}>
             {full ? fullRef(link.repo, link.number) : shortRef(link.repo, link.number)}
           </span>
-          {state ? null : <span className="sr-only">, {live.text}</span>}
         </span>
       </ExternalLink>
-      {state ? <span className={cx("whitespace-nowrap font-medium", TONE_TEXT[live.tone])}>{live.text}</span> : null}
+      <span className={cx("whitespace-nowrap font-medium", TONE_TEXT[live.tone])}>{live.text}</span>
       {word ? (
         <span className={cx("whitespace-nowrap", TEXT_DIM)} title={roleHint(link.role)}>
           {word}
@@ -116,11 +116,15 @@ export function SideKey() {
   return (
     <span className="inline-flex items-center gap-x-2.5 whitespace-nowrap">
       <span className="inline-flex items-center gap-1">
-        <span aria-hidden="true" className="inline-block size-2.5 rounded-[0.1875rem] bg-(--dim)" />
+        <span aria-hidden="true" className="inline-grid size-3.5 place-items-center rounded-[0.1875rem] bg-(--dim) text-(color:--card)">
+          <Icon name="prOpen" size={10} />
+        </span>
         ours
       </span>
       <span className="inline-flex items-center gap-1">
-        <span aria-hidden="true" className="inline-block size-2.5 rounded-[0.1875rem] border-[1.5px] border-(color:--dim)" />
+        <span aria-hidden="true" className="inline-grid size-3.5 place-items-center rounded-[0.1875rem] border border-(color:--dim)">
+          <Icon name="prOpen" size={10} />
+        </span>
         theirs
       </span>
     </span>
@@ -129,7 +133,7 @@ export function SideKey() {
 
 /** Shown in place of a thread when an item has none of ours. */
 export function NoThread() {
-  return <span className={cx("text-[0.8125rem]", TEXT_DIM)}>Nothing posted</span>;
+  return <span className={cx("text-sm", TEXT_DIM)}>Nothing posted</span>;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +142,7 @@ export function NoThread() {
 
 function SignalMark({ signal, short }: { signal: Signal; short: string }) {
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap text-[0.8125rem] leading-5" title={signal.text}>
+    <span className="inline-flex items-center gap-1 whitespace-nowrap text-sm leading-5" title={signal.text}>
       <Icon className={TONE_TEXT[signal.tone]} name={signal.icon} size={14} />
       <span aria-hidden="true">{short}</span>
       <span className="sr-only">{signal.text}</span>
@@ -175,9 +179,13 @@ export function ThreadSignals({ link, words = false, className }: { link: LinkVi
         </li>
       ) : null}
       {triage ? (
-        <li className="whitespace-nowrap text-[0.8125rem] leading-5" title="Place on the upstream triage board">
-          Triage {link.triageBucket ?? "unsorted"}
-          {link.triageRank !== null ? <span className="tabular-nums"> #{link.triageRank}</span> : null}
+        <li
+          className="inline-flex items-center gap-1 whitespace-nowrap text-sm leading-5"
+          title="Where upstream's triage board has this thread: its bucket, and its rank in the bucket"
+        >
+          <Icon className={TEXT_DIM} name="project" size={14} />
+          Triage: {link.triageBucket ?? "unsorted"}
+          {link.triageRank !== null ? <span className="tabular-nums">#{link.triageRank}</span> : null}
         </li>
       ) : null}
     </ul>
@@ -193,7 +201,7 @@ export function StageTag({ stage, hot = false }: { stage: Stage; hot?: boolean }
   return (
     <span
       className={cx(
-        "inline-flex items-center gap-1 whitespace-nowrap text-[0.8125rem] leading-5",
+        "inline-flex items-center gap-1 whitespace-nowrap text-sm leading-5",
         hot && cx(YOU_TAG, "rounded px-1.5 font-semibold")
       )}
     >
@@ -217,7 +225,7 @@ export function Waiting({
 }) {
   if (waitingOn === "jackson") {
     return (
-      <span className={cx(YOU_TAG, "inline-flex items-center gap-1 whitespace-nowrap rounded px-1.5 text-[0.8125rem] font-semibold leading-5")}>
+      <span className={cx(YOU_TAG, "inline-flex items-center gap-1 whitespace-nowrap rounded px-1.5 text-sm font-semibold leading-5")}>
         <Icon name="person" size={14} />
         {bare ? "Jackson" : "Waits on Jackson"}
       </span>
@@ -225,16 +233,19 @@ export function Waiting({
   }
   const words = waitingWords(waitingOn);
   return (
-    <span className={cx("text-[0.8125rem] leading-5", quiet && TEXT_DIM)}>
+    <span className={cx("text-sm leading-5", quiet && TEXT_DIM)}>
       {bare ? words.charAt(0).toUpperCase() + words.slice(1) : `Waits on ${words}`}
     </span>
   );
 }
 
-/** An open ask as a compact amber tag: the action it needs. */
-export function AskTag({ children }: { children: ComponentChildren }) {
+/** An open ask as a compact amber tag: the kind of action it needs, with the full instruction in its tooltip. */
+export function AskTag({ children, title }: { children: ComponentChildren; title?: string }) {
   return (
-    <span className={cx(YOU_TAG, "inline-flex max-w-full items-center gap-1 rounded px-1.5 text-[0.8125rem] font-semibold leading-5")}>
+    <span
+      className={cx(YOU_TAG, "inline-flex max-w-full items-center gap-1 rounded px-1.5 text-sm font-semibold leading-5")}
+      title={title}
+    >
       <Icon name="person" size={14} />
       <span className="min-w-0 break-words">{children}</span>
     </span>
@@ -244,7 +255,7 @@ export function AskTag({ children }: { children: ComponentChildren }) {
 export function OutcomeTag({ outcome }: { outcome: Outcome }) {
   const mark = outcomeMark(outcome);
   return (
-    <span className="inline-flex items-start gap-1 text-[0.8125rem] leading-5">
+    <span className="inline-flex items-start gap-1 text-sm leading-5">
       <Icon className={cx("mt-[0.1875rem]", TONE_TEXT[mark.tone])} name={mark.icon} size={14} />
       <span>{OUTCOME_LABELS[outcome]}</span>
     </span>
@@ -253,15 +264,15 @@ export function OutcomeTag({ outcome }: { outcome: Outcome }) {
 
 /** The J5-side clean-up after a closed outcome. Nothing is shown when none is owed. */
 export function FollowUp({ state }: { state: FollowUpState | null }) {
-  if (state === "owed") return <span className="whitespace-nowrap text-[0.8125rem] font-semibold leading-5">J5 follow-up owed</span>;
-  if (state === "done") return <span className={cx("whitespace-nowrap text-[0.8125rem] leading-5", TEXT_DIM)}>J5 follow-up done</span>;
+  if (state === "owed") return <span className="whitespace-nowrap text-sm font-semibold leading-5">J5 follow-up owed</span>;
+  if (state === "done") return <span className={cx("whitespace-nowrap text-sm leading-5", TEXT_DIM)}>J5 follow-up done</span>;
   return null;
 }
 
 /** Raised by the server when a link merged, closed, reopened or began failing CI. */
 export function UpstreamChanged({ note }: { note: string | null }) {
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap text-[0.8125rem] font-semibold leading-5" title={note ?? undefined}>
+    <span className="inline-flex items-center gap-1 whitespace-nowrap text-sm font-semibold leading-5" title={note ?? undefined}>
       <Icon name="alert" size={14} />
       Changed upstream
     </span>
