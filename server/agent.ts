@@ -112,11 +112,12 @@ async function highestItemNumber(db: ReadDb): Promise<number> {
 
 /**
  * The number the next new item gets. The counter on the syncState row only goes
- * up, so deleting an item does not free its number. Until the counter is first
- * stored, the next number is one more than the highest in use.
+ * up, so deleting an item does not free its number. The counter is never trusted
+ * alone: the next number is also above the highest in use, so a missing or stale
+ * counter cannot hand out a number twice.
  */
 async function nextItemNumber(db: ReadDb, state: SyncStateRow | null): Promise<number> {
-  return state?.nextItemNumber ?? (await highestItemNumber(db)) + 1;
+  return Math.max(state?.nextItemNumber ?? 1, (await highestItemNumber(db)) + 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -616,6 +617,9 @@ export async function handleAssignNumbers(ctx: ServerContext, req: EndpointReque
   // Nothing to number means nothing to write: a repeated run leaves the revision alone.
   if (assigned.length > 0) {
     await touchSyncState(db, { lastAgentPushAt: now, nextItemNumber: next }, state);
+  } else if ((state?.nextItemNumber ?? 0) < next) {
+    // Every item has a number but the stored counter is missing or behind. Store the right one.
+    await touchSyncState(db, { nextItemNumber: next }, state);
   }
 
   const response: AssignNumbersResponse = {

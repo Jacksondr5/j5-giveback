@@ -99,6 +99,9 @@ export function matchesFilters(item: ListItem, filters: ItemFilters): boolean {
   if (words.length === 0) return true;
   const text = searchText(item);
   return words.every((word) => {
+    // A word written as an ID is only ever an ID: "GB-1" must not find "GB-12" in some item's text.
+    const id = parseItemId(word);
+    if (id !== null) return item.number === id;
     const number = searchedNumber(word, words.length === 1);
     return (number !== null && item.number === number) || text.includes(word);
   });

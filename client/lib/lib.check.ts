@@ -368,17 +368,24 @@ const numbered = [
   item("one-twenty", { number: 120 }),
   item("withheld", { number: 7, disclosed: false, slug: null, title: "Undisclosed candidate", targetRepo: null }),
   item("pr-twelve", { primaryLink: link({ number: 12 }) }),
-  item("no-number")
+  item("no-number"),
+  // Its title holds another item's ID as text. A search for a shorter ID must not find it.
+  item("mentions-twelve", { number: 30, title: `Follow ${formatItemId(12)}` })
 ];
 const find = (q: string) => ids(applyFilters(numbered, parseFilters(`?q=${encodeURIComponent(q)}`)));
 equal(find(ID12), ["twelve"], "search by ID");
 equal(find(ID12.toLowerCase()), ["twelve"], "search by ID, lower case");
 equal(find(formatItemId(1)), ["one"], "an ID matches whole, not as a prefix");
+equal(find(ID12), ["twelve"], "an ID does not match text that mentions it");
 equal(find(formatItemId(7)), ["withheld"], "an undisclosed item is found by its ID");
 equal(find(formatItemId(999)), [], "an ID no item has");
 equal(find(`${ID12} twelve`), ["twelve"], "an ID beside another word");
 equal(find(`${ID12} one`), [], "an ID and a word of another item");
-equal(find("12"), ["twelve", "pr-twelve"], "a bare number alone: the item with that number, and text that holds it");
+equal(
+  find("12"),
+  ["twelve", "pr-twelve", "mentions-twelve"],
+  "a bare number alone: the item with that number, and text that holds it"
+);
 equal(find("12 item"), ["pr-twelve"], "a bare number beside another word is text only");
 
 // Where an item's page is: the slug, the ID for an item with no slug, the row id until it has a number.
