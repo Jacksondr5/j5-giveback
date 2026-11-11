@@ -364,7 +364,7 @@ function Header({ item, links = [] }: { item: ListItem; links?: readonly LinkVie
       </p>
       <h1 className={cx(SERIF, "mt-1 max-w-5xl text-[1.75rem] font-bold leading-9", !item.disclosed && "italic")}>
         {/* The ID leads the title, as it does in every list. Here it is also the control that copies it. */}
-        {item.number !== null ? <CopyItemId className="mr-2.5 text-[0.8125rem] leading-5" number={item.number} /> : null}
+        {item.number !== null ? <CopyItemId className="mr-2.5 text-sm leading-5" number={item.number} /> : null}
         <span className={notPublic ? PRIVATE_TEXT : undefined} title={notPublic ? `Not public. ${PRIVATE_TIP}.` : undefined}>
           {item.title}
         </span>

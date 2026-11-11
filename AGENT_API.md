@@ -6,6 +6,7 @@ The giveback dashboard tracks every item that Jackson's fork, J5 Code, gives bac
 
 - [Quick start](#quick-start)
 - [The model](#the-model)
+- [Item IDs](#item-ids)
 - [Privacy rules](#privacy-rules)
 - [Endpoints](#endpoints)
 - [Enumerations](#enumerations)
@@ -44,6 +45,9 @@ scripts/giveback event delete --key t3code-33420:posted --key auto:stage:44db62b
 
 # Set one link's triage fields without resending the item's other links.
 scripts/giveback link triage --url https://github.com/pingdotgg/t3code/pull/33420 --bucket "needs approval" --rank 12
+
+# Read one item, by its ID or its slug: links, asks, events and private fields.
+scripts/giveback show GB-12
 
 # Read everything back.
 scripts/giveback export --out backup.json
@@ -84,16 +88,41 @@ When that thread merges or closes, the refresh raises the item's "state changed 
 
 An item has:
 
+- **An ID**, such as `GB-12`: its short name. See [Item IDs](#item-ids).
 - **Links**: the upstream PRs, issues, comments and discussions it concerns. The server copies GitHub state onto each link (see [refresh](#post-apirefresh)).
 - **Asks**: things that need Jackson. An ask is opened and closed by an agent, and has an age.
 - **Events**: its history.
 - **Private fields**: notes that only the owner sees.
 
+## Item IDs
+
+Every item has a short ID: `GB-<n>`, such as `GB-12`. GB is for give-back. It is the name Jackson uses for an item: "what's the status of GB-12?".
+
+- **The server assigns it.** Each new item takes the next number, starting at 1. Items created in one request are numbered in the order they appear in it. The response to [`POST /api/agent/items`](#post-apiagentitems) carries each item's `number` (12) and `shortId` (`"GB-12"`).
+- **It never changes.** An upsert never changes an item's number, and a `number` in a request is rejected as an unknown field. Moving stages, closing, and changing `isPublic` all leave it alone.
+- **It is never reused.** Deleting an item does not free its number. Deleting an item and creating it again, which is how a slug is renamed, gives it a new ID.
+- **It is public, for every item.** An undisclosed item shows its ID and nothing else new: a bare number says nothing about the item. So `GB-12` is safe to write anywhere, and it is the only public name an undisclosed item has. The slug of an undisclosed item stays private.
+- **It is not the slug.** The API still identifies an item by `slug` in every request. The ID is for reading and for talking. `scripts/giveback show GB-12` gives the slug.
+
+**Name an item to Jackson by its ID and its title together**: "GB-12, the Merge back tooltip", not the ID alone and not the slug. The ID is what he can say back; the title is what tells him which item it is without looking it up. For an undisclosed item, use the ID with its real title only where the owner alone reads it.
+
+To read one item:
+
+```sh
+scripts/giveback show GB-12            # or: scripts/giveback show gb-12, scripts/giveback show <slug>
+```
+
+It prints the item with its `shortId`, `links`, `asks` (each with its `private`), `events` and `private` fields, in the same shape as one entry of `scripts/giveback export`. It exits 1 when no item has that ID or slug. It reads the full export and picks the item out, so it costs one read of everything.
+
+On the site, `/items/GB-12` is the item's page (`/items/gb-12` works too), the item list's search finds `GB-12`, and the ID is shown before the title wherever an item is named.
+
+A slug must not have the form of an ID. Creating an item with the slug `gb-12` is refused.
+
 ## Privacy rules
 
 The site is public. Read these before writing.
 
-1. **`isPublic` decides whether anyone but the owner sees an item.** When it is `false`, the public sees an "Undisclosed candidate" with only its stage, what it waits on, and its dates. No title, summary, slug, route, links, events or asks. Its asks are not shown to visitors at all, in the "Needs Jackson" queue or on the item's page, and they do not count in the public "open asks" number. The owner sees and counts them. Set `isPublic: false` for anything security-sensitive until it is filed upstream. `isPublic` is required when you create an item. There is no default.
+1. **`isPublic` decides whether anyone but the owner sees an item.** When it is `false`, the public sees an "Undisclosed candidate" with only its [ID](#item-ids), its stage, what it waits on, and its dates. No title, summary, slug, route, links, events or asks. Its asks are not shown to visitors at all, in the "Needs Jackson" queue or on the item's page, and they do not count in the public "open asks" number. The owner sees and counts them. Set `isPublic: false` for anything security-sensitive until it is filed upstream. `isPublic` is required when you create an item. There is no default.
 2. **Public fields are public.** For a public item, everything outside `private` is shown to everyone: title, summary, route reason, validation verdict, follow-up note, links, ask labels and resolutions, and events with `isPublic: true`.
 3. **Private fields are for the owner only.** `private.notes`, `private.impact`, `private.preparedBranch` on an item; `private.recommendation`, `private.draftPointer` on an ask; and events with `isPublic: false`.
 4. **Never send these, in any field, public or private**: local paths, host names, ports, thread ids, token locations, or commentary about maintainers. The server rejects any string that contains `/home/`, `/tmp/`, `/mnt/`, `/Users/`, `/root/` or `~/`. It cannot detect the rest. That is your job.
@@ -112,7 +141,7 @@ Each write request is one transaction. If anything in it is invalid, the respons
 
 Creates or changes up to 25 items, carrying at most 200 links between them. `slug` identifies an item.
 
-- **To create**: send `slug`, `title`, `summary`, `stage`, `waitingOn`, `targetRepo` and `isPublic`.
+- **To create**: send `slug`, `title`, `summary`, `stage`, `waitingOn`, `targetRepo` and `isPublic`. The server gives the item the next number; see [Item IDs](#item-ids). Do not send one.
 - **To change**: send `slug` and the fields that change. An omitted field keeps its value. `null` clears an optional field.
 - **`links`**, when present, replaces the item's whole link set. A link is identified by its `url`; a link that stays keeps its GitHub snapshot. Omit `links` to leave them alone. To change only a link's triage fields, use [`POST /api/agent/links`](#post-apiagentlinks) instead.
 - **`private`**, when present, is merged field by field into the item's private fields.
@@ -174,7 +203,7 @@ Full example:
 
 | Field | Type | Notes |
 |---|---|---|
-| `slug` | string | Required. 3 to 64 characters: lowercase letters, digits, hyphens. It appears in the public URL of a public item. It cannot be changed later. |
+| `slug` | string | Required. 3 to 64 characters: lowercase letters, digits, hyphens. It appears in the public URL of a public item. It cannot be changed later. It must not have the form of an item ID (`gb-12`). |
 | `title` | string | Up to 120 characters |
 | `summary` | string | Up to 300 characters |
 | `stage` | [stage](#stage) | |
@@ -233,12 +262,37 @@ Response:
 {
   "ok": true,
   "results": [
-    { "slug": "agent-stop-attribution", "id": "44db62bf-98be-40ea-9a83-2019e8d39331", "status": "created", "stageEvent": true }
+    { "slug": "agent-stop-attribution", "id": "44db62bf-98be-40ea-9a83-2019e8d39331", "number": 12, "shortId": "GB-12", "status": "created", "stageEvent": true }
   ]
 }
 ```
 
-`status` is `created`, `updated` or `unchanged`.
+`status` is `created`, `updated` or `unchanged`. `id` is the row id. `number` and `shortId` are the item's [ID](#item-ids); they are `null` only for an item stored before IDs existed that the [backfill](#post-apiagentitemsassign-numbers) has not numbered yet.
+
+### `POST /api/agent/items/assign-numbers`
+
+Gives a number to every item that has none. It exists for the items stored before IDs did; a new item gets its number when it is created, so this is run once after the deploy that adds IDs, and is harmless to run again.
+
+- Items are numbered oldest find first: by `foundAt`, and by creation time where two share a `foundAt`. Numbering continues after the highest number in use.
+- An item that has a number keeps it. When every item has one, the call assigns nothing and writes nothing.
+- The body is optional. `{"limit": 50}` sets how many items one call may number: 1 to 350, default 100. One call is one transaction, and Lakebed cancels a transaction after 5 seconds, so the default is well under what the write limit (1,000 rows) would allow.
+- **It is resumable.** The response says how many items are still without a number in `remaining`. Call again until it is 0. The order does not depend on where a call stops, so several calls give the same numbers as one. A call that fails assigns nothing.
+
+```json
+{
+  "ok": true,
+  "assigned": [
+    { "slug": "merged-device-hub-fix", "id": "1b66cba8-a899-485b-861e-570ab3b54253", "number": 1, "shortId": "GB-1" },
+    { "slug": "agent-stop-attribution", "id": "44db62bf-98be-40ea-9a83-2019e8d39331", "number": 2, "shortId": "GB-2" }
+  ],
+  "remaining": 0,
+  "nextNumber": 3
+}
+```
+
+`nextNumber` is the number the next new item will get.
+
+With the script: `scripts/giveback assign-numbers`, which calls until nothing remains and prints every pair it assigned. `--limit N` sets the items per call.
 
 ### `POST /api/agent/items/delete`
 
@@ -248,7 +302,7 @@ Removes one item together with its links, asks, events and private fields. Use i
 { "slug": "merge-back-tooltip", "confirm": "merge-back-tooltip" }
 ```
 
-`confirm` must repeat the slug. The response is `{"ok": true, "deleted": {"slug": "...", "links": 2, "asks": 1, "events": 5}}`. An unknown slug returns 404. An item with more than 45 asks or 800 events returns 409 and is not deleted. To rename a slug, export the item, delete it, and upsert it under the new slug with its asks and events.
+`confirm` must repeat the slug. The response is `{"ok": true, "deleted": {"slug": "...", "links": 2, "asks": 1, "events": 5}}`. An unknown slug returns 404. An item with more than 45 asks or 800 events returns 409 and is not deleted. To rename a slug, export the item, delete it, and upsert it under the new slug with its asks and events. The item created that way gets a new [ID](#item-ids): the deleted item's number is not used again.
 
 With the script: `scripts/giveback delete merge-back-tooltip`.
 
@@ -421,6 +475,7 @@ GET /api/agent/export?cursor=<nextCursor from the previous response>
   "ok": true,
   "exportedAt": 1794414478790,
   "revision": 42,
+  "itemIdPrefix": "GB",
   "tables": { "items": [], "links": [], "asks": [], "events": [] },
   "nextCursor": "3:v1.hUIlEltc..."
 }
@@ -430,7 +485,9 @@ The tables are `items`, `links`, `asks`, `events`, `itemPrivate`, `askPrivate` a
 
 Each response is a separate read. `revision` goes up on every agent write and every refresh, so if two pages of one export carry different values, a write landed between them and the copy is not consistent: start again. `scripts/giveback export` does this for you.
 
-`scripts/giveback export` follows the cursors and nests the result: each item carries its `links`, `private`, `asks` (each with its `private`) and `events`. `--raw` gives the tables instead.
+An item row carries its `number`. Its [ID](#item-ids) is `itemIdPrefix`, a hyphen, and that number: `GB-12`. A row with no `number` is an item the [backfill](#post-apiagentitemsassign-numbers) has not reached.
+
+`scripts/giveback export` follows the cursors and nests the result: each item carries its `shortId` (`"GB-12"`), `links`, `private`, `asks` (each with its `private`) and `events`. `--raw` gives the tables instead. For one item, use `scripts/giveback show GB-12`.
 
 In a row, a field with no value is absent. `items.originRefs` and `links.ghLabels` are one entry per line. The `gh*` fields, `macroscopeVerdict`, `syncedAt` and `syncError` on a link are the GitHub snapshot.
 
@@ -452,6 +509,8 @@ Returns every link on an item that is not closed: the upstream threads worth pol
       "ownership": "ours",
       "role": "primary",
       "itemSlug": "agent-stop-attribution",
+      "itemNumber": 12,
+      "itemShortId": "GB-12",
       "itemStage": "offered",
       "ghState": "open",
       "lastOtherActivityAt": 1794314478000,
@@ -463,6 +522,7 @@ Returns every link on an item that is not closed: the upstream threads worth pol
 ```
 
 - `ghState` (`open`, `closed`, `merged`), `lastOtherActivityAt` and `syncedAt` come from the last [refresh](#post-apirefresh). Each is `null` until the link has been read, and `lastOtherActivityAt` is `null` while nobody but Jackson has commented or reviewed.
+- `itemNumber` and `itemShortId` are the item's [ID](#item-ids). Both are `null` for an item not yet numbered.
 - Links of non-public items are included, with their slugs. This endpoint is for agents; do not republish its output.
 - A link that sits on two open items is listed twice, once per item.
 - A response holds at most 500 links. When `nextCursor` is not null, call `GET /api/agent/watchlist?cursor=<nextCursor>` and concatenate. Links come grouped by role: `primary`, then `base`, `covering`, `fixes` and `related`.
@@ -603,11 +663,12 @@ The numbers are in `shared/limits.ts`.
 | Links per watch list response | 500 |
 | Links per refresh call | 20 |
 | Items in the dashboard | 350 |
+| Items numbered per `POST /api/agent/items/assign-numbers` | 100 by default, 350 at most |
 | Summary | 300 characters |
 | Event note | 280 characters |
 | Private notes | 2,000 characters |
 
-The batch sizes come from Lakebed's per-request limits: 100 index lookups, 1,000 writes and 1,000 rows returned. A request over a batch size is refused with a `400` that states the limit.
+The batch sizes come from Lakebed's per-request limits: 100 index lookups, 1,000 writes, 1,000 rows returned and 5 seconds per transaction. A request over a batch size is refused with a `400` that states the limit.
 
 The whole dashboard may store 1 MiB, and Lakebed allows 1,000 write requests per day. Keep text short, and send changes in batches instead of one request per item.
 
@@ -636,4 +697,4 @@ The whole dashboard may store 1 MiB, and Lakebed allows 1,000 write requests per
 
 Each error names the value by its path in the request. Fix every one and send the whole request again.
 
-No endpoint renames a slug. To undo a mistaken item, use `POST /api/agent/items/delete`; an item that ran its course is closed with an outcome instead. To undo a mistaken event, use `POST /api/agent/events/delete`.
+No endpoint renames a slug or changes an item's ID. To undo a mistaken item, use `POST /api/agent/items/delete`; an item that ran its course is closed with an outcome instead. To undo a mistaken event, use `POST /api/agent/events/delete`.

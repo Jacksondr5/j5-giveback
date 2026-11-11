@@ -216,7 +216,7 @@ export function ItemTitleLink({
         width. An inline block takes no underline from the link around it.
         An item with no number yet has no box: its title starts at the edge.
       */}
-      {id ? <span className={cx(ITEM_ID, "mr-1.5 inline-block min-w-[2.875rem] text-xs")}>{id}</span> : null}
+      {id ? <span className={cx(ITEM_ID, "mr-1 inline-block min-w-[2.75rem] text-xs")}>{id}</span> : null}
       {item.title}
       {notPublic ? <span className="sr-only"> (not public)</span> : null}
     </Link>
