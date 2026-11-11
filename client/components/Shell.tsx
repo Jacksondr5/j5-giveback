@@ -1,25 +1,39 @@
-// The frame every page sits in: site name, navigation, sign-in, and the footer.
+// The frame every page sits in: the site name, navigation and sign-in, across the full width.
 
 import { Link, SignInWithGoogle, signOut, useAuth, useLocation } from "lakebed/client";
 import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import { SITE_NAME, useNow, useViewer } from "../data";
-import { FOCUS, LINK, MONO, NowContext, TEXT_MUTED, cx } from "./ui";
+import { FOCUS, NowContext, PRIVATE_BOX, ROOT_TOKENS, SANS, SERIF, TEXT_DIM, cx } from "./ui";
 
-const NAV_ITEM = cx(FOCUS, "rounded-sm py-1 hover:underline hover:underline-offset-4");
-const NAV_CURRENT = "font-semibold text-stone-900 dark:text-stone-100";
+const NAV_ITEM = cx(FOCUS, "block rounded-sm border-b-2 py-1 hover:text-(color:--ink)");
+const NAV_CURRENT = "border-(color:--ink) font-semibold text-(color:--ink)";
+const NAV_OTHER = "border-transparent";
 
 function NavLink({ to, current, children }: { to: string; current: boolean; children: ComponentChildren }) {
   return (
     <li>
-      <Link aria-current={current ? "page" : undefined} className={cx(NAV_ITEM, current && NAV_CURRENT)} to={to}>
+      <Link aria-current={current ? "page" : undefined} className={cx(NAV_ITEM, current ? NAV_CURRENT : NAV_OTHER)} to={to}>
         {children}
       </Link>
     </li>
   );
 }
 
-/** Sign in, or for a signed-in account: the owner marker and sign out. Reading never needs any of it. */
+/** The return arrow of the favicon. */
+function Mark() {
+  return (
+    <svg aria-hidden="true" className="shrink-0" height="22" viewBox="0 0 64 64" width="22">
+      <rect fill="#1c1917" height="64" rx="14" width="64" />
+      <g fill="none" stroke="#f5b301" stroke-linecap="round" stroke-linejoin="round" stroke-width="6.5">
+        <path d="M43 46H27a12 12 0 0 1 0-24h18" />
+        <path d="M37 12l10 10-10 10" />
+      </g>
+    </svg>
+  );
+}
+
+/** Sign in, or for a signed-in account: the one legend for the dashed style, and sign out. Reading never needs any of it. */
 function Account() {
   const auth = useAuth();
   const viewer = useViewer();
@@ -28,19 +42,22 @@ function Account() {
   if (!signedIn) {
     return (
       <li>
-        <SignInWithGoogle className={cx(NAV_ITEM, "cursor-pointer")}>Sign in</SignInWithGoogle>
+        <SignInWithGoogle className={cx(NAV_ITEM, NAV_OTHER, "cursor-pointer")}>Sign in</SignInWithGoogle>
       </li>
     );
   }
   return (
     <>
       {viewer?.isOwner ? (
-        <li className="rounded border border-dashed border-stone-500 px-1.5 py-0.5 text-xs dark:border-stone-400">
-          Owner view
+        <li
+          className={cx(PRIVATE_BOX, "px-1.5 py-0.5 text-xs text-(color:--ink)")}
+          title="You are signed in as the owner. Anything with a dashed edge or a dashed underline is sent only to you."
+        >
+          Dashed = only you
         </li>
       ) : null}
       <li>
-        <button className={cx(NAV_ITEM, "cursor-pointer")} onClick={() => void signOut()} type="button">
+        <button className={cx(NAV_ITEM, NAV_OTHER, "cursor-pointer")} onClick={() => void signOut()} type="button">
           Sign out
         </button>
       </li>
@@ -54,23 +71,23 @@ function NoExtraAccess() {
   const viewer = useViewer();
   if (!viewer || !viewer.signedIn || viewer.isOwner) return null;
   return (
-    <p className={cx("mt-3 rounded-md border border-stone-300 px-3 py-2 text-xs dark:border-stone-700", TEXT_MUTED)}>
-      Signed in{auth.isSignedIn && auth.displayName ? ` as ${auth.displayName}` : ""}. This account has no extra
-      access, so you see the same public view as everyone else.
+    <p className={cx("mt-3 max-w-3xl text-xs", TEXT_DIM)}>
+      Signed in{auth.isSignedIn && auth.displayName ? ` as ${auth.displayName}` : ""}, with the same public view as
+      everyone else.
       {viewer.userId ? (
         <>
           {" "}
-          Your user id is <span className={cx(MONO, "break-all")}>{viewer.userId}</span>.
+          Your user id is <span className="break-all tabular-nums text-(color:--ink)">{viewer.userId}</span>.
         </>
       ) : null}
     </p>
   );
 }
 
-/** Page background and form-control scheme on the root element, so overscroll and native controls match. */
+/** The palette, page background and form-control scheme on the root element, so overscroll and native controls match. */
 function useRootStyle(): void {
   useEffect(() => {
-    document.documentElement.classList.add("bg-stone-50", "scheme-light", "dark:bg-stone-950", "dark:scheme-dark");
+    document.documentElement.classList.add(...ROOT_TOKENS);
   }, []);
 }
 
@@ -87,34 +104,23 @@ export function Shell({ children }: { children: ComponentChildren }) {
 
   return (
     <NowContext.Provider value={now}>
-      <div className="min-h-screen bg-stone-50 font-sans text-sm leading-normal text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+      <div className={cx(SANS, "min-h-screen bg-(--paper) text-sm leading-5 text-(color:--ink) antialiased")}>
         <a
-          className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:rounded focus:bg-white focus:px-3 focus:py-2 focus:outline-2 focus:outline-stone-900 dark:focus:bg-stone-900 dark:focus:outline-stone-100"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded focus:bg-(--card) focus:px-3 focus:py-2 focus:outline-2 focus:outline-(color:--ink)"
           href="#main"
         >
           Skip to content
         </a>
-        <div className="mx-auto max-w-5xl px-4 pb-16 pt-5 sm:px-6 sm:pt-7">
-          <header className="flex flex-wrap items-start justify-between gap-x-8 gap-y-2">
-            <div className="min-w-0 max-w-2xl flex-1 basis-72">
-              {home ? (
-                <>
-                  <h1 className="text-xl font-semibold tracking-tight">{SITE_NAME}</h1>
-                  <p className={cx("mt-1", TEXT_MUTED)}>
-                    Bug fixes found while maintaining J5 Code, a fork of T3 Code, and offered back to the upstream
-                    projects under their contribution rules.
-                  </p>
-                </>
-              ) : (
-                <p className="text-base font-semibold tracking-tight">
-                  <Link className={cx(FOCUS, "rounded-sm hover:underline hover:underline-offset-4")} to="/">
-                    {SITE_NAME}
-                  </Link>
-                </p>
-              )}
-            </div>
-            <nav aria-label="Main">
-              <ul className={cx("flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.8125rem]", TEXT_MUTED)}>
+        <header className="border-b border-(color:--rule) bg-(--card)">
+          <div className="mx-auto flex max-w-[150rem] flex-wrap items-center gap-x-8 px-4 pt-2.5 sm:px-6 xl:px-8">
+            <p className={cx(SERIF, "w-full pb-1 text-[1.0625rem] font-bold leading-6 sm:w-auto sm:pb-2")}>
+              <Link className={cx(FOCUS, "inline-flex items-center gap-2 rounded-sm")} to="/">
+                <Mark />
+                {SITE_NAME}
+              </Link>
+            </p>
+            <nav aria-label="Main" className={cx("flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-1 text-sm", TEXT_DIM)}>
+              <ul className="flex flex-wrap items-center gap-x-5 gap-y-1">
                 <NavLink current={home} to="/">
                   Overview
                 </NavLink>
@@ -124,21 +130,16 @@ export function Shell({ children }: { children: ComponentChildren }) {
                 <NavLink current={pathname === "/about"} to="/about">
                   How it works
                 </NavLink>
+              </ul>
+              <ul className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1">
                 <Account />
               </ul>
             </nav>
-          </header>
+          </div>
+        </header>
+        <div className="mx-auto max-w-[150rem] px-4 pb-16 sm:px-6 xl:px-8">
           <NoExtraAccess />
           <main id="main">{children}</main>
-          <footer className={cx("mt-12 border-t border-stone-200 pt-4 text-xs dark:border-stone-800", TEXT_MUTED)}>
-            <p>
-              A read-only record. Agents write the state, GitHub supplies the live status of each thread, and nothing
-              here asks anything of upstream.{" "}
-              <Link className={LINK} to="/about">
-                How it works
-              </Link>
-            </p>
-          </footer>
         </div>
       </div>
     </NowContext.Provider>

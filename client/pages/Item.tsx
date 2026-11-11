@@ -1,62 +1,46 @@
-// One item: where it is, why it took its route, every upstream thread, and its history.
+// One item: where it is, what it needs, every upstream thread split into ours
+// and theirs, why it took its route, and its history.
 
 import { Link, useParams } from "lakebed/client";
 import type { ComponentChildren } from "preact";
-import type {
-  EventView,
-  ItemDetailView,
-  ItemPrivateView,
-  LinkView,
-  OwnerItemDetailView
-} from "../../shared/api";
+import type { EventView, ItemDetailView, ItemPrivateView, LinkView, OwnerItemDetailView } from "../../shared/api";
 import {
-  ASK_KIND_LABELS,
   EVENT_ACTOR_LABELS,
   EVENT_TYPE_LABELS,
   FOLLOW_UP_STATE_LABELS,
-  LINK_KIND_LABELS,
-  LINK_OWNERSHIP_LABELS,
-  LINK_ROLE_LABELS,
   MAIN_PATH_STAGES,
-  OUTCOME_LABELS,
   ROUTE_LABELS,
   STAGES,
-  STAGE_DESCRIPTIONS,
-  STAGE_LABELS,
   type Stage
 } from "../../shared/enums";
-import {
-  CiChip,
-  LinkStateChip,
-  MacroscopeChip,
-  NotPublicChip,
-  OutcomeChip,
-  ReviewChip,
-  StageChip,
-  TriageChip,
-  UpstreamChangedChip,
-  WaitingChip,
-  stageWaitsOnJackson
-} from "../components/chips";
+import { Icon } from "../components/icons";
+import { OutcomeTag, SideGlyph, StageTag, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
+import { Rail, type Stop } from "../components/Rail";
 import {
   Age,
-  Box,
-  Chip,
-  ChipList,
+  CARD,
+  DIVIDE,
   DateText,
-  EmptyNote,
   ExternalLink,
   LINK,
-  MONO,
-  OwnerOnly,
+  PRIVATE_BLOCK,
+  PRIVATE_BOX,
+  PRIVATE_TEXT,
+  PRIVATE_TIP,
+  PrivateBlock,
+  REF,
+  SERIF,
   Section,
   Skeleton,
-  TEXT_MUTED,
-  cx
+  TEXT_DIM,
+  UNDISCLOSED_TIP,
+  cx,
+  useNowValue
 } from "../components/ui";
 import { client, useTitle, useViewer } from "../data";
 import { asksForItem, linksByRole, type ListAsk, type ListItem } from "../lib/derive";
-import { fullRef, originRefUrl, shortSha } from "../lib/format";
+import { WEEK, originRefUrl, shortSha } from "../lib/format";
+import { askAction, commentHost, listThreads, roleHint, roleWord, threadSide } from "../lib/present";
 import { NotFound } from "./NotFound";
 
 type Detail = (ItemDetailView | OwnerItemDetailView) & { private?: ItemPrivateView | null };
@@ -65,72 +49,34 @@ type Detail = (ItemDetailView | OwnerItemDetailView) & { private?: ItemPrivateVi
 // Stage tracker
 // ---------------------------------------------------------------------------
 
-/**
- * The main path as numbered steps. Held is a side stop, so it appears only on a
- * held item, where it is the current position: on any other item it would read
- * as a step that was passed or is still to come, and it is neither.
- *
- * On a held item the steps before Held are not all behind it. Found and
- * Validating are, because a held item is valid. Deciding is only when a route
- * was recorded; otherwise it was skipped, and it shows as not reached.
- */
 // Stages a closed item passes only if it was really offered upstream.
 const OFFER_PATH: readonly Stage[] = ["preparing", "approving", "offered"];
 
 /**
- * `routeChosen` and `everOffered` keep the tracker honest about a held or closed
- * item: it marks Deciding as passed only when a route was chosen, and Preparing
+ * The stops of the line for one item. Held is a side stop, so it appears only on
+ * a held item, where it is the current position.
+ *
+ * `routeChosen` and `everOffered` keep the line honest about a held or closed
+ * item: Deciding counts as passed only when a route was chosen, and Preparing
  * to Offered only when something of ours was posted upstream.
  */
-function StageTracker({ stage, routeChosen, everOffered }: { stage: Stage; routeChosen: boolean; everOffered: boolean }) {
+function trackerStops(stage: Stage, routeChosen: boolean, everOffered: boolean): Stop[] {
   const held = stage === "held";
   const shown: readonly Stage[] = held ? STAGES : MAIN_PATH_STAGES;
   const current = shown.indexOf(stage);
+  return shown.map((entry, index) => {
+    const skipped =
+      ((held || stage === "closed") && entry === "deciding" && !routeChosen) ||
+      (stage === "closed" && OFFER_PATH.includes(entry) && !everOffered);
+    return { stage: entry, mark: index === current ? "current" : index < current && !skipped ? "passed" : "ahead" };
+  });
+}
+
+function Tracker({ stage, routeChosen, everOffered }: { stage: Stage; routeChosen: boolean; everOffered: boolean }) {
   return (
-    <>
-      <ol aria-label="Stage" className={cx("grid grid-cols-4 gap-1", held ? "md:grid-cols-8" : "md:grid-cols-7")}>
-        {shown.map((entry, index) => {
-          const here = index === current;
-          const hot = here && stageWaitsOnJackson(entry);
-          const skipped =
-            ((held || stage === "closed") && entry === "deciding" && !routeChosen) ||
-            (stage === "closed" && OFFER_PATH.includes(entry) && !everOffered);
-          const passed = index < current && !skipped;
-          return (
-            <li
-              aria-current={here ? "step" : undefined}
-              className={cx(
-                "rounded-md border px-1.5 py-2 text-center text-xs",
-                hot
-                  ? "border-amber-600 bg-amber-100 font-semibold text-amber-950 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-100"
-                  : here
-                    ? "border-stone-900 bg-white font-semibold dark:border-stone-100 dark:bg-stone-900"
-                    : passed
-                      ? "border-stone-300 bg-stone-100 dark:border-stone-700 dark:bg-stone-800"
-                      : cx("border-dashed border-stone-300 dark:border-stone-700", TEXT_MUTED)
-              )}
-              key={entry}
-            >
-              {entry === "held" ? (
-                <span className="block font-normal">side stop</span>
-              ) : (
-                <span className="block tabular-nums">{MAIN_PATH_STAGES.indexOf(entry) + 1}</span>
-              )}
-              <span className="block">{STAGE_LABELS[entry]}</span>
-              <span className="block text-[0.6875rem] font-normal">
-                {here ? "now" : passed ? "passed" : <span aria-hidden="true">&nbsp;</span>}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-      <p className={cx("mt-2 text-xs", TEXT_MUTED)}>
-        {STAGE_LABELS[stage]}: {STAGE_DESCRIPTIONS[stage]}{" "}
-        {held
-          ? "Held is off the main path. The item closes or goes back onto the path when that change merges or is dropped."
-          : "An item can move back a stage when upstream changes."}
-      </p>
-    </>
+    <div className={cx(CARD, "px-2 py-3 sm:px-3")}>
+      <Rail label="Stage" stops={trackerStops(stage, routeChosen, everOffered)} />
+    </div>
   );
 }
 
@@ -139,104 +85,128 @@ function StageTracker({ stage, routeChosen, everOffered }: { stage: Stage; route
 // ---------------------------------------------------------------------------
 
 function Facts({ children }: { children: ComponentChildren }) {
-  return <dl className="divide-y divide-stone-200 dark:divide-stone-800">{children}</dl>;
+  return <dl className={cx(CARD, DIVIDE)}>{children}</dl>;
 }
 
 function Fact({ term, children }: { term: string; children: ComponentChildren }) {
   return (
-    <div className="grid gap-x-4 gap-y-0.5 px-3.5 py-2 sm:grid-cols-[10rem_minmax(0,1fr)]">
-      <dt className={cx("text-xs sm:pt-0.5", TEXT_MUTED)}>{term}</dt>
+    <div className="grid gap-x-4 gap-y-0.5 px-3.5 py-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
+      <dt className={cx("text-sm", TEXT_DIM)}>{term}</dt>
       <dd className="min-w-0 break-words">{children}</dd>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Upstream links
+// Upstream threads: ours and theirs
 // ---------------------------------------------------------------------------
 
-function LinkCard({ link }: { link: LinkView }) {
+function ThreadCard({ link, links }: { link: LinkView; links: readonly LinkView[] }) {
+  const host = commentHost(link, links);
+  const word = roleWord(link.role);
   return (
     <li className="px-3.5 py-3">
-      <p className={cx("text-xs", TEXT_MUTED)}>
-        {LINK_ROLE_LABELS[link.role]} · {LINK_OWNERSHIP_LABELS[link.ownership]} · {LINK_KIND_LABELS[link.kind]}
-      </p>
-      <p className="mt-0.5">
-        <ExternalLink className={cx(LINK, MONO, "break-words")} href={link.url}>
-          {fullRef(link.repo, link.number)}
-        </ExternalLink>
-        {link.title ? <span className="font-medium"> {link.title}</span> : null}
-      </p>
-      <ChipList className="mt-1.5">
-        <li>
-          <LinkStateChip link={link} />
-        </li>
-        {link.ci ? (
-          <li>
-            <CiChip ci={link.ci} />
-          </li>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <ThreadToken full host={host} link={link} />
+        {word ? (
+          <span className="rounded border border-(color:--edge) px-1.5 text-xs leading-5" title={roleHint(link.role)}>
+            {word}
+          </span>
         ) : null}
-        {link.reviewDecision ? (
-          <li>
-            <ReviewChip decision={link.reviewDecision} />
-          </li>
-        ) : null}
-        {link.macroscopeVerdict ? (
-          <li>
-            <MacroscopeChip verdict={link.macroscopeVerdict} />
-          </li>
-        ) : null}
-        {link.triageBucket !== null || link.triageRank !== null ? (
-          <li>
-            <TriageChip bucket={link.triageBucket} rank={link.triageRank} />
-          </li>
-        ) : null}
-        {link.labels.map((label) => (
-          <li key={label}>
-            <Chip title="GitHub label">{label}</Chip>
-          </li>
-        ))}
-      </ChipList>
-      <p className={cx("mt-1.5 text-xs", TEXT_MUTED)}>
+      </div>
+      {link.title ? <p className={cx(SERIF, "mt-1.5 text-[0.9375rem] leading-snug")}>{link.title}</p> : null}
+      <ThreadSignals className="mt-1.5" link={link} words />
+      {link.labels.length > 0 ? (
+        <ul aria-label="GitHub labels" className="mt-1.5 flex flex-wrap gap-1">
+          {link.labels.map((label) => (
+            <li className="rounded-full border border-(color:--rule) px-2 text-xs leading-5" key={label}>
+              {label}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className={cx("mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs", TEXT_DIM)}>
         {link.mergedAt !== null ? (
-          <>
-            Merged <DateText at={link.mergedAt} /> ·{" "}
-          </>
+          <span>
+            merged <DateText at={link.mergedAt} />
+          </span>
         ) : link.closedAt !== null ? (
-          <>
-            Closed <DateText at={link.closedAt} /> ·{" "}
-          </>
+          <span>
+            closed <DateText at={link.closedAt} />
+          </span>
         ) : null}
         {link.lastActivityAt !== null ? (
-          <>
-            Last activity <Age at={link.lastActivityAt} suffix="ago" />
-          </>
-        ) : (
-          "No activity read yet"
-        )}
+          <span>
+            active <Age at={link.lastActivityAt} suffix="ago" />
+          </span>
+        ) : null}
         {link.lastOtherActivityAt !== null ? (
-          <>
-            {" "}
-            · last heard from {link.lastOtherActivityBy ?? "someone else"} <Age at={link.lastOtherActivityAt} suffix="ago" />
-          </>
+          <span title="The last comment or review by anyone other than Jackson, bots excluded">
+            last heard from {link.lastOtherActivityBy ?? "someone else"} <Age at={link.lastOtherActivityAt} suffix="ago" />
+          </span>
         ) : null}
         {link.headSha ? (
-          <>
-            {" "}
-            · head <span className={MONO}>{shortSha(link.headSha)}</span>
-          </>
+          <span>
+            head <span className={REF}>{shortSha(link.headSha)}</span>
+          </span>
         ) : null}
         {link.syncedAt !== null ? (
-          <>
-            {" "}
-            · synced <Age at={link.syncedAt} suffix="ago" />
-          </>
-        ) : null}
+          <span>
+            synced <Age at={link.syncedAt} suffix="ago" />
+          </span>
+        ) : (
+          <span>not yet synced</span>
+        )}
       </p>
       {link.syncError ? (
-        <p className="mt-1 text-xs font-medium">The last sync could not read this thread: {link.syncError}</p>
+        <p className="mt-1 flex items-start gap-1.5 text-xs font-medium">
+          <Icon className="mt-0.5" name="alert" size={12} />
+          The last sync could not read this thread: {link.syncError}
+        </p>
       ) : null}
     </li>
+  );
+}
+
+function Lane({ ours, links, all }: { ours: boolean; links: LinkView[]; all: readonly LinkView[] }) {
+  return (
+    <div className={cx(CARD, "overflow-hidden")}>
+      <h3 className="flex items-center gap-2 border-b border-(color:--rule) px-3.5 py-2 font-bold">
+        {/* The same block the tokens use, so the heading is the key to them. */}
+        <SideGlyph ours={ours} tone="dim">
+          <Icon name="prOpen" size={14} />
+        </SideGlyph>
+        {ours ? "Ours" : "Theirs"}
+        <span className={cx("font-normal tabular-nums", TEXT_DIM)}>{links.length}</span>
+      </h3>
+      {links.length === 0 ? (
+        <p className={cx("px-3.5 py-3 text-sm", TEXT_DIM)}>
+          {ours ? "Nothing of ours is posted upstream." : "No one else's thread is tied to this item."}
+        </p>
+      ) : (
+        <ul className={DIVIDE}>
+          {links.map((link) => (
+            <ThreadCard key={link.id} link={link} links={all} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Threads({ links }: { links: LinkView[] }) {
+  const sorted = linksByRole(links);
+  return (
+    <Section count={sorted.length} title="Upstream threads">
+      {sorted.length === 0 ? (
+        <p className={cx(CARD, "px-3.5 py-3", TEXT_DIM)}>Nothing is posted upstream, and no upstream thread is tied to this item.</p>
+      ) : (
+        <div className="grid items-start gap-4 md:grid-cols-2">
+          <Lane all={sorted} links={sorted.filter((link) => threadSide(link) !== "theirs")} ours />
+          <Lane all={sorted} links={sorted.filter((link) => threadSide(link) === "theirs")} ours={false} />
+        </div>
+      )}
+    </Section>
   );
 }
 
@@ -244,63 +214,98 @@ function LinkCard({ link }: { link: LinkView }) {
 // Asks
 // ---------------------------------------------------------------------------
 
-function AskEntry({ ask }: { ask: ListAsk }) {
-  const open = ask.closedAt === null;
+function PrivateAsk({ ask }: { ask: ListAsk }) {
   const recommendation = ask.private?.recommendation ?? null;
   const draftPointer = ask.private?.draftPointer ?? null;
+  if (!recommendation && !draftPointer) return null;
   return (
-    <li>
-      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 px-3.5 py-2.5">
-        <div className="min-w-0">
-          <ChipList>
-            <li>
-              <Chip tone={open ? "you" : "neutral"}>{ASK_KIND_LABELS[ask.kind]}</Chip>
-            </li>
-            <li>
-              <Chip tone="neutral">{open ? "Open" : "Answered"}</Chip>
-            </li>
-          </ChipList>
-          {ask.label ? <p className="mt-1">{ask.label}</p> : null}
-          {ask.resolution ? <p className={cx("mt-0.5 text-xs", TEXT_MUTED)}>Answer: {ask.resolution}</p> : null}
-        </div>
-        <p className={cx("text-xs", open ? "" : TEXT_MUTED)}>
-          {ask.closedAt === null ? (
-            <Age at={ask.openedAt} label="Asked" prefix="open" />
-          ) : (
-            <>
-              asked <DateText at={ask.openedAt} />, answered <DateText at={ask.closedAt} />
-            </>
+    <PrivateBlock className="mt-1.5">
+      {recommendation ? <p className="whitespace-pre-wrap break-words">Recommendation: {recommendation}</p> : null}
+      {draftPointer ? <p className="break-words">Draft: {draftPointer}</p> : null}
+    </PrivateBlock>
+  );
+}
+
+function OpenAsk({ ask }: { ask: ListAsk }) {
+  const now = useNowValue();
+  const old = now - ask.openedAt >= WEEK;
+  const { action, detail } = askAction(ask.kind, ask.label);
+  return (
+    <li className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-x-3 px-3 py-2.5">
+      <div>
+        <Age
+          at={ask.openedAt}
+          className={cx(
+            SERIF,
+            "block rounded px-1 text-center text-base font-bold leading-6",
+            old ? "bg-(--you-solid) text-[#2b1d00]" : "bg-(--you-bg) text-(color:--you-ink)"
           )}
-        </p>
+          label="Asked"
+        />
       </div>
-      {recommendation || draftPointer ? (
-        <OwnerOnly>
-          {recommendation ? <p className="whitespace-pre-wrap break-words">Recommendation: {recommendation}</p> : null}
-          {draftPointer ? <p className="break-words">Draft: {draftPointer}</p> : null}
-        </OwnerOnly>
-      ) : null}
+      <div className="min-w-0">
+        <p className="max-w-[46rem] text-[0.9375rem] font-bold leading-snug">{action}</p>
+        {detail ? <p className={cx("max-w-[46rem] text-sm", TEXT_DIM)}>{detail}</p> : null}
+        <PrivateAsk ask={ask} />
+      </div>
     </li>
   );
 }
 
-function Asks({ asks }: { asks: ListAsk[] }) {
-  const { open, closed } = asksForItem(asks);
+function AnsweredAsk({ ask }: { ask: ListAsk }) {
+  const { action, detail } = askAction(ask.kind, ask.label);
   return (
-    <Section
-      note={asks.length > 0 ? `${open.length} open · ${closed.length} answered` : undefined}
-      title="Asks to Jackson"
-    >
-      <Box accent={open.length > 0}>
-        {asks.length === 0 ? (
-          <EmptyNote>Nothing has been asked of Jackson for this item.</EmptyNote>
-        ) : (
-          <ul className="divide-y divide-stone-200 dark:divide-stone-800">
-            {[...open, ...closed].map((ask) => (
-              <AskEntry ask={ask} key={ask.id} />
-            ))}
-          </ul>
-        )}
-      </Box>
+    <li className="px-3.5 py-2.5">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+        <p className="flex min-w-0 items-start gap-1.5">
+          <Icon className={cx("mt-0.5", TEXT_DIM)} label="Answered" name="check" />
+          <span>
+            {action}
+            {detail ? <span className={TEXT_DIM}> {detail}</span> : null}
+          </span>
+        </p>
+        <p className={cx("text-xs", TEXT_DIM)}>
+          asked <DateText at={ask.openedAt} />
+          {ask.closedAt !== null ? (
+            <>
+              , answered <DateText at={ask.closedAt} />
+            </>
+          ) : null}
+        </p>
+      </div>
+      {ask.resolution ? <p className="mt-0.5 pl-[1.375rem] text-sm">Answer: {ask.resolution}</p> : null}
+      <div className="pl-[1.375rem]">
+        <PrivateAsk ask={ask} />
+      </div>
+    </li>
+  );
+}
+
+/** What the item needs from Jackson now. It leads the page, above the stage line. */
+function OpenAsks({ asks }: { asks: ListAsk[] }) {
+  const { open } = asksForItem(asks);
+  if (open.length === 0) return null;
+  return (
+    <Section count={open.length} title="Needs Jackson">
+      <ol className={cx(CARD, DIVIDE, "overflow-hidden border-l-4 border-l-(color:--you-solid)")}>
+        {open.map((ask) => (
+          <OpenAsk ask={ask} key={ask.id} />
+        ))}
+      </ol>
+    </Section>
+  );
+}
+
+function AnsweredAsks({ asks }: { asks: ListAsk[] }) {
+  const { closed } = asksForItem(asks);
+  if (closed.length === 0) return null;
+  return (
+    <Section count={closed.length} title="Answered asks">
+      <ul className={cx(CARD, DIVIDE)}>
+        {closed.map((ask) => (
+          <AnsweredAsk ask={ask} key={ask.id} />
+        ))}
+      </ul>
     </Section>
   );
 }
@@ -311,26 +316,22 @@ function Asks({ asks }: { asks: ListAsk[] }) {
 
 function TimelineEntry({ event }: { event: EventView }) {
   return (
-    <li className="grid gap-x-4 gap-y-0.5 px-3.5 py-2.5 sm:grid-cols-[10rem_minmax(0,1fr)]">
-      <p className={cx("text-xs sm:pt-0.5", TEXT_MUTED)}>
+    <li className="grid gap-x-3 gap-y-0.5 px-3.5 py-2 sm:grid-cols-[6.5rem_minmax(0,1fr)]">
+      <p className={cx("text-sm", TEXT_DIM)}>
         <DateText at={event.at} />
       </p>
-      <div className="min-w-0">
-        <p className={cx("text-xs", TEXT_MUTED)}>
-          {EVENT_TYPE_LABELS[event.type]} · {EVENT_ACTOR_LABELS[event.actor]}
-          {event.isPublic ? null : (
-            <>
-              {" "}
-              <Chip tone="owner">Owner only</Chip>
-            </>
-          )}
+      <div className={cx("min-w-0", event.isPublic ? undefined : PRIVATE_BLOCK)} title={event.isPublic ? undefined : PRIVATE_TIP}>
+        <p className="text-sm">
+          {event.isPublic ? null : <span className="sr-only">Only you see this: </span>}
+          <span className="font-semibold">{EVENT_TYPE_LABELS[event.type]}</span>{" "}
+          <span className={TEXT_DIM}>by {EVENT_ACTOR_LABELS[event.actor]}</span>
         </p>
         <p className="break-words">
           {event.note}
           {event.url ? (
             <>
               {" "}
-              <ExternalLink href={event.url}>View on GitHub</ExternalLink>
+              <ExternalLink href={event.url}>On GitHub</ExternalLink>
             </>
           ) : null}
         </p>
@@ -343,42 +344,51 @@ function TimelineEntry({ event }: { event: EventView }) {
 // The page
 // ---------------------------------------------------------------------------
 
-function Header({ item }: { item: ListItem }) {
+function Header({ item, links = [] }: { item: ListItem; links?: readonly LinkView[] }) {
+  const notPublic = item.isPublic === false;
+  const threads = listThreads(item);
   return (
-    <>
-      <p className={cx("mt-6 text-xs", TEXT_MUTED)}>
+    <header className="pb-4 pt-4">
+      <p className={cx("text-sm", TEXT_DIM)}>
         <Link className={LINK} to="/items">
           All items
-        </Link>{" "}
-        <span aria-hidden="true">/</span> {item.targetRepo ?? "undisclosed"}
+        </Link>
+        {item.targetRepo ? (
+          <>
+            {" "}
+            <span aria-hidden="true">/</span> {item.targetRepo}
+          </>
+        ) : null}
       </p>
-      <h1 className="mt-1 text-xl font-semibold tracking-tight">{item.title}</h1>
-      <ChipList className="mt-2">
-        {item.isPublic === false ? (
-          <li>
-            <NotPublicChip />
-          </li>
-        ) : null}
-        <li>
-          <StageChip stage={item.stage} />
-        </li>
-        {item.outcome ? (
-          <li>
-            <OutcomeChip outcome={item.outcome} />
-          </li>
-        ) : null}
+      <h1 className={cx(SERIF, "mt-1 max-w-5xl text-[1.75rem] font-bold leading-9", !item.disclosed && "italic")}>
+        <span className={notPublic ? PRIVATE_TEXT : undefined} title={notPublic ? `Not public. ${PRIVATE_TIP}.` : undefined}>
+          {item.title}
+        </span>
+        {notPublic ? <span className="sr-only"> (not public)</span> : null}
+      </h1>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+        <StageTag stage={item.stage} />
+        {item.outcome ? <OutcomeTag outcome={item.outcome} /> : null}
         {item.stage !== "closed" || item.waitingOn !== "nobody" ? (
-          <li>
-            <WaitingChip waitingOn={item.waitingOn} />
-          </li>
+          <span className="inline-flex flex-wrap items-center gap-x-1.5">
+            <Waiting waitingOn={item.waitingOn} />
+            <span className={cx("text-sm", TEXT_DIM)}>
+              for <Age at={item.waitingSince} label="Waiting since" />
+            </span>
+          </span>
         ) : null}
-        {item.upstreamChangedAt !== null ? (
-          <li>
-            <UpstreamChangedChip note={item.upstreamChangeNote} />
-          </li>
-        ) : null}
-      </ChipList>
-    </>
+        {item.upstreamChangedAt !== null ? <UpstreamChanged note={item.upstreamChangeNote} /> : null}
+      </div>
+      {threads.length > 0 ? (
+        <ul aria-label="Main upstream threads" className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1">
+          {threads.map((link) => (
+            <li key={link.id}>
+              <ThreadToken host={commentHost(link, links)} link={link} role />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </header>
   );
 }
 
@@ -387,222 +397,192 @@ function Undisclosed({ detail }: { detail: Detail }) {
   return (
     <>
       <Header item={item} />
-      <p className="mt-3 max-w-2xl">
-        This is a candidate fix whose details are withheld until it is offered upstream. Its stage, what it waits on
-        and its dates are public; its title, summary and upstream threads are not.
-      </p>
-      <Section title="Where it is">
-        {/* The route of an undisclosed item is withheld, so its tracker never claims a decision. */}
-        <StageTracker everOffered={false} routeChosen={false} stage={item.stage} />
-      </Section>
-      <Section title="Dates">
-        <Box>
-          <Facts>
-            <Fact term="Found">
-              <DateText at={item.foundAt} />
-            </Fact>
-            <Fact term="Waiting since">
-              <DateText at={item.waitingSince} /> (<Age at={item.waitingSince} />)
-            </Fact>
-            <Fact term="Last updated">
-              <DateText at={item.updatedAt} />
-            </Fact>
-          </Facts>
-        </Box>
-      </Section>
+      <p className="max-w-2xl">{UNDISCLOSED_TIP}</p>
+      <div className="mt-5 grid items-start gap-x-8 gap-y-6 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)]">
+        {/* The route of an undisclosed item is withheld, so its line never claims a decision. */}
+        <Tracker everOffered={false} routeChosen={false} stage={item.stage} />
+        <Facts>
+          <Fact term="Found">
+            <DateText at={item.foundAt} />
+          </Fact>
+          <Fact term="Waiting since">
+            <DateText at={item.waitingSince} /> <span className={TEXT_DIM}>(<Age at={item.waitingSince} />)</span>
+          </Fact>
+          <Fact term="Last updated">
+            <DateText at={item.updatedAt} />
+          </Fact>
+        </Facts>
+      </div>
     </>
+  );
+}
+
+function PrivateNotes({ fields }: { fields: ItemPrivateView }) {
+  return (
+    <Section title="Private notes">
+      <dl className={cx(PRIVATE_BOX, "space-y-2 bg-(--card) px-3.5 py-3")} title={PRIVATE_TIP}>
+        {fields.notes ? (
+          <div>
+            <dt className={cx("text-sm", TEXT_DIM)}>Notes</dt>
+            <dd className="whitespace-pre-wrap break-words">{fields.notes}</dd>
+          </div>
+        ) : null}
+        {fields.impact ? (
+          <div>
+            <dt className={cx("text-sm", TEXT_DIM)}>Impact on J5</dt>
+            <dd className="whitespace-pre-wrap break-words">{fields.impact}</dd>
+          </div>
+        ) : null}
+        {fields.preparedBranch ? (
+          <div>
+            <dt className={cx("text-sm", TEXT_DIM)}>Prepared branch</dt>
+            <dd className={cx(REF, "break-all")}>{fields.preparedBranch}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </Section>
+  );
+}
+
+function Details({ item }: { item: ListItem }) {
+  return (
+    <Section title="Details">
+      <Facts>
+        <Fact term="Route">{item.route ? ROUTE_LABELS[item.route] : <span className={TEXT_DIM}>Not chosen yet</span>}</Fact>
+        {item.routeReason ? <Fact term="Why this route">{item.routeReason}</Fact> : null}
+        <Fact term="Waiting on">
+          <Waiting bare waitingOn={item.waitingOn} /> <span className={TEXT_DIM}>since</span> <DateText at={item.waitingSince} />
+        </Fact>
+        {item.outcome ? (
+          <Fact term="Outcome">
+            <OutcomeTag outcome={item.outcome} />
+            {item.closedAt !== null ? (
+              <>
+                {" "}
+                <span className={TEXT_DIM}>on</span> <DateText at={item.closedAt} />
+              </>
+            ) : null}
+          </Fact>
+        ) : null}
+        <Fact term="Upstream repository">
+          {item.targetRepo ? (
+            <ExternalLink className={cx(LINK, REF)} href={`https://github.com/${item.targetRepo}`}>
+              {item.targetRepo}
+            </ExternalLink>
+          ) : (
+            <span className={TEXT_DIM}>Not set</span>
+          )}
+        </Fact>
+        <Fact term="Found in J5 Code">
+          {item.originRefs.length === 0 ? (
+            <span className={TEXT_DIM}>No origin recorded</span>
+          ) : (
+            <ul className="space-y-0.5">
+              {item.originRefs.map((ref) => {
+                const url = originRefUrl(ref);
+                return (
+                  <li key={ref}>
+                    {url ? (
+                      <ExternalLink className={cx(LINK, REF, "break-words")} href={url}>
+                        {ref}
+                      </ExternalLink>
+                    ) : (
+                      <span className="break-words">{ref}</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Fact>
+        <Fact term="Found">
+          <DateText at={item.foundAt} />
+        </Fact>
+        <Fact term="Last validated">
+          {item.lastValidatedAt !== null ? <DateText at={item.lastValidatedAt} /> : <span className={TEXT_DIM}>Not yet validated</span>}
+          {item.lastValidatedSha ? (
+            <>
+              {" "}
+              <span className={TEXT_DIM}>against upstream</span>{" "}
+              {item.targetRepo ? (
+                <ExternalLink className={cx(LINK, REF)} href={`https://github.com/${item.targetRepo}/commit/${item.lastValidatedSha}`}>
+                  {shortSha(item.lastValidatedSha)}
+                </ExternalLink>
+              ) : (
+                <span className={REF}>{shortSha(item.lastValidatedSha)}</span>
+              )}
+            </>
+          ) : null}
+        </Fact>
+        {item.validationVerdict ? <Fact term="Validation verdict">{item.validationVerdict}</Fact> : null}
+        <Fact term="J5 follow-up">
+          {item.followUpState && item.followUpState !== "none" ? (
+            <>
+              <span className={item.followUpState === "owed" ? "font-semibold" : undefined}>
+                {FOLLOW_UP_STATE_LABELS[item.followUpState]}
+              </span>
+              {item.followUpNote ? `: ${item.followUpNote}` : null}
+            </>
+          ) : (
+            <span className={TEXT_DIM}>{item.followUpNote ?? "None owed"}</span>
+          )}
+        </Fact>
+        <Fact term="Last updated">
+          <DateText at={item.updatedAt} />
+        </Fact>
+      </Facts>
+    </Section>
   );
 }
 
 function Disclosed({ detail }: { detail: Detail }) {
   const { item, events } = detail;
-  const links = linksByRole(detail.links);
   const privateFields = detail.private ?? null;
   const hasPrivate = privateFields !== null && Boolean(privateFields.notes || privateFields.impact || privateFields.preparedBranch);
   return (
     <>
-      <Header item={item} />
-      {item.summary ? <p className="mt-3 max-w-2xl">{item.summary}</p> : null}
+      <Header item={item} links={detail.links} />
+      {item.summary ? <p className="max-w-[46rem] text-[0.9375rem] leading-6">{item.summary}</p> : null}
       {item.upstreamChangedAt !== null ? (
-        <p className="mt-2 max-w-2xl text-[0.8125rem]">
+        <p className="mt-2 max-w-[46rem]">
           <span className="font-semibold">Changed upstream</span> <Age at={item.upstreamChangedAt} suffix="ago" />:{" "}
           {item.upstreamChangeNote ?? "an upstream thread this item depends on changed state."} The giveback agent has
           not yet acted on it.
         </p>
       ) : null}
 
-      <Section title="Where it is">
-        <StageTracker
-          everOffered={detail.links.some((link) => link.ownership === "ours")}
-          routeChosen={item.route !== null && item.route !== "hold" && item.route !== "drop"}
-          stage={item.stage}
-        />
-      </Section>
-
-      {hasPrivate && privateFields ? (
-        <Section title="Private notes">
-          <div className="overflow-hidden rounded-md border border-dashed border-stone-400 dark:border-stone-600">
-            <OwnerOnly className="border-t-0">
-              <dl className="space-y-2">
-                {privateFields.notes ? (
-                  <div>
-                    <dt className={cx("text-xs", TEXT_MUTED)}>Notes</dt>
-                    <dd className="whitespace-pre-wrap break-words">{privateFields.notes}</dd>
-                  </div>
-                ) : null}
-                {privateFields.impact ? (
-                  <div>
-                    <dt className={cx("text-xs", TEXT_MUTED)}>Impact on J5</dt>
-                    <dd className="whitespace-pre-wrap break-words">{privateFields.impact}</dd>
-                  </div>
-                ) : null}
-                {privateFields.preparedBranch ? (
-                  <div>
-                    <dt className={cx("text-xs", TEXT_MUTED)}>Prepared branch</dt>
-                    <dd className={cx(MONO, "break-all")}>{privateFields.preparedBranch}</dd>
-                  </div>
-                ) : null}
-              </dl>
-            </OwnerOnly>
-          </div>
-        </Section>
-      ) : null}
-
-      <Section title="Route">
-        <Box>
-          <Facts>
-            <Fact term="Route">
-              {item.route ? ROUTE_LABELS[item.route] : <span className={TEXT_MUTED}>Not chosen yet</span>}
-            </Fact>
-            {item.routeReason ? <Fact term="Why this route">{item.routeReason}</Fact> : null}
-            <Fact term="Waiting on">
-              <WaitingChip waitingOn={item.waitingOn} /> <span className={TEXT_MUTED}>since</span>{" "}
-              <DateText at={item.waitingSince} />
-            </Fact>
-            {item.outcome ? (
-              <Fact term="Outcome">
-                {OUTCOME_LABELS[item.outcome]}
-                {item.closedAt !== null ? (
-                  <>
-                    {" "}
-                    <span className={TEXT_MUTED}>on</span> <DateText at={item.closedAt} />
-                  </>
-                ) : null}
-              </Fact>
-            ) : null}
-          </Facts>
-        </Box>
-      </Section>
-
-      <Section note={links.length > 0 ? `${links.length} · live state from GitHub` : undefined} title="Upstream threads">
-        <Box>
-          {links.length === 0 ? (
-            <EmptyNote>Nothing has been posted upstream for this item, and no upstream thread is tied to it.</EmptyNote>
-          ) : (
-            <ul className="divide-y divide-stone-200 dark:divide-stone-800">
-              {links.map((link) => (
-                <LinkCard key={link.id} link={link} />
-              ))}
-            </ul>
-          )}
-        </Box>
-      </Section>
-
-      <Asks asks={detail.asks} />
-
-      <Section title="Details">
-        <Box>
-          <Facts>
-            <Fact term="Upstream repository">
-              {item.targetRepo ? (
-                <ExternalLink className={cx(LINK, MONO)} href={`https://github.com/${item.targetRepo}`}>
-                  {item.targetRepo}
-                </ExternalLink>
-              ) : (
-                <span className={TEXT_MUTED}>Not set</span>
-              )}
-            </Fact>
-            <Fact term="Found in J5 Code">
-              {item.originRefs.length === 0 ? (
-                <span className={TEXT_MUTED}>No origin recorded</span>
-              ) : (
-                <ul className="space-y-0.5">
-                  {item.originRefs.map((ref) => {
-                    const url = originRefUrl(ref);
-                    return (
-                      <li key={ref}>
-                        {url ? (
-                          <ExternalLink className={cx(LINK, MONO, "break-words")} href={url}>
-                            {ref}
-                          </ExternalLink>
-                        ) : (
-                          <span className="break-words">{ref}</span>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </Fact>
-            <Fact term="Found">
-              <DateText at={item.foundAt} />
-            </Fact>
-            <Fact term="Last validated">
-              {item.lastValidatedAt !== null ? (
-                <DateText at={item.lastValidatedAt} />
-              ) : (
-                <span className={TEXT_MUTED}>Not yet validated</span>
-              )}
-              {item.lastValidatedSha ? (
-                <>
-                  {" "}
-                  <span className={TEXT_MUTED}>against upstream</span>{" "}
-                  {item.targetRepo ? (
-                    <ExternalLink
-                      className={cx(LINK, MONO)}
-                      href={`https://github.com/${item.targetRepo}/commit/${item.lastValidatedSha}`}
-                    >
-                      {shortSha(item.lastValidatedSha)}
-                    </ExternalLink>
-                  ) : (
-                    <span className={MONO}>{shortSha(item.lastValidatedSha)}</span>
-                  )}
-                </>
-              ) : null}
-            </Fact>
-            {item.validationVerdict ? <Fact term="Validation verdict">{item.validationVerdict}</Fact> : null}
-            <Fact term="J5 follow-up">
-              {item.followUpState && item.followUpState !== "none" ? (
-                <>
-                  <span className={item.followUpState === "owed" ? "font-medium" : undefined}>
-                    {FOLLOW_UP_STATE_LABELS[item.followUpState]}
-                  </span>
-                  {item.followUpNote ? `: ${item.followUpNote}` : null}
-                </>
-              ) : (
-                <span className={TEXT_MUTED}>{item.followUpNote ?? "None owed"}</span>
-              )}
-            </Fact>
-            <Fact term="Last updated">
-              <DateText at={item.updatedAt} />
-            </Fact>
-          </Facts>
-        </Box>
-      </Section>
-
-      <Section note={events.length > 0 ? "newest first" : undefined} title="Timeline">
-        <Box>
+      {/*
+        One column on a phone: where it is, what it needs, its threads, then the
+        notes and details, then the history. From xl the notes and details are a
+        sidebar beside all of it.
+      */}
+      <div className="mt-5 grid gap-x-8 gap-y-7 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)] xl:grid-rows-[auto_1fr]">
+        <div className="min-w-0 space-y-7 xl:col-start-1 xl:row-start-1">
+          <OpenAsks asks={detail.asks} />
+          <Tracker
+            everOffered={detail.links.some((link) => link.ownership === "ours")}
+            routeChosen={item.route !== null && item.route !== "hold" && item.route !== "drop"}
+            stage={item.stage}
+          />
+          <Threads links={detail.links} />
+          <AnsweredAsks asks={detail.asks} />
+        </div>
+        <div className="min-w-0 space-y-7 xl:col-start-2 xl:row-span-2 xl:row-start-1">
+          {hasPrivate && privateFields ? <PrivateNotes fields={privateFields} /> : null}
+          <Details item={item} />
+        </div>
+        <Section className="min-w-0 xl:col-start-1 xl:row-start-2" count={events.length} title="Timeline">
           {events.length === 0 ? (
-            <EmptyNote>No history has been recorded for this item.</EmptyNote>
+            <p className={cx(CARD, "px-3.5 py-3", TEXT_DIM)}>No history has been recorded for this item.</p>
           ) : (
-            <ol className="divide-y divide-stone-200 dark:divide-stone-800" reversed>
+            <ol className={cx(CARD, DIVIDE)} reversed>
               {events.map((event) => (
                 <TimelineEntry event={event} key={event.id} />
               ))}
             </ol>
           )}
-        </Box>
-      </Section>
+        </Section>
+      </div>
     </>
   );
 }
@@ -611,10 +591,10 @@ function ItemBody({ detail }: { detail: Detail | null | undefined }) {
   useTitle(detail ? detail.item.title : detail === null ? "Not found" : "Item");
   if (detail === undefined) {
     return (
-      <>
-        <Skeleton label="Loading the item" rows={3} />
+      <div className="grid gap-x-8 xl:grid-cols-[minmax(0,8fr)_minmax(0,5fr)]">
         <Skeleton label="Loading the item" rows={5} />
-      </>
+        <Skeleton label="Loading the item" rows={5} />
+      </div>
     );
   }
   if (detail === null) {

@@ -25,6 +25,20 @@ import {
 } from "./derive";
 import { applyFilters, filtersToSearch, itemsHref, parseFilters } from "./filters";
 import { DAY, HOUR, MINUTE, WEEK, YEAR, formatAgo, formatSpan, originRefUrl, shortRef } from "./format";
+import {
+  askAction,
+  ciSignal,
+  commentHost,
+  groupByStage,
+  listThreads,
+  macroscopeSignal,
+  outcomeMark,
+  roleWord,
+  stageCounts,
+  threadName,
+  threadSide,
+  threadState
+} from "./present";
 
 function equal(actual: unknown, expected: unknown, what: string): void {
   const a = JSON.stringify(actual);
@@ -328,5 +342,72 @@ equal(run("?repo=expo/expo-device-hub"), ["expo"], "repository");
 equal(run("?stage=offered&q=stop"), ["stop"], "combined");
 equal(run("?q=nothing-matches"), [], "no match");
 console.log("ok  filters");
+
+// --- Presentation -------------------------------------------------------------
+
+// The action an ask needs: one instruction. A label that is itself an instruction is the action;
+// a label that states a fact follows the kind of action as context.
+equal(askAction("route_decision", "Decide which of the two fixes to offer"), { action: "Decide which of the two fixes to offer", detail: null }, "instruction label is the action");
+equal(askAction("route_decision", "Choose a route: direct PR or issue first"), { action: "Choose a route: direct PR or issue first", detail: null }, "instruction label with a colon");
+equal(askAction("text_approval", "Approve the issue text"), { action: "Approve the issue text", detail: null }, "same verb, label wins");
+equal(askAction("side_choice", "Rebase onto main or keep the stack"), { action: "Rebase onto main or keep the stack", detail: null }, "another instruction verb");
+equal(askAction("bot_ci_findings", "Two review-bot findings need a decision"), { action: "Decide on bot or CI findings", detail: "Two review-bot findings need a decision" }, "a fact follows the kind of action");
+equal(askAction("device_needed", "Needs a check on a physical iPhone"), { action: "Test on a device", detail: "Needs a check on a physical iPhone" }, "a fact, not an instruction");
+equal(askAction("maintainer_question", "A maintainer asked whether delegated stops should name the parent"), { action: "Answer a maintainer", detail: "A maintainer asked whether delegated stops should name the parent" }, "maintainer question");
+equal(askAction("device_needed", null), { action: "Test on a device", detail: null }, "undisclosed ask has no label");
+equal(askAction("side_choice", "   "), { action: "Choose between options", detail: null }, "blank label");
+
+// Ours or theirs.
+equal(threadSide(link()), "ours", "our PR");
+equal(threadSide(link({ kind: "comment" })), "our_comment", "our comment");
+equal(threadSide(link({ kind: "comment", ownership: "theirs" })), "theirs", "their comment");
+equal(threadSide(link({ ownership: "theirs", role: "covering" })), "theirs", "their covering PR");
+equal(threadName(link()), "Our PR", "name: our PR");
+equal(threadName(link({ kind: "issue", ownership: "theirs" })), "Their issue", "name: their issue");
+equal(threadName(link({ kind: "comment" })), "Our comment on their thread", "name: our comment");
+equal(threadName(link({ kind: "comment" }), link({ kind: "issue", ownership: "theirs" })), "Our comment on their issue", "name: our comment, host known");
+equal(threadName(link({ kind: "comment" }), link({ kind: "pr" })), "Our comment on our PR", "name: our comment on our own thread");
+equal(threadName(link({ kind: "discussion" })), "Our discussion", "name: our discussion");
+equal(roleWord("primary"), null, "primary has no role word");
+equal(roleWord("covering"), "covers this", "covering");
+equal(roleWord("base"), "base", "base");
+
+// Live state: icon, tone and words. A PR closed unmerged is the one red state.
+equal(threadState(link()), { icon: "prOpen", tone: "open", text: "Open" }, "open PR");
+equal(threadState(link({ isDraft: true })), { icon: "prDraft", tone: "draft", text: "Draft" }, "draft PR");
+equal(threadState(link({ state: "merged" })), { icon: "merged", tone: "merged", text: "Merged" }, "merged PR");
+equal(threadState(link({ state: "closed" })), { icon: "prClosed", tone: "closed", text: "Closed, not merged" }, "closed PR");
+equal(threadState(link({ kind: "issue", state: "closed" })), { icon: "issueClosed", tone: "merged", text: "Closed" }, "closed issue is not red");
+equal(threadState(link({ kind: "issue" })), { icon: "issueOpen", tone: "open", text: "Open" }, "open issue");
+equal(threadState(link({ kind: "discussion" })), { icon: "discussion", tone: "open", text: "Open" }, "open discussion");
+equal(threadState(link({ kind: "comment" })), { icon: "comment", tone: "open", text: "Open" }, "comment reports its thread");
+equal(threadState(link({ kind: "comment", state: "merged" })).text, "Merged", "comment on a merged thread");
+equal(threadState(link({ state: null })), { icon: "prOpen", tone: "dim", text: "Not yet synced" }, "unsynced");
+equal(ciSignal("failure").text, "CI failing", "CI failing");
+equal(macroscopeSignal("Approved at dccdab7").tone, "open", "macroscope yes");
+equal(macroscopeSignal("Not approved").tone, "closed", "macroscope no");
+equal(macroscopeSignal("Needs Human Approval").tone, "dim", "macroscope pending");
+equal(outcomeMark("merged").icon, "merged", "merged outcome");
+equal(outcomeMark("closed_by_upstream").tone, "closed", "closed by upstream");
+
+// The threads beside an item in a list: primary first, then what it depends on, never twice.
+const primary = link({ id: "p" });
+const covering = link({ id: "c", ownership: "theirs", role: "covering", number: 30593 });
+equal(ids(listThreads(item("a", { primaryLink: primary, dependencyLinks: [covering] }))), ["p", "c"], "primary then dependencies");
+equal(ids(listThreads(item("b", { primaryLink: primary, dependencyLinks: [primary, covering] }))), ["p", "c"], "primary not repeated");
+equal(ids(listThreads(item("c", { dependencyLinks: [covering] }))), ["c"], "no thread of ours");
+equal(listThreads(item("d")), [], "no threads");
+
+// Our comment names the thread it is on only when the item lists that thread.
+const comment = link({ id: "k", kind: "comment", number: 15993 });
+const hostIssue = link({ id: "h", kind: "issue", ownership: "theirs", role: "related", number: 15993 });
+equal(commentHost(comment, [comment, hostIssue, covering])?.id, "h", "comment host found");
+equal(commentHost(comment, [comment, covering]), null, "comment host not listed");
+equal(commentHost(primary, [primary, hostIssue]), null, "a PR has no host");
+
+const staged = [item("o1"), item("o2"), item("d1", { stage: "deciding" }), item("o3")];
+equal(groupByStage(staged).map((group) => [group.stage, ids(group.items)]), [["offered", ["o1", "o2"]], ["deciding", ["d1"]], ["offered", ["o3"]]], "consecutive groups");
+equal([...stageCounts(staged)], [["offered", 3], ["deciding", 1]], "stage counts");
+console.log("ok  presentation");
 
 console.log("all checks passed");
