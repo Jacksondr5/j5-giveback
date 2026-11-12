@@ -1,0 +1,7 @@
+[Unit]
+Description=Giveback dashboard: daily backup of the full export
+
+[Service]
+Type=oneshot
+# install.sh replaces @REPO@ with the path of this checkout.
+ExecStart=@REPO@/ops/bin/backup.sh

@@ -1,0 +1,10 @@
+[Unit]
+Description=Giveback dashboard: daily backup
+
+[Timer]
+OnCalendar=*-*-* 08:40:00
+# Run once after a boot if a run was missed while the machine was off.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

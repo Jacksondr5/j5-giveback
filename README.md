@@ -26,6 +26,7 @@ Every item has a short ID, `GB-<n>` (GB for give-back), that a person can say or
 | `scripts/giveback` | Command-line client for agents |
 | `scripts/seed.json` | Seed data for local development |
 | `scripts/privacy-check` | Proves the public queries leak nothing private (local only) |
+| `ops/` | The two scheduled jobs (GitHub refresh, daily backup) and their systemd timers |
 
 ## Queries
 
@@ -90,6 +91,40 @@ scripts/privacy-check scripts/seed.json   # exits 0 when nothing private is expo
 ```
 
 Local data resets when `lakebed dev` restarts. Load the seed again.
+
+## Scheduled jobs
+
+Lakebed has no scheduler, so two jobs run from a machine that stays on, as systemd user timers. `ops/` holds them.
+
+| Timer | When | What it runs |
+|---|---|---|
+| `giveback-refresh` | Every 15 minutes | `ops/bin/refresh.sh`: asks the site to re-read the state of every open upstream thread from GitHub |
+| `giveback-backup` | Daily at 08:40 | `ops/bin/backup.sh`: saves a full export and deletes copies older than 30 days |
+
+Install or update them, from a checkout on that machine:
+
+```sh
+ops/install.sh               # writes the units to ~/.config/systemd/user and starts the timers
+ops/install.sh --uninstall   # stops the timers and removes the units
+```
+
+The installed units carry this checkout's path and run the scripts straight from it, so pulling the repository updates the jobs. Run `ops/install.sh` again if the checkout moves. For the timers to run while nobody is logged in, turn lingering on once: `loginctl enable-linger "$USER"`.
+
+The jobs find Node on `PATH`, then where fnm, Volta and nvm keep their default version. Set `GIVEBACK_NODE` to choose one.
+
+Two things on that machine are local and must never be committed:
+
+- `~/.config/j5-giveback/env`: the site URL and the two bearer secrets. Three `KEY=value` lines: `GIVEBACK_URL`, `GIVEBACK_AGENT_SECRET`, `GIVEBACK_REFRESH_SECRET`. Keep it readable by its owner only.
+- `~/.local/share/j5-giveback/backups/`: the exports. Each holds everything, private fields included. The dashboard is the only other copy of this data, and Lakebed's alpha gives no recovery guarantee.
+
+Check on them:
+
+```sh
+systemctl --user list-timers | grep giveback
+journalctl --user -u giveback-refresh.service -n 20
+```
+
+A failed refresh shows on the site as a stale sync. A failed backup shows nowhere but the journal.
 
 ## Things to know
 

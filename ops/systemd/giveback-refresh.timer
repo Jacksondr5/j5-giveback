@@ -1,0 +1,11 @@
+[Unit]
+Description=Giveback dashboard: refresh GitHub state every 15 minutes
+
+[Timer]
+# At 5, 20, 35 and 50 minutes past the hour.
+OnCalendar=*:5/15
+# Run once after a boot if a run was missed while the machine was off.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
