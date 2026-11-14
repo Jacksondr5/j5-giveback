@@ -432,6 +432,17 @@ function PrivateNotes({ fields }: { fields: ItemPrivateView }) {
   return (
     <Section title="Private notes">
       <dl className={cx(PRIVATE_BOX, "space-y-2 bg-(--card) px-3.5 py-3")} title={PRIVATE_TIP}>
+        {fields.agentName || fields.agentAddress ? (
+          <div>
+            <dt className={cx("text-sm", TEXT_DIM)}>Agent</dt>
+            <dd className="break-words">
+              {fields.agentName ?? "Unnamed"}
+              {fields.agentAddress ? (
+                <span className={cx(REF, "mt-0.5 block select-all break-all text-xs", TEXT_DIM)}>{fields.agentAddress}</span>
+              ) : null}
+            </dd>
+          </div>
+        ) : null}
         {fields.notes ? (
           <div>
             <dt className={cx("text-sm", TEXT_DIM)}>Notes</dt>
@@ -549,7 +560,13 @@ function Details({ item }: { item: ListItem }) {
 function Disclosed({ detail }: { detail: Detail }) {
   const { item, events } = detail;
   const privateFields = detail.private ?? null;
-  const hasPrivate = privateFields !== null && Boolean(privateFields.notes || privateFields.impact || privateFields.preparedBranch);
+  const hasPrivate = privateFields !== null && Boolean(
+      privateFields.notes ||
+        privateFields.impact ||
+        privateFields.preparedBranch ||
+        privateFields.agentName ||
+        privateFields.agentAddress
+    );
   return (
     <>
       {/*

@@ -22,6 +22,8 @@ export const LIMITS = {
   privateNotes: 2000,
   privateImpact: 2000,
   privateBranch: 200,
+  agentName: 120,
+  agentAddress: 200,
   askRecommendation: 2000,
   askDraftPointer: 300,
 

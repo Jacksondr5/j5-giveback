@@ -124,8 +124,8 @@ The site is public. Read these before writing.
 
 1. **`isPublic` decides whether anyone but the owner sees an item.** When it is `false`, the public sees an "Undisclosed candidate" with only its [ID](#item-ids), its stage, what it waits on, and its dates. No title, summary, slug, route, links, events or asks. Its asks are not shown to visitors at all, in the "Needs Jackson" queue or on the item's page, and they do not count in the public "open asks" number. The owner sees and counts them. Set `isPublic: false` for anything security-sensitive until it is filed upstream. `isPublic` is required when you create an item. There is no default.
 2. **Public fields are public.** For a public item, everything outside `private` is shown to everyone: title, summary, route reason, validation verdict, follow-up note, links, ask labels and resolutions, and events with `isPublic: true`.
-3. **Private fields are for the owner only.** `private.notes`, `private.impact`, `private.preparedBranch` on an item; `private.recommendation`, `private.draftPointer` on an ask; and events with `isPublic: false`.
-4. **Never send these, in any field, public or private**: local paths, host names, ports, thread ids, token locations, or commentary about maintainers. The server rejects any string that contains `/home/`, `/tmp/`, `/mnt/`, `/Users/`, `/root/` or `~/`. It cannot detect the rest. That is your job.
+3. **Private fields are for the owner only.** `private.notes`, `private.impact`, `private.preparedBranch`, `private.agentName`, `private.agentAddress` on an item; `private.recommendation`, `private.draftPointer` on an ask; and events with `isPublic: false`.
+4. **Never send these, in any field, public or private**: local paths, host names, ports, thread ids, token locations, or commentary about maintainers. The one exception is `private.agentAddress`, which exists to hold the address of the item's owning agent (see `GET /api/agent/item-agents`). The server rejects any string that contains `/home/`, `/tmp/`, `/mnt/`, `/Users/`, `/root/` or `~/`. It cannot detect the rest. That is your job.
 5. **Keys are private.** Ask keys and event keys are never shown publicly, so a key may name its subject.
 6. **Write for a stranger.** A summary is one or two plain sentences that someone outside the project can read.
 
@@ -226,7 +226,7 @@ Full example:
 | `stageEventAt` | time | When the stage change happened: the time of the `stage_changed` event this request causes. Defaults to now. Must be a valid time not later than the server's clock; anything else is refused with a 400 whether or not an event is recorded. A valid value has no effect when the request causes no such event. It applies to this request only and is not stored on the item. |
 | `clearUpstreamChange` | boolean | `true` clears the "state changed upstream" marker (see refresh) |
 | `links` | link[] | Up to 20. At most one with role `primary`. |
-| `private` | object | `notes` (up to 2,000, may have line breaks), `impact` (up to 2,000), `preparedBranch` (up to 200). Each may be null to clear it. |
+| `private` | object | `notes` (up to 2,000, may have line breaks), `impact` (up to 2,000), `preparedBranch` (up to 200), `agentName` (up to 120), `agentAddress` (up to 200, no spaces). Each may be null to clear it. |
 
 Link fields:
 
@@ -490,6 +490,35 @@ An item row carries its `number`. Its [ID](#item-ids) is `itemIdPrefix`, a hyphe
 `scripts/giveback export` follows the cursors and nests the result: each item carries its `shortId` (`"GB-12"`), `links`, `private`, `asks` (each with its `private`) and `events`. `--raw` gives the tables instead. For one item, use `scripts/giveback show GB-12`.
 
 In a row, a field with no value is absent. `items.originRefs` and `links.ghLabels` are one entry per line. The `gh*` fields, `macroscopeVerdict`, `syncedAt` and `syncError` on a link are the GitHub snapshot.
+
+### `GET /api/agent/item-agents`
+
+Bearer `AGENT_SECRET`. Every item that is not closed, with the agent that owns its work.
+
+Each open item has one owning agent. Record it on the item, in two private fields:
+
+- `private.agentName`: what the agent is called, so a person can find it. Use the item's ID and a short title, such as `GB-30 · Merge back tooltip`.
+- `private.agentAddress`: where other agents message it, such as its J5 participant id. No spaces.
+
+These two are the one exception to the rule against writing internal identifiers: they are private, they are needed to route a message to the right agent, and they mean nothing outside the owner's own tools. Do not put an address anywhere else.
+
+```json
+{
+  "ok": true,
+  "generatedAt": 1794700000000,
+  "unassigned": 1,
+  "items": [
+    { "itemSlug": "merge-back-tooltip-unreachable", "itemNumber": 30, "itemShortId": "GB-30", "itemStage": "deciding",
+      "agentName": "GB-30 · Merge back tooltip", "agentAddress": "agent:j5:a2a:..." },
+    { "itemSlug": "some-new-candidate", "itemNumber": 46, "itemShortId": "GB-46", "itemStage": "found",
+      "agentName": null, "agentAddress": null }
+  ]
+}
+```
+
+`unassigned` counts the open items with no `agentAddress`. A watcher uses this list to tell an item's agent about activity on its threads; a dispatcher uses it to find items that still need an agent. When an item closes it drops out of the list; clear the two fields when its agent is retired.
+
+With the script: `scripts/giveback agents`.
 
 ### `GET /api/agent/watchlist`
 

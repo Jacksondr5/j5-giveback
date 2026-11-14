@@ -115,7 +115,10 @@ export const schema = {
     itemId: id("items"),
     notes: string().optional(),
     impact: string().optional(),
-    preparedBranch: string().optional()
+    preparedBranch: string().optional(),
+    // The agent that owns the item's work: a name to recognise it by, and the address other agents message it at.
+    agentName: string().optional(),
+    agentAddress: string().optional()
   }).index("by_item", ["itemId"]),
 
   askPrivate: table({

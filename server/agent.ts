@@ -13,6 +13,8 @@ import {
   type EventsResponse,
   type ExportResponse,
   type ExportTable,
+  type ItemAgentEntry,
+  type ItemAgentsResponse,
   type ItemsResponse,
   type LinksPatchResponse,
   type WatchlistLink,
@@ -35,7 +37,7 @@ import {
 import { ITEM_ID_PREFIX, formatItemId, isItemNumber, itemIdOf, parseItemId } from "../shared/itemId";
 import { CURSOR_PATTERN, LIMITS, SLUG_PATTERN } from "../shared/limits";
 import { apiError, checkBearer } from "./auth";
-import type { AskRow, ItemRow, LinkRow, ReadDb, SyncStateRow, WriteDb } from "./schema";
+import type { AskRow, ItemPrivateRow, ItemRow, LinkRow, ReadDb, SyncStateRow, WriteDb } from "./schema";
 import {
   isObject,
   parseAsksRequest,
@@ -1058,6 +1060,49 @@ export async function handleExport(ctx: QueryServerContext, req: EndpointRequest
     tables,
     nextCursor
   };
+  return json(response);
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/agent/item-agents
+// ---------------------------------------------------------------------------
+
+/**
+ * Every item that is not closed, with the agent that owns it. This is how a
+ * watcher finds whom to tell about an item, and how a dispatcher finds the
+ * items nobody owns. Two reads: the items and the private rows, each at most
+ * LIMITS.maxItems, which stays inside a handler's 1,000 rows.
+ */
+export async function handleItemAgents(ctx: QueryServerContext, req: EndpointRequest): Promise<EndpointResponse> {
+  const denied = checkBearer(ctx.env, req, "AGENT_SECRET");
+  if (denied) return denied;
+  const db = ctx.db as unknown as ReadDb;
+
+  const items = await db.items.withIndex("by_creation").take(LIMITS.maxItems);
+  const privateRows = await db.itemPrivate.withIndex("by_creation").take(LIMITS.maxItems);
+  const privateByItem = new Map<string, ItemPrivateRow>();
+  for (const row of privateRows) privateByItem.set(row.itemId, row);
+
+  const entries: ItemAgentEntry[] = [];
+  let unassigned = 0;
+  for (const item of items) {
+    if (item.stage === "closed") continue;
+    const owner = privateByItem.get(item.id);
+    const agentName = owner?.agentName ?? null;
+    const agentAddress = owner?.agentAddress ?? null;
+    if (agentAddress === null) unassigned += 1;
+    entries.push({
+      itemSlug: item.slug,
+      itemNumber: isItemNumber(item.number) ? item.number : null,
+      itemShortId: itemIdOf(item),
+      itemStage: item.stage as Stage,
+      agentName,
+      agentAddress
+    });
+  }
+  entries.sort((left, right) => (left.itemNumber ?? Infinity) - (right.itemNumber ?? Infinity));
+
+  const response: ItemAgentsResponse = { ok: true, generatedAt: Date.now(), unassigned, items: entries };
   return json(response);
 }
 

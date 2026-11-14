@@ -38,6 +38,7 @@ Usage:
                                       Set or clear the triage fields of every link with this URL.
   giveback link apply <file|->        JSON: {"links":[{"url":...,"triageBucket":...,"triageRank":...}]} or an array.
   giveback watchlist                  Every link on an item that is not closed, with its item and GitHub state.
+  giveback agents                     Every item that is not closed, with the agent that owns it (or none).
   giveback load <file>                JSON: {"items":[...],"asks":[...],"events":[...]}, applied in that order.
   giveback export [--raw] [--out FILE]
                                       Everything, public and private. Default: items with their ID
@@ -378,6 +379,13 @@ async function watchlist(args) {
   fail(`the data kept changing while the watch list was read (${EXPORT_ATTEMPTS} attempts). Try again when no agent is writing.`);
 }
 
+async function agents(args) {
+  if (args.length > 0) usageError("agents takes no arguments.");
+  const { status, payload } = await call("GET", "/api/agent/item-agents", "agent");
+  if (status !== 200 || payload.ok !== true) reportFailure("GET", "/api/agent/item-agents", status, payload);
+  print(payload);
+}
+
 async function load(args) {
   const data = readJson(args[0]);
   if (!data || typeof data !== "object" || Array.isArray(data)) usageError('expected {"items":[...],"asks":[...],"events":[...]}.');
@@ -595,6 +603,8 @@ async function main() {
       return link(args);
     case "watchlist":
       return watchlist(args);
+    case "agents":
+      return agents(args);
     case "load":
       return load(args);
     case "export":

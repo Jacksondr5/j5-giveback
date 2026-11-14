@@ -50,7 +50,9 @@ export async function ownerItemDetail(db: ReadDb, ref: string): Promise<OwnerIte
     ? {
         notes: privateRow.notes ?? null,
         impact: privateRow.impact ?? null,
-        preparedBranch: privateRow.preparedBranch ?? null
+        preparedBranch: privateRow.preparedBranch ?? null,
+        agentName: privateRow.agentName ?? null,
+        agentAddress: privateRow.agentAddress ?? null
       }
     : null;
   const ownerAsks: OwnerAskView[] = [];

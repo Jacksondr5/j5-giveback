@@ -355,7 +355,9 @@
       "private": {
         "notes": "SEED-PRIVATE notes: details of the race.",
         "impact": "SEED-PRIVATE impact: the fork is patched.",
-        "preparedBranch": "SEED-PRIVATE giveback/handoff-race"
+        "preparedBranch": "SEED-PRIVATE giveback/handoff-race",
+        "agentName": "SEED-PRIVATE handoff race agent",
+        "agentAddress": "agent:seed-private:handoff-race"
       }
     },
     {

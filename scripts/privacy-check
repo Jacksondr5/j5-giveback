@@ -154,7 +154,7 @@ function sentinelsFromExport(tables, sentinels) {
     }
   }
   for (const row of tables.itemPrivate || []) {
-    for (const field of ["notes", "impact", "preparedBranch"]) addSentinel(sentinels, row[field], `itemPrivate.${field}`);
+    for (const field of ["notes", "impact", "preparedBranch", "agentName", "agentAddress"]) addSentinel(sentinels, row[field], `itemPrivate.${field}`);
   }
   for (const row of tables.askPrivate || []) {
     for (const field of ["recommendation", "draftPointer"]) addSentinel(sentinels, row[field], `askPrivate.${field}`);
@@ -298,6 +298,7 @@ async function main() {
   const guarded = [
     ["GET", "/api/agent/export"],
     ["GET", "/api/agent/watchlist"],
+    ["GET", "/api/agent/item-agents"],
     ["POST", "/api/agent/items"],
     ["POST", "/api/agent/items/delete"],
     ["POST", "/api/agent/items/assign-numbers"],

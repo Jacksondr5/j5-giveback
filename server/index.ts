@@ -17,6 +17,7 @@ import {
   handleExport,
   handleItems,
   handlePatchLinks,
+  handleItemAgents,
   handleWatchlist
 } from "./agent";
 import { isOwner, requireOwner } from "./auth";
@@ -106,6 +107,7 @@ export default capsule({
     agentDeleteEvents: endpoint({ method: "POST", path: "/api/agent/events/delete" }, handleDeleteEvents),
     agentLinks: endpoint({ method: "POST", path: "/api/agent/links" }, handlePatchLinks),
     agentExport: endpoint({ method: "GET", path: "/api/agent/export", readOnly: true }, handleExport),
+    agentItemAgents: endpoint({ method: "GET", path: "/api/agent/item-agents", readOnly: true }, handleItemAgents),
     agentWatchlist: endpoint({ method: "GET", path: "/api/agent/watchlist", readOnly: true }, handleWatchlist),
     refresh: endpoint({ method: "POST", path: "/api/refresh" }, handleRefresh)
   }

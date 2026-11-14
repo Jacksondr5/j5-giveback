@@ -44,6 +44,10 @@ export type ItemPrivateInput = {
   notes?: string | null;
   impact?: string | null;
   preparedBranch?: string | null;
+  /** The agent that owns this item's work: the name it is recognised by. */
+  agentName?: string | null;
+  /** Where other agents message that agent. No spaces. */
+  agentAddress?: string | null;
 };
 
 /**
@@ -450,6 +454,26 @@ export type ItemPrivateView = {
   notes: string | null;
   impact: string | null;
   preparedBranch: string | null;
+  agentName: string | null;
+  agentAddress: string | null;
+};
+
+/** One row of `GET /api/agent/item-agents`: an item that is not closed, and the agent that owns it, if any. */
+export type ItemAgentEntry = {
+  itemSlug: string;
+  itemNumber: number | null;
+  itemShortId: string | null;
+  itemStage: Stage;
+  agentName: string | null;
+  agentAddress: string | null;
+};
+
+export type ItemAgentsResponse = {
+  ok: true;
+  generatedAt: number;
+  /** How many items that are not closed have no agent recorded. */
+  unassigned: number;
+  items: ItemAgentEntry[];
 };
 
 export type AskPrivateView = {

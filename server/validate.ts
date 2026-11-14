@@ -226,6 +226,8 @@ export type ParsedItemPrivate = {
   notes?: string | null;
   impact?: string | null;
   preparedBranch?: string | null;
+  agentName?: string | null;
+  agentAddress?: string | null;
 };
 
 export type ParsedItem = {
@@ -266,7 +268,7 @@ const ITEM_KEYS = [
 ] as const;
 
 const LINK_KEYS = ["url", "repo", "number", "kind", "ownership", "role", "triageBucket", "triageRank"] as const;
-const ITEM_PRIVATE_KEYS = ["notes", "impact", "preparedBranch"] as const;
+const ITEM_PRIVATE_KEYS = ["notes", "impact", "preparedBranch", "agentName", "agentAddress"] as const;
 
 /** Reads the two triage fields. Each comes back undefined when absent, null when it is to be cleared. */
 function parseTriage(
@@ -480,6 +482,14 @@ function parseItem(issues: Issues, value: unknown, path: string, now: number): P
         max: LIMITS.privateBranch
       });
       if (preparedBranch !== undefined) privateFields.preparedBranch = preparedBranch;
+      const agentName = nullableText(issues, value.private, "agentName", privatePath, { max: LIMITS.agentName });
+      if (agentName !== undefined) privateFields.agentName = agentName;
+      const agentAddress = nullableText(issues, value.private, "agentAddress", privatePath, { max: LIMITS.agentAddress });
+      if (typeof agentAddress === "string" && /\s/.test(agentAddress)) {
+        issues.push({ path: `${privatePath}.agentAddress`, message: "An address has no spaces. Put the readable name in agentName." });
+      } else if (agentAddress !== undefined) {
+        privateFields.agentAddress = agentAddress;
+      }
     }
   }
 
