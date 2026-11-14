@@ -145,6 +145,8 @@ How closely a thread is watched depends on its links:
 | `theirs`, role `base` or `covering` | Comments and reviews by people, and the thread closing, merging or reopening |
 | `theirs`, role `related` | A change of state alone, taken from the dashboard's own snapshot |
 
+When one of our own PRs closes or merges, the dispatcher gets a note of its own as well: upstream limits how many PRs we may have open, so a close frees a slot for the next item in the queue.
+
 A thread of ours stays watched for 14 days after its item closes, because a reply or a reopening often follows a close. The watcher remembers those threads itself, since the watch list no longer names them.
 
 Settings, in `~/.config/j5-giveback/env`:

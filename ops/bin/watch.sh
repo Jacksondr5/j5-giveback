@@ -21,6 +21,10 @@
 #                      snapshot at no GitHub cost
 # A thread with several links gets the closest watch any of them asks for.
 #
+# When one of our own PRs closes or merges, the dispatcher is told as well, in a
+# message of its own: upstream limits how many PRs we may have open, so a close
+# frees a slot for the next item in the queue.
+#
 # A thread of ours stays watched for 14 days after its item closes or drops the
 # link, because a reply or a reopening often follows a close. The dashboard stops
 # listing it then, so the watcher remembers it in its own state.
@@ -109,8 +113,9 @@ state="$STATE_DIR/state.json"
 #   "state:<thread>": "<state last seen on the dashboard>",
 #   "linger:<thread>": { "items": [{ "item", "short", "to", "listed" }] },
 #       the items a thread of ours belongs to, and when the dashboard last said so
-#   "outbox": [{ "id", "item", "short", "to", "closed", "created", "summary" }] }
-#       news that has been read and not yet delivered
+#   "outbox": [{ "id", "kind", "item", "short", "to", "closed", "created", "summary" }] }
+#       news that has been read and not yet delivered. "kind" is "slot" for the
+#       note to the dispatcher that one of our PRs closed, and absent otherwise.
 # A missing or damaged file starts every thread from now. That loses at most the
 # activity since the last good run, and never replays old activity.
 oldstate='{}'
@@ -160,6 +165,7 @@ plan="$(jq --argjson agents "$agents" --argjson old "$oldstate" --arg now "$now"
                   elif ($link.role == "base" or $link.role == "covering") then "people"
                   else "state" end),
           state: ($link.ghState // ""),
+          ownpr: ($link.kind == "pr" and $link.ownership == "ours"),
           item: { item: $link.itemSlug, short: ($link.itemShortId // $link.itemSlug),
                   to: ($owner[$link.itemSlug].agentAddress // ""), closed: false,
                   ours: ($link.ownership == "ours"), listed: $now } } ] as $rows
@@ -182,6 +188,7 @@ plan="$(jq --argjson agents "$agents" --argjson old "$oldstate" --arg now "$now"
         (.[0].key | parts) + {
           key: .[0].key,
           scope: (map(.scope) | max_by(rank)),
+          ownpr: (map(.ownpr // false) | any),
           state: ((map(.state) | map(select(. != "")) | first) // ""),
           items: (map(.item) | group_by(.item) | map(sort_by(.closed) | .[0])) })),
       linger: ($groups | map(
@@ -305,12 +312,13 @@ discussion_events() {
 # ---------------------------------------------------------------------------
 
 declare -A events_of title_of url_of
+slot_freed=() # our own PRs that closed or merged in this run
 check_failed=0
 
 set_state() { newstate="$(jq --arg k "$1" --arg v "$2" '.[$k] = $v' <<<"$newstate")"; }
 
 # The lists are read on descriptor 3, so nothing inside a loop can swallow them from standard input.
-while IFS=$'\t' read -r -u 3 key repo n discussion scope ghstate; do
+while IFS=$'\t' read -r -u 3 key repo n discussion scope ownpr ghstate; do
   if [ "$discussion" = "true" ]; then
     url_of[$key]="https://github.com/$repo/discussions/$n"
   else
@@ -364,13 +372,16 @@ while IFS=$'\t' read -r -u 3 key repo n discussion scope ghstate; do
   if [ -n "$found" ]; then
     events_of[$key]="$found"
     title_of[$key]="$(cat "$work/title" 2>/dev/null || true)"
+    if [ "$ownpr" = "true" ] && grep -q -E '^[^ ]+ (merged|closed) by ' <<<"$found"; then
+      slot_freed+=("$key")
+    fi
   fi
   set_state "$key" "$now"
   # Only now, with the thread's own events read: a close that this check would
   # have reported must not be marked as seen when the check failed.
   [ "$ghstate" = "-" ] || set_state "state:$key" "$ghstate"
   [ -f "$work/fail" ] && set_state "fail:$key" "$(cat "$work/fail")"
-done 3< <(jq -r '.[] | [.key, .repo, .n, (.discussion | tostring), .scope, (if .state == "" then "-" else .state end)] | @tsv' <<<"$threads")
+done 3< <(jq -r '.[] | [.key, .repo, .n, (.discussion | tostring), .scope, (.ownpr | tostring), (if .state == "" then "-" else .state end)] | @tsv' <<<"$threads")
 
 # ---------------------------------------------------------------------------
 # Queue one message per item that has news.
@@ -406,6 +417,16 @@ done 3< <(jq -r '
   | [.[0].item, .[0].short, (if .[0].to == "" then "-" else .[0].to end), (all(.closed) | tostring), (map(.key) | join(" "))]
   | @tsv' <<<"$threads")
 
+# One note to the dispatcher for each of our PRs that closed or merged.
+for key in ${slot_freed[@]+"${slot_freed[@]}"}; do
+  summary="$key"
+  [ -n "${title_of[$key]:-}" ] && summary+=" (${title_of[$key]})"
+  summary+=" ${url_of[$key]}"$'\n'"$(grep -E '^[^ ]+ (merged|closed) by ' <<<"${events_of[$key]}" | sed 's/^/- /')"$'\n'
+  id="giveback-watch-slot-$(printf '%s\n%s\n%s' "$key" "$now" "$summary" | sha256sum | cut -c1-16)"
+  newstate="$(jq --arg id "$id" --arg created "$now" --arg summary "$summary" \
+    '.outbox += [{ id: $id, kind: "slot", item: "", short: "", to: "", closed: false, created: $created, summary: $summary }]' <<<"$newstate")"
+done
+
 # A message waiting from an earlier run goes to the item's agent as recorded now.
 newstate="$(jq --argjson agents "$agents" '
   ($agents.items | map({ key: .itemSlug, value: . }) | from_entries) as $owner
@@ -417,8 +438,10 @@ pending="$(jq '.outbox | length' <<<"$newstate")"
 if ((dry)); then
   for ((i = 0; i < pending; i++)); do
     jq -r --argjson i "$i" --arg dispatcher "$DISPATCHER" '.outbox[$i]
-      | "== \(.short) -> \(if .to == "" then $dispatcher + " (the dispatcher: no recorded agent)" else .to end)"
-        + (if .closed then " [item closed]" else "" end) + "\n" + .summary' <<<"$newstate"
+      | (if .kind == "slot" then "== a PR slot may be free -> \($dispatcher) (the dispatcher)"
+         else "== \(.short) -> \(if .to == "" then $dispatcher + " (the dispatcher: no recorded agent)" else .to end)"
+              + (if .closed then " [item closed]" else "" end) end)
+        + "\n" + .summary' <<<"$newstate"
   done
   exit "$check_failed"
 fi
@@ -441,6 +464,23 @@ for ((i = 0; i < pending; i++)); do
   short="$(jq -r '.short' <<<"$entry")"
   to="$(jq -r '.to' <<<"$entry")"
   summary="$(jq -r '.summary' <<<"$entry")"
+
+  if [ "$(jq -r '.kind // "item"' <<<"$entry")" = "slot" ]; then
+    printf '== a PR slot may be free -> %s\n%s' "$DISPATCHER" "$summary"
+    status=0
+    deliver "$DISPATCHER" "$id" <<<"Giveback watcher: one of our PRs closed or merged, so a PR slot may be free.
+
+$summary
+Check \`giveback capacity\`. If a slot is free and an item is waiting in the queue, tell the agent of the first one. The PR's own item gets this news in a separate message." || status=$?
+    if [ "$status" -ne 0 ]; then
+      echo "giveback-watch: could not deliver a PR slot note (exit $status). It stays queued." >&2
+      send_failed=1
+      continue
+    fi
+    newstate="$(jq --arg id "$id" '.outbox |= map(select(.id != $id))' <<<"$newstate")"
+    save_state
+    continue
+  fi
 
   note=""
   if [ "$(jq -r '.closed' <<<"$entry")" = "true" ]; then
