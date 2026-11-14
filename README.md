@@ -117,7 +117,7 @@ Three things on that machine are local and must never be committed:
 
 - `~/.config/j5-giveback/env`: the site URL and the two bearer secrets, as `KEY=value` lines: `GIVEBACK_URL`, `GIVEBACK_AGENT_SECRET`, `GIVEBACK_REFRESH_SECRET`. The watcher's settings go here too (below). Keep it readable by its owner only.
 - `~/.local/share/j5-giveback/backups/`: the exports. Each holds everything, private fields included. The dashboard is the only other copy of this data, and Lakebed's alpha gives no recovery guarantee.
-- `~/.local/share/j5-giveback/watch/state.json`: what the watcher has already reported. It names agents' addresses and non-public items' threads.
+- `~/.local/share/j5-giveback/watch/state.json`: what the watcher has read, and the messages it has yet to deliver. It names agents' addresses and non-public items' threads.
 
 Check on them:
 
@@ -152,9 +152,12 @@ Settings, in `~/.config/j5-giveback/env`:
 | `J5CODE_HOME`, `J5_ORIGIN` | Passed to `j5` when set |
 | `GIVEBACK_GITHUB_LOGIN` | Our own login, whose activity is not news. Default: the login `gh` is signed in with. |
 | `GIVEBACK_MAINTAINERS` | Free text naming the upstream maintainers. It is added to each message. |
+| `GIVEBACK_OWNER_NAME` | Who approves what is posted upstream, as the messages name them. Default: "the owner". |
 | `GIVEBACK_WATCH_LINGER_DAYS` | Days a thread of ours stays watched after its item closes. Default 14. |
 
-`ops/bin/watch.sh --dry-run` prints what it would send, and sends and remembers nothing. A delivery that fails is tried again on the next run, under the same message id, so nothing arrives twice.
+`ops/bin/watch.sh --dry-run` prints what it would send, and sends and remembers nothing.
+
+News goes into a queue in `state.json` before anything is sent, and leaves it only when its message is accepted. A message that fails is sent again on the next run, word for word and under the same id, so it does not arrive twice. One that cannot be delivered for 14 days is dropped, with a line in the journal. If the list of item agents says it is incomplete, the run stops before it checks or sends anything.
 
 ## Things to know
 

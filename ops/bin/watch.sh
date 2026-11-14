@@ -25,6 +25,10 @@
 # link, because a reply or a reopening often follows a close. The dashboard stops
 # listing it then, so the watcher remembers it in its own state.
 #
+# News is put in a queue in the state file before anything is sent, and leaves the
+# queue only when its message has been accepted. A message that fails is sent again
+# on the next run, word for word and under the same id, so it cannot arrive twice.
+#
 # Cheap by design: API reads only. No agent runs unless something changed.
 #
 # Settings, read from the environment and then from the env file scripts/giveback uses
@@ -37,6 +41,8 @@
 #   J5CODE_HOME, J5_ORIGIN       passed to j5 when set.
 #   GIVEBACK_MAINTAINERS         free text naming the upstream maintainers, added to
 #                                each message so an agent can tell whose word counts.
+#   GIVEBACK_OWNER_NAME          who approves what is posted upstream, as the messages
+#                                name them. Default: "the owner".
 #   GIVEBACK_WATCH_LINGER_DAYS   days a thread of ours stays watched after its item
 #                                closes. Default: 14.
 #   GIVEBACK_WATCH_DIR           where state.json lives.
@@ -88,6 +94,8 @@ fi
 ME="$(setting GIVEBACK_GITHUB_LOGIN)"
 [ -n "$ME" ] || ME="$(gh api user --jq .login)"
 MAINTAINERS="$(setting GIVEBACK_MAINTAINERS)"
+OWNER_NAME="$(setting GIVEBACK_OWNER_NAME)"
+[ -n "$OWNER_NAME" ] || OWNER_NAME="the owner"
 LINGER_DAYS="$(setting GIVEBACK_WATCH_LINGER_DAYS)"
 case "$LINGER_DAYS" in
   '' | *[!0-9]*) LINGER_DAYS=14 ;;
@@ -96,11 +104,13 @@ esac
 STATE_DIR="${GIVEBACK_WATCH_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/j5-giveback/watch}"
 state="$STATE_DIR/state.json"
 # A thread is "<owner>/<repo>#<n>" or "<owner>/<repo>/discussions/<n>".
-# { "<thread>": "<last check, ISO time>",
-#   "fail:<thread>": "<failing check names>",        our PRs
-#   "state:<thread>": "<last state seen>",           threads watched for state alone
-#   "linger:<thread>": { "listed": "<when the dashboard last listed it>",
-#                        "items": [{ "item", "short", "to" }] } }   threads of ours
+# { "<thread>": "<ISO time up to which its activity has been read>",
+#   "fail:<thread>": "<failing check names last seen>",       our PRs
+#   "state:<thread>": "<state last seen on the dashboard>",
+#   "linger:<thread>": { "items": [{ "item", "short", "to", "listed" }] },
+#       the items a thread of ours belongs to, and when the dashboard last said so
+#   "outbox": [{ "id", "item", "short", "to", "closed", "created", "summary" }] }
+#       news that has been read and not yet delivered
 # A missing or damaged file starts every thread from now. That loses at most the
 # activity since the last good run, and never replays old activity.
 oldstate='{}'
@@ -110,61 +120,83 @@ fi
 newstate="$oldstate"
 now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 linger_cutoff="$(date -u -d "$LINGER_DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)"
+outbox_cutoff="$(date -u -d "14 days ago" +%Y-%m-%dT%H:%M:%SZ)"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+
+# Written in one move, and never as an empty file in place of a good one.
+save_state() {
+  jq -e 'type == "object"' <<<"$newstate" >/dev/null 2>&1 || return 1
+  mkdir -p "$STATE_DIR"
+  printf '%s\n' "$newstate" >"$state.tmp" && mv "$state.tmp" "$state"
+}
 
 # Both reads fail the run when the dashboard is unreachable. Nothing is remembered
 # then, so the next run covers the same period.
 watchlist="$(giveback watchlist)"
 agents="$(giveback agents)"
+if [ "$(jq -r '.incomplete == true' <<<"$agents")" = "true" ]; then
+  # An item may then look unowned when it has an agent, and its news would go to the wrong place.
+  echo "giveback-watch: the list of item agents is incomplete. Nothing was checked or sent." >&2
+  exit 1
+fi
 
 # One row per thread, however many links and items point at it. Each carries the
-# items it belongs to, with the address of each item's agent ("" when it has none).
-listed="$(jq --argjson agents "$agents" '
+# items it belongs to: those the dashboard lists now, and those it listed within
+# the linger window for a thread of ours. An item's messages go to its agent as
+# recorded now. An item that is closed is no longer in the agents list, so the
+# address remembered from when it was open is used.
+plan="$(jq --argjson agents "$agents" --argjson old "$oldstate" --arg now "$now" --arg cutoff "$linger_cutoff" '
   def rank: if . == "full" then 2 elif . == "people" then 1 else 0 end;
+  def parts: capture("^(?<repo>[^/]+/[^/#]+)(?:#(?<n>[0-9]+)|/discussions/(?<d>[0-9]+))$")
+    | { repo: .repo, n: (.n // .d), discussion: (.d != null) };
   ($agents.items | map({ key: .itemSlug, value: . }) | from_entries) as $owner
   | [ .links[]
       | . as $link
       | ($link.url | capture("^https://github\\.com/(?<repo>[^/]+/[^/#?]+)/(?<type>issues|pull|discussions)/(?<n>[0-9]+)")) as $m
       | { key: (if $m.type == "discussions" then "\($m.repo)/discussions/\($m.n)" else "\($m.repo)#\($m.n)" end),
-          repo: $m.repo, n: $m.n, discussion: ($m.type == "discussions"),
           scope: (if $link.ownership == "ours" then "full"
                   elif ($link.role == "base" or $link.role == "covering") then "people"
                   else "state" end),
           state: ($link.ghState // ""),
           item: { item: $link.itemSlug, short: ($link.itemShortId // $link.itemSlug),
-                  to: ($owner[$link.itemSlug].agentAddress // "") } } ]
-  | group_by(.key)
-  | map({ key: .[0].key, repo: .[0].repo, n: .[0].n, discussion: .[0].discussion,
+                  to: ($owner[$link.itemSlug].agentAddress // ""), closed: false,
+                  ours: ($link.ownership == "ours"), listed: $now } } ] as $rows
+  | [ $old | to_entries[]
+      | select(.key | startswith("linger:")) | select((.value | type) == "object")
+      | (.key | ltrimstr("linger:")) as $key
+      | (.value.items // [])[]
+      | select(type == "object") | select((.item // "") != "") | select((.listed // "") >= $cutoff)
+      | . as $kept
+      | select([$rows[] | select(.key == $key and .item.item == $kept.item and .item.ours)] | length == 0)
+      | { key: $key, scope: "full", state: "",
+          item: { item: $kept.item, short: ($kept.short // $kept.item),
+                  to: (if $owner | has($kept.item) then ($owner[$kept.item].agentAddress // "") else ($kept.to // "") end),
+                  closed: ($owner | has($kept.item) | not), ours: true, listed: $kept.listed } } ] as $kept
+  | ($rows + $kept | group_by(.key)) as $groups
+  | { threads: ($groups | map(
+        (.[0].key | parts) + {
+          key: .[0].key,
           scope: (map(.scope) | max_by(rank)),
           state: ((map(.state) | map(select(. != "")) | first) // ""),
-          items: (map(.item) | unique_by(.item)), lingering: false })
+          items: (map(.item) | group_by(.item) | map(sort_by(.closed) | .[0])) })),
+      linger: ($groups | map(
+        { key: ("linger:" + .[0].key),
+          value: { items: (map(.item) | map(select(.ours)) | group_by(.item)
+                           | map(sort_by(.listed) | last | { item, short, to, listed })) } }
+        | select(.value.items | length > 0)) | from_entries) }
 ' <<<"$watchlist")"
+threads="$(jq '.threads' <<<"$plan")"
 
-# Threads of ours that the dashboard no longer lists, and listed it recently.
-lingering="$(jq --argjson listed "$listed" --arg cutoff "$linger_cutoff" '
-  ($listed | map(.key)) as $present
-  | [ to_entries[]
-      | select(.key | startswith("linger:")) | select(.value | type == "object")
-      | (.key | ltrimstr("linger:")) as $key
-      | select($present | any(. == $key) | not)
-      | select((.value.listed // "") >= $cutoff)
-      | ($key | capture("^(?<repo>[^/]+/[^/#]+)(?:#(?<n>[0-9]+)|/discussions/(?<d>[0-9]+))$")) as $m
-      | { key: $key, repo: $m.repo, n: ($m.n // $m.d), discussion: ($m.d != null),
-          scope: "full", state: "", items: (.value.items // []), lingering: true } ]
-' <<<"$oldstate")"
-threads="$(jq -n --argjson a "$listed" --argjson b "$lingering" '$a + $b')"
-
-# Remember every listed thread of ours, and forget the ones whose time is up.
-newstate="$(jq --argjson listed "$listed" --arg now "$now" --arg cutoff "$linger_cutoff" '
-  with_entries(select((.key | startswith("linger:") | not) or ((.value | type) == "object" and (.value.listed // "") >= $cutoff)))
-  + ($listed | map(select(.scope == "full") | { key: ("linger:" + .key), value: { listed: $now, items: .items } }) | from_entries)
-' <<<"$newstate")"
+# The linger records are rebuilt on every run: the listed items as of now, and the
+# remembered ones that are still inside the window.
+newstate="$(jq --argjson plan "$plan" 'with_entries(select(.key | startswith("linger:") | not)) + $plan.linger' <<<"$newstate")"
 
 # ---------------------------------------------------------------------------
 # GitHub checks. Each prints one line per event: "<ISO time> <what happened> <url>".
 # (A change in the failing checks has no time of its own, and so prints none.)
+# They run in a subshell, so each leaves what the caller needs in files under $work.
 # They run in a subshell, so a failed request fails that thread alone.
 # ---------------------------------------------------------------------------
 
@@ -192,9 +224,8 @@ pr_bot_events() {
   head="$(gh api "repos/$repo/pulls/$n" --jq .head.sha)"
   failing="$(gh api "repos/$repo/commits/$head/check-runs?per_page=100" --jq \
     '[.check_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required") | .name] | sort | join(", ")')"
-  old_failing="$(jq -r --arg k "fail:$key" '.[$k] // ""' <<<"$oldstate")"
+  old_failing="$(jq -r --arg k "fail:$key" '.[$k] // "" | strings' <<<"$oldstate")"
   if [ -n "$failing" ] && [ "$failing" != "$old_failing" ]; then
-    # No time on this line: the same news must make the same message on a retry.
     echo "failing checks on ${head:0:10}: $failing https://github.com/$repo/pull/$n/checks"
   fi
   printf '%s' "$failing" >"$work/fail"
@@ -270,6 +301,8 @@ discussion_events() {
 declare -A events_of title_of url_of
 check_failed=0
 
+set_state() { newstate="$(jq --arg k "$1" --arg v "$2" '.[$k] = $v' <<<"$newstate")"; }
+
 # The lists are read on descriptor 3, so nothing inside a loop can swallow them from standard input.
 while IFS=$'\t' read -r -u 3 key repo n discussion scope ghstate; do
   if [ "$discussion" = "true" ]; then
@@ -278,23 +311,27 @@ while IFS=$'\t' read -r -u 3 key repo n discussion scope ghstate; do
     url_of[$key]="https://github.com/$repo/issues/$n"
   fi
 
+  # Both marks are kept for every thread, whatever its level, so a thread that
+  # moves between levels neither repeats old news nor skips what came in between.
+  since="$(jq -r --arg k "$key" '.[$k] // "" | strings' <<<"$oldstate")"
+  [ -n "$since" ] || since="$now" # first sight: start watching from now
+  previous="$(jq -r --arg k "state:$key" '.[$k] // "" | strings' <<<"$oldstate")"
+  [ "$ghstate" = "-" ] || set_state "state:$key" "$ghstate"
+
   if [ "$scope" = "state" ]; then
     # Only a change of state is news, and the dashboard already knows the state.
-    previous="$(jq -r --arg k "state:$key" '.[$k] // ""' <<<"$oldstate")"
-    if [ "$ghstate" != "-" ]; then
-      if [ -n "$previous" ] && [ "$previous" != "$ghstate" ]; then
-        events_of[$key]="state changed from $previous to $ghstate"
-        if [ "$discussion" != "true" ]; then
-          title_of[$key]="$(gh api "repos/$repo/issues/$n" --jq .title 2>/dev/null || true)"
-        fi
+    if [ "$ghstate" != "-" ] && [ -n "$previous" ] && [ "$previous" != "$ghstate" ]; then
+      events_of[$key]="state changed from $previous to $ghstate"
+      if [ "$discussion" != "true" ]; then
+        title_of[$key]="$(gh api "repos/$repo/issues/$n" --jq .title 2>/dev/null || true)"
       fi
-      newstate="$(jq --arg k "state:$key" --arg v "$ghstate" '.[$k] = $v' <<<"$newstate")"
     fi
+    set_state "$key" "$now"
     continue
   fi
 
-  since="$(jq -r --arg k "$key" '.[$k] // ""' <<<"$oldstate")"
-  [ -n "$since" ] || since="$now" # first sight: start watching from now
+  # Saved before the check, so a thread whose first check fails is still read from this moment.
+  set_state "$key" "$since"
   rm -f "$work/title" "$work/fail"
   # Not in an "if" or "||": errexit is switched off inside those, and a failed
   # request has to stop this thread's check.
@@ -312,7 +349,7 @@ while IFS=$'\t' read -r -u 3 key repo n discussion scope ghstate; do
   status=$?
   set -e
   if [ "$status" -ne 0 ]; then
-    # Keep the old time, so the next run covers this period again.
+    # The mark stays where it was, so the next run reads this period again.
     echo "giveback-watch: could not check $key: $(tr '\n' ' ' <"$work/error" | cut -c1-300)" >&2
     check_failed=1
     continue
@@ -322,22 +359,21 @@ while IFS=$'\t' read -r -u 3 key repo n discussion scope ghstate; do
     events_of[$key]="$found"
     title_of[$key]="$(cat "$work/title" 2>/dev/null || true)"
   fi
-  newstate="$(jq --arg k "$key" --arg t "$now" '.[$k] = $t' <<<"$newstate")"
-  if [ -f "$work/fail" ]; then
-    newstate="$(jq --arg k "fail:$key" --arg v "$(cat "$work/fail")" '.[$k] = $v' <<<"$newstate")"
-  fi
+  set_state "$key" "$now"
+  [ -f "$work/fail" ] && set_state "fail:$key" "$(cat "$work/fail")"
 done 3< <(jq -r '.[] | [.key, .repo, .n, (.discussion | tostring), .scope, (if .state == "" then "-" else .state end)] | @tsv' <<<"$threads")
 
 # ---------------------------------------------------------------------------
-# One message per item, to the agent that owns it.
+# Queue one message per item that has news.
 # ---------------------------------------------------------------------------
 
-deliver() { # deliver <to> <client request id>, with the message on standard input
-  "$J5" a2a send --to "$1" --client-request-id "$2" --message - >/dev/null
-}
-
-declare -A undelivered # thread keys whose activity did not reach anyone
-send_failed=0
+# Whatever was read above is now past its thread's mark, so it has to reach the
+# queue in the same save. From here on a message is lost only if it is delivered.
+newstate="$(jq --arg cutoff "$outbox_cutoff" '.outbox = [(.outbox // [])[] | select(type == "object") | select((.created // "") >= $cutoff)]' <<<"$newstate")"
+dropped="$(jq -r --arg cutoff "$outbox_cutoff" '[(.outbox // [])[] | select(type == "object") | select((.created // "") < $cutoff)] | length' <<<"$oldstate")"
+if [ "$dropped" != "0" ]; then
+  echo "giveback-watch: gave up on $dropped message(s) that could not be delivered for 14 days." >&2
+fi
 
 while IFS=$'\t' read -r -u 3 slug short to closed keys; do
   summary=""
@@ -348,26 +384,69 @@ while IFS=$'\t' read -r -u 3 slug short to closed keys; do
     summary+=" ${url_of[$key]}"$'\n'"$(sed 's/^/- /' <<<"${events_of[$key]}")"$'\n\n'
   done
   [ -n "$summary" ] || continue
+  [ "$to" != "-" ] || to=""
+  # The time is part of the id: the same words can be news twice, as when a
+  # thread closes, reopens and closes again.
+  id="giveback-watch-$(printf '%s\n%s\n%s' "$slug" "$now" "$summary" | sha256sum | cut -c1-16)"
+  newstate="$(jq --arg id "$id" --arg item "$slug" --arg short "$short" --arg to "$to" --arg closed "$closed" \
+    --arg created "$now" --arg summary "$summary" \
+    '.outbox += [{ id: $id, item: $item, short: $short, to: $to, closed: ($closed == "true"), created: $created, summary: $summary }]' <<<"$newstate")"
+done 3< <(jq -r '
+  [.[] | .key as $key | .items[] | . + { key: $key }]
+  | group_by(.item)[]
+  | [.[0].item, .[0].short, (if .[0].to == "" then "-" else .[0].to end), (all(.closed) | tostring), (map(.key) | join(" "))]
+  | @tsv' <<<"$threads")
+
+# A message waiting from an earlier run goes to the item's agent as recorded now.
+newstate="$(jq --argjson agents "$agents" '
+  ($agents.items | map({ key: .itemSlug, value: . }) | from_entries) as $owner
+  | .outbox |= map(.item as $slug
+      | if $owner | has($slug) then .to = ($owner[$slug].agentAddress // "") | .closed = false else . end)
+' <<<"$newstate")"
+
+pending="$(jq '.outbox | length' <<<"$newstate")"
+if ((dry)); then
+  for ((i = 0; i < pending; i++)); do
+    jq -r --argjson i "$i" --arg dispatcher "$DISPATCHER" '.outbox[$i]
+      | "== \(.short) -> \(if .to == "" then $dispatcher + " (the dispatcher: no recorded agent)" else .to end)"
+        + (if .closed then " [item closed]" else "" end) + "\n" + .summary' <<<"$newstate"
+  done
+  exit "$check_failed"
+fi
+
+save_state
+
+# ---------------------------------------------------------------------------
+# Deliver the queue.
+# ---------------------------------------------------------------------------
+
+deliver() { # deliver <to> <client request id>, with the message on standard input
+  "$J5" a2a send --to "$1" --client-request-id "$2" --message - >/dev/null
+}
+
+send_failed=0
+queue="$(jq '.outbox' <<<"$newstate")" # a copy: entries leave the state as they are delivered
+for ((i = 0; i < pending; i++)); do
+  entry="$(jq --argjson i "$i" '.[$i]' <<<"$queue")"
+  id="$(jq -r '.id' <<<"$entry")"
+  short="$(jq -r '.short' <<<"$entry")"
+  to="$(jq -r '.to' <<<"$entry")"
+  summary="$(jq -r '.summary' <<<"$entry")"
 
   note=""
-  if [ "$closed" = "true" ]; then
-    note="$short is closed. A thread of ours stays watched for $LINGER_DAYS days after that."$'\n\n'
+  if [ "$(jq -r '.closed' <<<"$entry")" = "true" ]; then
+    note+="$short is closed. A thread of ours stays watched for $LINGER_DAYS days after that."$'\n\n'
   fi
-  if [ "$to" = "-" ]; then
+  if [ -z "$to" ]; then
     to="$DISPATCHER"
     note+="$short has no recorded agent, so this comes to the dispatcher."$'\n\n'
   fi
-
-  printf '== %s -> %s\n%s%s' "$short" "$to" "$note" "$summary"
-  ((dry)) && continue
-
   body="new upstream activity on $short.
 
 $note$summary
-Read the activity in full, and the item with \`giveback show $short\`. Then handle it as step 6 of contributing.md in the t3code-giveback skill says. A login marked [MEMBER], [OWNER] or [COLLABORATOR] belongs to the upstream repository.${MAINTAINERS:+ Maintainers: $MAINTAINERS.} Post nothing upstream that Jackson has not approved. If the activity needs nothing from us, do nothing and reply to no one."
-  id="giveback-watch-$(printf '%s\n%s' "$slug" "$summary" | sha256sum | cut -c1-16)"
+Read the activity in full, and the item with \`giveback show $short\`. Then handle it as step 6 of contributing.md in the t3code-giveback skill says. A login marked [MEMBER], [OWNER] or [COLLABORATOR] belongs to the upstream repository.${MAINTAINERS:+ Maintainers: $MAINTAINERS.} Post nothing upstream that $OWNER_NAME has not approved. If the activity needs nothing from us, do nothing and reply to no one."
 
-  # The id is the same on a retry, so a message that did arrive is not sent twice.
+  printf '== %s -> %s\n%s' "$short" "$to" "$summary"
   status=0
   deliver "$to" "$id" <<<"Giveback watcher: $body" || status=$?
   if [ "$status" -ne 0 ] && [ "$status" -ne 6 ] && [ "$to" != "$DISPATCHER" ]; then
@@ -378,28 +457,13 @@ Read the activity in full, and the item with \`giveback show $short\`. Then hand
     deliver "$DISPATCHER" "$id-d" <<<"Giveback watcher: the recorded agent of $short could not be reached, so this comes to the dispatcher. Original message: $body" || status=$?
   fi
   if [ "$status" -ne 0 ]; then
-    echo "giveback-watch: could not deliver the activity on $short (exit $status). It will be sent again." >&2
+    echo "giveback-watch: could not deliver the activity on $short (exit $status). It stays queued." >&2
     send_failed=1
-    for key in $keys; do undelivered[$key]=1; done
+    continue
   fi
-done 3< <(jq -r '
-  [.[] | .key as $key | .lingering as $lingering | .items[] | . + { key: $key, lingering: $lingering }]
-  | group_by(.item)[]
-  | [.[0].item, .[0].short, (if .[0].to == "" then "-" else .[0].to end), (all(.lingering) | tostring), (map(.key) | join(" "))]
-  | @tsv' <<<"$threads")
-
-# A thread whose activity reached nobody goes back to what was remembered before,
-# so the next run finds the same activity again.
-for key in "${!undelivered[@]}"; do
-  newstate="$(jq --argjson old "$oldstate" --arg k "$key" '
-    reduce ($k, "fail:" + $k, "state:" + $k) as $name (.;
-      if $old | has($name) then .[$name] = $old[$name] else del(.[$name]) end)' <<<"$newstate")"
+  # Saved after each one, so a run that dies here does not send this message again.
+  newstate="$(jq --arg id "$id" '.outbox |= map(select(.id != $id))' <<<"$newstate")"
+  save_state
 done
-
-# Written in one move, and never as an empty file in place of a good one.
-if ((!dry)) && jq -e 'type == "object"' <<<"$newstate" >/dev/null 2>&1; then
-  mkdir -p "$STATE_DIR"
-  printf '%s\n' "$newstate" >"$state.tmp" && mv "$state.tmp" "$state"
-fi
 
 if ((check_failed || send_failed)); then exit 1; fi
