@@ -1,5 +1,5 @@
 {
-  "_comment": "Seed data for local development. The upstream refs are real, so the refresh can be exercised against GitHub. The wording, stages, roles and asks are invented. Every private value and every field of the non-public item contains SEED-PRIVATE so a leak is easy to spot. Load with: scripts/giveback load scripts/seed.json",
+  "_comment": "Seed data for local development. The upstream refs are real, so the refresh can be exercised against GitHub. The wording, stages, roles and asks are invented. Every private value and every field of the non-public items contains SEED-PRIVATE so a leak is easy to spot. The last items exercise upstream's PR rules: four wait for a PR slot (ranked, unranked, and one non-public), and two sit on real PRs that carried the needs-rebase label when this was written, one of them on a non-public item, so a refresh starts their closing clocks while upstream leaves the label on. No upstream PR carried triage:closing then, so that clock has no seed. The posted events are dated in October and November 2026: the owner's post count shows them for eight weeks from then. Load with: scripts/giveback load scripts/seed.json",
   "items": [
     {
       "slug": "seed-terminal-resize-flicker",
@@ -39,6 +39,7 @@
       "lastValidatedSha": "37b3be30ae7e",
       "validationVerdict": "Valid. No duplicate found.",
       "isPublic": true,
+      "changeKind": "bug",
       "private": {
         "notes": "SEED-PRIVATE notes: the fork already ships a two-line fix. Low risk.",
         "impact": "SEED-PRIVATE impact: drops one fork patch at the next advance."
@@ -60,6 +61,7 @@
       "lastValidatedSha": "37b3be30ae7e",
       "validationVerdict": "Valid. An open upstream PR already covers it.",
       "isPublic": true,
+      "changeKind": "bug",
       "stageNote": "Held: pingdotgg/t3code#8469 covers this.",
       "stageEventAt": "2026-11-05T09:00:00Z",
       "links": [
@@ -131,7 +133,8 @@
       "waitingSince": "2026-11-10T09:00:00Z",
       "targetRepo": "pingdotgg/t3code",
       "foundAt": "2026-10-25T12:00:00Z",
-      "isPublic": true
+      "isPublic": true,
+      "changeKind": "behaviour_change"
     },
     {
       "slug": "agent-stop-attribution",
@@ -145,6 +148,7 @@
       "targetRepo": "pingdotgg/t3code",
       "foundAt": "2026-11-02T10:00:00Z",
       "isPublic": true,
+      "changeKind": "bug",
       "links": [
         {
           "url": "https://github.com/pingdotgg/t3code/pull/33420",
@@ -172,6 +176,7 @@
       "targetRepo": "pingdotgg/t3code",
       "foundAt": "2026-10-29T10:00:00Z",
       "isPublic": true,
+      "changeKind": "bug",
       "links": [
         {
           "url": "https://github.com/pingdotgg/t3code/pull/32245",
@@ -299,6 +304,7 @@
       "targetRepo": "pingdotgg/t3code",
       "foundAt": "2026-10-22T10:00:00Z",
       "isPublic": true,
+      "changeKind": "feature",
       "links": [
         {
           "url": "https://github.com/pingdotgg/t3code/discussions/31072",
@@ -341,6 +347,7 @@
       "validationVerdict": "SEED-PRIVATE verdict: reproduces.",
       "followUpNote": "SEED-PRIVATE follow-up note.",
       "isPublic": false,
+      "changeKind": "behaviour_change",
       "links": [
         {
           "url": "https://github.com/pingdotgg/t3code/pull/29751",
@@ -374,6 +381,7 @@
       "followUpState": "owed",
       "followUpNote": "Drop the fork patch and its register entry at the next upstream advance.",
       "isPublic": true,
+      "changeKind": "bug",
       "links": [
         {
           "url": "https://github.com/pingdotgg/t3code/pull/21065",
@@ -519,7 +527,8 @@
       "targetRepo": "pingdotgg/t3code",
       "foundAt": "2026-10-16T10:00:00Z",
       "closedAt": "2026-10-17T10:00:00Z",
-      "isPublic": true
+      "isPublic": true,
+      "changeKind": "feature"
     },
     {
       "slug": "seed-parked",
@@ -560,6 +569,130 @@
       "foundAt": "2026-10-05T10:00:00Z",
       "closedAt": "2026-10-09T10:00:00Z",
       "isPublic": true
+    },
+    {
+      "slug": "seed-queued-draft-lost-on-rename",
+      "title": "Composer draft is lost when its thread is renamed",
+      "summary": "Seed item. The fix and its PR text are ready and approved. Upstream allows three open PRs and ours are all in use, so it waits for a slot. First in the queue.",
+      "stage": "held",
+      "route": "direct_pr",
+      "routeReason": "Small fix with a test. CONTRIBUTING allows a direct PR for that.",
+      "waitingOn": "pr_slot",
+      "waitingSince": "2026-11-11T09:00:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-11-03T09:00:00Z",
+      "lastValidatedAt": "2026-11-10T16:00:00Z",
+      "lastValidatedSha": "37b3be30ae7e",
+      "validationVerdict": "Valid. Reproduces on upstream main. No duplicate found.",
+      "isPublic": true,
+      "queueRank": 1,
+      "changeKind": "bug",
+      "stageNote": "Text approved. Held until a PR slot is free.",
+      "stageEventAt": "2026-11-11T09:00:00Z"
+    },
+    {
+      "slug": "seed-queued-retry-after-header",
+      "title": "Provider retries ignore the Retry-After header",
+      "summary": "Seed item. The PR text is written and waits for approval. It changes when a retry is sent, which upstream counts as a feature. Second in the queue for a slot.",
+      "stage": "held",
+      "route": "issue_first",
+      "routeReason": "It changes behaviour, so CONTRIBUTING asks for an issue before a PR.",
+      "waitingOn": "pr_slot",
+      "waitingSince": "2026-11-12T14:00:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-11-04T11:00:00Z",
+      "isPublic": true,
+      "queueRank": 2,
+      "changeKind": "behaviour_change",
+      "stageNote": "Held until a PR slot is free.",
+      "stageEventAt": "2026-11-12T14:00:00Z"
+    },
+    {
+      "slug": "seed-queued-undisclosed",
+      "title": "SEED-PRIVATE queued fix for a path check",
+      "summary": "SEED-PRIVATE summary. A non-public item that waits for a PR slot, third in the queue.",
+      "stage": "held",
+      "route": "direct_pr",
+      "routeReason": "SEED-PRIVATE route reason: direct PR once it is disclosed.",
+      "waitingOn": "pr_slot",
+      "waitingSince": "2026-11-12T18:00:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "originRefs": ["SEED-PRIVATE Jacksondr5/j5code#3012"],
+      "foundAt": "2026-11-09T08:00:00Z",
+      "validationVerdict": "SEED-PRIVATE verdict: reproduces on main.",
+      "isPublic": false,
+      "queueRank": 3,
+      "changeKind": "feature",
+      "stageNote": "SEED-PRIVATE stage note: held for a slot.",
+      "stageEventAt": "2026-11-12T18:00:00Z",
+      "private": {
+        "notes": "SEED-PRIVATE notes: the path check and its fix."
+      }
+    },
+    {
+      "slug": "seed-queued-export-progress",
+      "title": "Export gives no sign of progress on a large thread",
+      "summary": "Seed item. It waits for a PR slot and has no rank yet, so it goes after every ranked item. No post text has been written.",
+      "stage": "held",
+      "route": "issue_first",
+      "waitingOn": "pr_slot",
+      "waitingSince": "2026-11-10T10:00:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-11-02T15:00:00Z",
+      "isPublic": true,
+      "changeKind": "feature",
+      "stageNote": "Held until a PR slot is free.",
+      "stageEventAt": "2026-11-10T10:00:00Z"
+    },
+    {
+      "slug": "seed-rebase-requested",
+      "title": "Offered PR that upstream asked to rebase",
+      "summary": "Seed item on a real PR that carried the needs-rebase label when this was written. Upstream closes such a PR after seven days with no activity, so the refresh starts its closing clock. Shown as ours to exercise that; it is not.",
+      "stage": "offered",
+      "route": "direct_pr",
+      "waitingOn": "giveback_agent",
+      "waitingSince": "2026-11-14T06:00:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-11-12T10:00:00Z",
+      "isPublic": true,
+      "changeKind": "bug",
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/36432",
+          "repo": "pingdotgg/t3code",
+          "number": 36432,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary"
+        }
+      ]
+    },
+    {
+      "slug": "seed-undisclosed-offered",
+      "title": "SEED-PRIVATE fix that was offered before it was disclosed",
+      "summary": "SEED-PRIVATE summary. A non-public item whose PR holds one of our slots. Visitors see the slot filled and nothing about the PR.",
+      "stage": "offered",
+      "route": "direct_pr",
+      "routeReason": "SEED-PRIVATE route reason: a direct PR, kept quiet.",
+      "waitingOn": "maintainer",
+      "waitingSince": "2026-11-13T18:30:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-11-11T08:00:00Z",
+      "isPublic": false,
+      "changeKind": "bug",
+      "stageNote": "SEED-PRIVATE stage note: offered.",
+      "stageEventAt": "2026-11-13T18:30:00Z",
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/36257",
+          "repo": "pingdotgg/t3code",
+          "number": 36257,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary",
+          "triageBucket": "SEED-PRIVATE slot bucket"
+        }
+      ]
     }
   ],
   "asks": [
@@ -683,6 +816,48 @@
       "key": "seed-handoff-race:text",
       "resolution": "SEED-PRIVATE resolution: approved",
       "closedAt": "2026-11-07T20:00:00Z"
+    },
+    {
+      "op": "open",
+      "key": "seed-queued-draft:text",
+      "item": "seed-queued-draft-lost-on-rename",
+      "kind": "text_approval",
+      "publicLabel": "Approve the PR description, to be used when a slot is free",
+      "openedAt": "2026-11-10T17:00:00Z",
+      "private": {
+        "draftPointer": "SEED-PRIVATE draft: artifact giveback/draft-lost-pr.md"
+      }
+    },
+    {
+      "op": "close",
+      "key": "seed-queued-draft:text",
+      "resolution": "Approved; opens when a PR slot is free",
+      "closedAt": "2026-11-11T08:30:00Z"
+    },
+    {
+      "op": "open",
+      "key": "seed-queued-retry:text",
+      "item": "seed-queued-retry-after-header",
+      "kind": "text_approval",
+      "publicLabel": "Approve the issue text for the Retry-After change",
+      "openedAt": "2026-11-12T14:00:00Z",
+      "private": {
+        "recommendation": "SEED-PRIVATE recommendation: approve, it states the behaviour change plainly."
+      }
+    },
+    {
+      "op": "open",
+      "key": "seed-queued-undisclosed:text",
+      "item": "seed-queued-undisclosed",
+      "kind": "text_approval",
+      "publicLabel": "SEED-PRIVATE label: approve the path check PR text",
+      "openedAt": "2026-11-12T10:00:00Z"
+    },
+    {
+      "op": "close",
+      "key": "seed-queued-undisclosed:text",
+      "resolution": "SEED-PRIVATE resolution: approved for later",
+      "closedAt": "2026-11-12T17:00:00Z"
     }
   ],
   "events": [
@@ -750,6 +925,86 @@
       "type": "note",
       "note": "SEED-PRIVATE event: keep this one quiet.",
       "isPublic": false
+    },
+    {
+      "key": "seed:21065:posted",
+      "item": "merged-21065",
+      "at": "2026-10-14T16:00:00Z",
+      "actor": "agent",
+      "type": "posted",
+      "note": "Opened pingdotgg/t3code#21065.",
+      "url": "https://github.com/pingdotgg/t3code/pull/21065",
+      "isPublic": true
+    },
+    {
+      "key": "seed:24691:posted",
+      "item": "merged-24691",
+      "at": "2026-10-22T11:00:00Z",
+      "actor": "agent",
+      "type": "posted",
+      "note": "Opened pingdotgg/t3code#24691.",
+      "url": "https://github.com/pingdotgg/t3code/pull/24691",
+      "isPublic": true
+    },
+    {
+      "key": "seed:25248:posted",
+      "item": "seed-taken-over-by-maintainer",
+      "at": "2026-10-26T02:38:00Z",
+      "actor": "agent",
+      "type": "posted",
+      "note": "Opened pingdotgg/t3code#25248.",
+      "url": "https://github.com/pingdotgg/t3code/pull/25248",
+      "isPublic": true
+    },
+    {
+      "key": "seed:31330:posted",
+      "item": "answered-question-raw-json",
+      "at": "2026-11-05T07:19:00Z",
+      "actor": "agent",
+      "type": "posted",
+      "note": "Opened pingdotgg/t3code#31330.",
+      "url": "https://github.com/pingdotgg/t3code/pull/31330",
+      "isPublic": true
+    },
+    {
+      "key": "seed:32213:posted",
+      "item": "seed-covered-by-another-pr",
+      "at": "2026-11-06T22:19:00Z",
+      "actor": "agent",
+      "type": "posted",
+      "note": "Opened pingdotgg/t3code#32213.",
+      "url": "https://github.com/pingdotgg/t3code/pull/32213",
+      "isPublic": true
+    },
+    {
+      "key": "seed:32245:posted",
+      "item": "preview-stream-revoked-session",
+      "at": "2026-11-07T00:08:00Z",
+      "actor": "agent",
+      "type": "posted",
+      "note": "Opened pingdotgg/t3code#32245.",
+      "url": "https://github.com/pingdotgg/t3code/pull/32245",
+      "isPublic": true
+    },
+    {
+      "key": "seed:36432:posted",
+      "item": "seed-rebase-requested",
+      "at": "2026-11-13T22:51:00Z",
+      "actor": "agent",
+      "type": "posted",
+      "note": "Opened pingdotgg/t3code#36432.",
+      "url": "https://github.com/pingdotgg/t3code/pull/36432",
+      "isPublic": true
+    },
+    {
+      "key": "seed:36257:posted",
+      "item": "seed-undisclosed-offered",
+      "at": "2026-11-13T18:02:00Z",
+      "actor": "agent",
+      "type": "posted",
+      "note": "SEED-PRIVATE event: opened the PR before disclosure.",
+      "url": "https://github.com/pingdotgg/t3code/pull/36257",
+      "isPublic": true
     }
   ]
 }

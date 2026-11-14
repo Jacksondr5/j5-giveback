@@ -24,7 +24,17 @@ const UNDISCLOSED_TITLE = "Undisclosed candidate";
 // Fields of an undisclosed item that may carry a value. Everything else must be null or empty.
 // Stage, what it waits on, and dates. closedAt is a date: the closed list needs it to order the item.
 // number is the item's "GB-<n>" ID: a bare number says nothing about the item, and it is how the item is named.
+// Not here, on purpose: changeKind, which says what the item is, and queueRank. An undisclosed item's
+// place in the queue for a PR slot is public, and the overview's queue gives it as a position.
 const UNDISCLOSED_ALLOWED = ["id", "number", "disclosed", "title", "stage", "waitingOn", "waitingSince", "foundAt", "updatedAt", "closedAt"];
+// Everything the public overview may carry. A new key fails the check until it is added here on purpose.
+const OVERVIEW_KEYS = ["generatedAt", "stats", "pipeline", "waiting", "outcomes", "openAsks", "prSlots", "sync"];
+const REPO_SLOTS_KEYS = ["repo", "limit", "slots", "free", "queue"];
+const SLOT_KEYS = ["link", "item"];
+const QUEUE_ENTRY_KEYS = ["position", "item", "text"];
+const ITEM_REF_KEYS = ["id", "number", "disclosed", "slug", "title", "stage"];
+// Names that belong to the owner's post count. None may appear in what a visitor is sent.
+const POST_COUNT_KEYS = ["last7Days", "weeks", "incomplete"];
 const MIN_SENTINEL_LENGTH = 6;
 
 function fail(message) {
@@ -235,6 +245,58 @@ async function main() {
   };
   for (const item of undisclosed) checkUndisclosed(item, "items");
 
+  // The PR slots and the queue for them. A non-public item may appear in both, and only as an
+  // undisclosed candidate: a filled slot with no PR, or a place in the queue with nothing about its text.
+  const onlyKeys = (value, allowed, where) => {
+    for (const key of Object.keys(value || {})) check(allowed.includes(key), `${where}: unexpected field ${key}.`);
+  };
+  const checkItemRef = (ref, where) => {
+    onlyKeys(ref, ITEM_REF_KEYS, where);
+    if (!hiddenIds.has(ref.id)) return;
+    check(ref.disclosed === false && ref.slug === null && ref.title === UNDISCLOSED_TITLE, `${where}: exposes a non-public item.`);
+  };
+  const hiddenLinkIds = new Set((tables.links || []).filter((link) => hiddenIds.has(link.itemId)).map((link) => link.id));
+  const storedItem = new Map((tables.items || []).map((row) => [row.id, row]));
+  let withheldSlots = 0;
+  let undisclosedQueueEntries = 0;
+  let queueEntries = 0;
+  if (overview.ok) {
+    onlyKeys(overview.data, OVERVIEW_KEYS, "overview");
+    check(Array.isArray(overview.data.prSlots), "overview: prSlots is missing.");
+    for (const repo of overview.data.prSlots || []) {
+      const where = `overview.prSlots(${repo.repo})`;
+      onlyKeys(repo, REPO_SLOTS_KEYS, where);
+      check(repo.free === Math.max(0, repo.limit - repo.slots.length), `${where}: free does not follow from the limit and the slots.`);
+      for (const slot of repo.slots) {
+        onlyKeys(slot, SLOT_KEYS, `${where} slot`);
+        checkItemRef(slot.item, `${where} slot`);
+        if (hiddenIds.has(slot.item.id)) {
+          withheldSlots += 1;
+          check(slot.link === null, `${where}: a slot shows the PR of a non-public item.`);
+        } else {
+          check(slot.link !== null && !hiddenLinkIds.has(slot.link.id), `${where}: a slot shows a link that belongs to a non-public item.`);
+        }
+      }
+      // The queue is every item of this repository that waits on a PR slot and is not closed, hidden ones included.
+      const expected = (tables.items || []).filter(
+        (row) => row.stage !== "closed" && row.waitingOn === "pr_slot" && row.targetRepo.toLowerCase() === repo.repo.toLowerCase()
+      ).length;
+      check(repo.queue.length === expected, `${where}: expected ${expected} queued items, got ${repo.queue.length}.`);
+      repo.queue.forEach((entry, index) => {
+        queueEntries += 1;
+        onlyKeys(entry, QUEUE_ENTRY_KEYS, `${where} queue`);
+        checkItemRef(entry.item, `${where} queue`);
+        check(entry.position === index + 1, `${where}: queue positions are not 1, 2, 3, in order.`);
+        const row = storedItem.get(entry.item.id);
+        check(Boolean(row) && row.waitingOn === "pr_slot" && row.stage !== "closed", `${where}: the queue holds an item that does not wait for a slot.`);
+        if (hiddenIds.has(entry.item.id)) {
+          undisclosedQueueEntries += 1;
+          check(entry.text === null, `${where}: the queue says whether a non-public item's text is approved.`);
+        }
+      });
+    }
+  }
+
   // The list carries each item's number, the hidden ones included, exactly as stored.
   const storedNumber = new Map((tables.items || []).map((row) => [row.id, row.number ?? null]));
   for (const item of items) {
@@ -286,8 +348,8 @@ async function main() {
     check(result.ok && result.data === null, `item(${JSON.stringify(ref)}) should be null.`);
   }
 
-  // The owner queries must refuse a guest.
-  for (const [name, args] of [["ownerOverview", []], ["ownerItems", []], ["ownerItem", [[...hiddenIds][0]]]]) {
+  // The owner queries must refuse a guest. ownerPosts is the count of upstream posts, which includes non-public items.
+  for (const [name, args] of [["ownerOverview", []], ["ownerItems", []], ["ownerItem", [[...hiddenIds][0]]], ["ownerPosts", []]]) {
     const result = await run(name, args);
     check(!result.ok, `${name} answered an anonymous guest.`);
   }
@@ -299,6 +361,8 @@ async function main() {
     ["GET", "/api/agent/export"],
     ["GET", "/api/agent/watchlist"],
     ["GET", "/api/agent/item-agents"],
+    // Capacity names non-public items by title and counts their posts.
+    ["GET", "/api/agent/capacity"],
     ["POST", "/api/agent/items"],
     ["POST", "/api/agent/items/delete"],
     ["POST", "/api/agent/items/assign-numbers"],
@@ -325,6 +389,13 @@ async function main() {
   }
   check(matcherMisses === 0, `matcher self-test: ${matcherMisses} private values were not found in their own source.`);
 
+  // The count of upstream posts is the owner's. Nothing an anonymous caller received may carry its fields.
+  for (const { label, raw } of responses) {
+    for (const key of POST_COUNT_KEYS) {
+      check(!raw.includes(`"${key}"`), `${label}: carries "${key}", a field of the owner's post count.`);
+    }
+  }
+
   // No private value may appear anywhere in anything an anonymous caller received.
   let hits = 0;
   for (const { label, raw } of responses) {
@@ -343,6 +414,9 @@ async function main() {
     items: items.length,
     undisclosedItems: undisclosed.length,
     itemsReadByShortId: byShortId,
+    queueEntries,
+    undisclosedQueueEntries,
+    withheldSlots,
     leaks: hits,
     failures
   };
