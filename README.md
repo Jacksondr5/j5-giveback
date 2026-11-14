@@ -17,10 +17,12 @@ Every item has a short ID, `GB-<n>` (GB for give-back), that a person can say or
 | `shared/api.ts` | Request and response types for the endpoints and the queries |
 | `shared/itemId.ts` | The item ID: its prefix, and how it is formatted and parsed |
 | `shared/limits.ts` | Length and batch limits |
+| `shared/upstreamRules.ts` | The rules an upstream repository enforces by bot: the open PR limit, the closing clocks, and the count of posts per week |
 | `server/schema.ts` | Tables and indexes |
 | `server/read.ts` | Read paths over the public tables |
 | `server/owner.ts` | Owner read paths, which add the private tables |
 | `server/agent.ts`, `server/validate.ts` | The agent endpoints and their payload validation |
+| `server/capacity.ts` | The capacity endpoint and the count of upstream posts, for the owner and the agents only |
 | `server/refresh.ts`, `server/github.ts` | The GitHub refresh |
 | `server/auth.ts` | Bearer check and owner check |
 | `scripts/giveback` | Command-line client for agents |
@@ -32,17 +34,20 @@ Every item has a short ID, `GB-<n>` (GB for give-back), that a person can say or
 
 | Query | Who | Returns |
 |---|---|---|
-| `overview` | Anyone | Stats, pipeline counts (the `held` side stop included), open asks, sync state |
+| `overview` | Anyone | Stats, pipeline counts (the `held` side stop included), open asks, PR slots and the queue for them, sync state |
 | `items` | Anyone | Every item with its number and its primary link |
 | `item(ref)` | Anyone | One item by ID (`GB-12`, either case), slug or row id, with links, asks and public events |
 | `viewer` | Anyone | Whether the caller is signed in, their own user id, and whether they are an owner |
 | `ownerOverview`, `ownerItems`, `ownerItem(ref)` | Owner | The same with nothing hidden, plus private fields |
+| `ownerPosts` | Owner | Upstream posts in the last 7 days and each of the last 8 weeks, on every item, public or not |
 
 ### The privacy boundary
 
 Private data is in two tables, `itemPrivate` and `askPrivate`. The public queries get a database type (`PublicDb`) that does not contain those tables, so a public query that reads them is a TypeScript error. Lakebed's build does not run the type checker, so that guard holds only when the code is checked with `tsc`. The check that runs against real responses is `scripts/privacy-check`.
 
 An item with `isPublic: false` is counted in the totals, the stage counts and the waiting-on counts (never in outcome, follow-up or upstream-change counts, which would reveal its state) and shown as "Undisclosed candidate" with its ID, its stage, what it waits on, and its dates. Its public handles are its ID and its row id, a random UUID; the site links to it by ID. A bare number says nothing about the item, and it is how the owner and the agents name it. `item(ref)` finds it by either handle and returns the same redacted form; it does not find it by slug, so a guessed slug confirms nothing. Its links, asks and events are not read at all, and its asks do not appear in the public "Needs Jackson" queue.
+
+Two public facts follow from what a non-public item waits on. One that waits for a PR slot is listed in the overview's queue by its ID and its position, with nothing about its text. One whose open PR is ours shows as a filled slot, by its ID, with nothing about the PR. Both place it in a repository, which its redacted form otherwise withholds; that was accepted so that the count of free slots is true for everyone. The count of upstream posts includes non-public items, so it is private: only `ownerPosts` and the agent's capacity endpoint return it.
 
 `scripts/privacy-check` checks all of this against a running dev server: it collects every private value from the full export, runs every public query as an anonymous guest, and fails if any of those values comes back.
 
@@ -85,8 +90,8 @@ npx lakebed dev --port 4517
 
 # In another terminal:
 export GIVEBACK_URL=http://127.0.0.1:4517 GIVEBACK_ENV_FILE=.env.lakebed.server
-scripts/giveback load scripts/seed.json   # every stage and outcome, two held items, a non-public item, asks, events
-scripts/giveback refresh                  # reads the real upstream PRs in the seed
+scripts/giveback load scripts/seed.json   # every stage and outcome, held and queued items, non-public items, asks, events
+scripts/giveback refresh                  # reads the real upstream PRs in the seed, and starts their closing clocks
 scripts/privacy-check scripts/seed.json   # exits 0 when nothing private is exposed
 ```
 
@@ -163,6 +168,6 @@ News goes into a queue in `state.json` before anything is sent, and leaves it on
 
 - Lakebed server code has no timers and no `while` loops. The GitHub request uses `AbortSignal.timeout`.
 - A handler cannot catch a database error and carry on. Validate before touching the database.
-- One request may make 100 index lookups, which is what sets the batch sizes in `shared/limits.ts`.
+- One request may make 100 index lookups, which is what sets the batch sizes in `shared/limits.ts`. The overview makes at most 14, and the owner's overview one more per open ask, up to 75: see `readOverview` before adding a read to either.
 - One request is one transaction, cancelled after 5 seconds. The number backfill numbers 100 items per call for that reason, and says how many remain.
 - Do not deploy with `--public-inspect`. It would make the whole database, private tables included, readable.

@@ -7,6 +7,7 @@ The giveback dashboard tracks every item that Jackson's fork, J5 Code, gives bac
 - [Quick start](#quick-start)
 - [The model](#the-model)
 - [Item IDs](#item-ids)
+- [Upstream's PR rules](#upstreams-pr-rules)
 - [Privacy rules](#privacy-rules)
 - [Endpoints](#endpoints)
 - [Enumerations](#enumerations)
@@ -56,6 +57,9 @@ scripts/giveback export --out backup.json
 # List the upstream threads worth polling: every link on an item that is not closed.
 scripts/giveback watchlist
 
+# See whether a PR slot is free, and which item is next for one.
+scripts/giveback capacity
+
 # Refresh GitHub state for every link on an open item.
 scripts/giveback refresh
 ```
@@ -71,7 +75,7 @@ An **item** is one thing given back, or considered for it. It has one **stage**,
 | `found` | A candidate was recorded | Giveback agent |
 | `validating` | Being checked against current upstream `main` and searched for duplicates | Giveback agent |
 | `deciding` | Validated and real. Needs a route. | Jackson |
-| `held` | Valid, with nothing to offer yet. Waiting on someone else's upstream change. | Upstream |
+| `held` | Valid, with nothing to offer yet. Waiting on someone else's upstream change, or on a free PR slot. | Upstream |
 | `preparing` | Route chosen. Branch, tests, evidence and post text are being produced. | Giveback agent |
 | `approving` | The exact text of the upstream post is ready | Jackson |
 | `offered` | Posted upstream and being babysat | Upstream |
@@ -79,10 +83,10 @@ An **item** is one thing given back, or considered for it. It has one **stage**,
 
 An item can move backwards. The agent sets the stage; the server records each change in the item's history.
 
-`held` is a side stop, not a step on the path. Use it for a valid candidate that cannot be offered yet because someone else's open upstream PR covers it, or because a dependency has to land first. Do not leave such an item in `validating` (which says the agent is still checking) or `deciding` (which says Jackson owes a decision). Give it:
+`held` is a side stop, not a step on the path. Use it for a valid candidate that cannot be offered yet because someone else's open upstream PR covers it, because a dependency has to land first, or because our PR slots are all in use. Do not leave such an item in `validating` (which says the agent is still checking) or `deciding` (which says Jackson owes a decision). Give it:
 
-- `waitingOn`: `covering_pr`, `base_pr`, or whatever it really waits on. Not `jackson`.
-- a link with role `covering` or `base` to the thread it waits on. The site shows that link with its live state in the "Held" section of the overview, and the refresh keeps reading it, because a held item is not closed.
+- `waitingOn`: `covering_pr`, `base_pr`, `pr_slot`, or whatever it really waits on. Not `jackson`.
+- a link with role `covering` or `base` to the thread it waits on. The site shows that link with its live state in the "Held" section of the overview, and the refresh keeps reading it, because a held item is not closed. **Waiting for a PR slot is the one case that needs no such link**: the item waits on our own open PRs, and the site shows it in the queue for a slot. See [Upstream's PR rules](#upstreams-pr-rules).
 - `route`, if one was chosen before the item was held. The item's page marks Deciding as passed only when a route is recorded.
 
 When that thread merges or closes, the refresh raises the item's "state changed upstream" marker (see [refresh](#post-apirefresh)). Move the item then: to `closed` with an outcome such as `covered_by_contributor`, or back onto the path.
@@ -119,12 +123,68 @@ On the site, `/items/GB-12` is the item's page (`/items/gb-12` works too), the i
 
 A slug must not have the form of an ID. Creating an item with the slug `gb-12` is refused.
 
+## Upstream's PR rules
+
+`pingdotgg/t3code` enforces its contribution rules with a bot. The dashboard knows them, in `shared/upstreamRules.ts`, keyed by repository. `pingdotgg/t3code` is the only repository in that map; a repository outside it has no slots and no clocks.
+
+| Rule | Value for `pingdotgg/t3code` |
+|---|---|
+| Open PRs a contributor may have | 3. A fourth is closed as it opens. |
+| A PR labelled `needs-rebase` | Closed once 7 days have passed since its last activity, while it still conflicts. Any activity (a push, a comment, a review, a label) restarts the 7 days. |
+| A PR labelled `triage:closing` | Closed 72 hours after the label was applied. If anything happened on the PR more than 15 seconds after the label, the next sweep removes the label instead: the PR is back for another look. |
+| A PR labelled `triage:keep-open` | Exempt from both. |
+| The bot's sweep | Once a day, at 05:23 UTC. A close happens at the first sweep after its deadline. |
+
+### PR slots
+
+Each of our open PRs in such a repository fills one **slot**: a link with kind `pr` and ownership `ours`, on an item that is not closed, that is `open` on GitHub or has not been read by the refresh yet. One PR fills one slot even when it sits on two items. A PR on a closed item does not count, because the refresh no longer reads it: close an item only when its PR is really finished.
+
+An item whose text is ready, and which cannot be posted because the slots are all in use, **waits for a slot**:
+
+```json
+{ "items": [{ "slug": "my-item", "stage": "held", "waitingOn": "pr_slot", "queueRank": 2 }] }
+```
+
+- `stage`: `held`. `waitingOn`: `pr_slot`. No `covering` or `base` link is needed.
+- `queueRank` is the item's place in the queue: a whole number from 1 to 999, and the lower goes first. The dispatcher agent sets it. Items with no rank go after every ranked item, and equal ranks go longest-waiting first (`waitingSince`).
+- The server clears `queueRank` when an upsert sets `waitingOn` to anything other than `pr_slot`, or closes the item. So to take an item out of the queue, change what it waits on; there is nothing else to tidy.
+
+The queue shows, for each item, whether its text is approved. That is **derived, not stored**: the server looks at the item's newest `text_approval` ask, the one with the latest `openedAt`.
+
+| The newest `text_approval` ask is | The queue says | `text` |
+|---|---|---|
+| closed | Text approved | `approved` |
+| open | Text awaits approval | `awaiting` |
+| absent: the item has no such ask | No text yet | `none` |
+
+So record an approval the way [text approved in advance](#text-approved-in-advance-for-a-conditional-post) describes: open a `text_approval` ask and close it when Jackson has approved. To put a new text to him, open a new ask under a new key; it becomes the newest, and the item reads "awaits approval" until it is closed. The server reads an item's 20 most recently created asks for this, and does so for the first 10 queued items; past those, `text` is `null`.
+
+The site's overview shows the slots and the queue to everyone. [`GET /api/agent/capacity`](#get-apiagentcapacity) returns the same, with nothing withheld, for the dispatcher.
+
+### Closing clocks
+
+The refresh reads each PR's labels, its "updated" time, and when `triage:closing` was last applied. From those the site shows a clock on every open PR of ours that upstream's bot is going to close:
+
+| The PR carries | The site says |
+|---|---|
+| `triage:keep-open` | Nothing. No clock runs. |
+| `triage:closing`, and nothing happened on it after the notice | "Closes in 41 h unless answered": 72 hours from the notice |
+| `triage:closing`, and something happened more than 15 seconds after the notice | "Notice answered, back for another look" |
+| `needs-rebase` (and not `triage:closing`) | "Closes after 21 Nov unless rebased": 7 days from the PR's last activity |
+| either, past its deadline | "Due to close at the next daily sweep" |
+
+The closing notice outranks the rebase request, as it does in upstream's bot. When the refresh first sees either label on one of our open PRs, it raises the item's "state changed upstream" marker: see [refresh](#post-apirefresh).
+
+### Bug, behaviour change or feature
+
+Upstream's test: a PR must fix a bug, and a change to how the product behaves is a feature, even when the PR calls it a fix. Record the verdict on the item as `changeKind`: `bug`, `behaviour_change` or `feature`. See [change kind](#change-kind). The site shows it on the item's page and in every list.
+
 ## Privacy rules
 
 The site is public. Read these before writing.
 
-1. **`isPublic` decides whether anyone but the owner sees an item.** When it is `false`, the public sees an "Undisclosed candidate" with only its [ID](#item-ids), its stage, what it waits on, and its dates. No title, summary, slug, route, links, events or asks. Its asks are not shown to visitors at all, in the "Needs Jackson" queue or on the item's page, and they do not count in the public "open asks" number. The owner sees and counts them. Set `isPublic: false` for anything security-sensitive until it is filed upstream. `isPublic` is required when you create an item. There is no default.
-2. **Public fields are public.** For a public item, everything outside `private` is shown to everyone: title, summary, route reason, validation verdict, follow-up note, links, ask labels and resolutions, and events with `isPublic: true`.
+1. **`isPublic` decides whether anyone but the owner sees an item.** When it is `false`, the public sees an "Undisclosed candidate" with only its [ID](#item-ids), its stage, what it waits on, and its dates. No title, summary, slug, route, kind of change, links, events or asks. Two things follow from what it waits on and are public too: an undisclosed item that waits for a [PR slot](#pr-slots) is listed in the queue by its ID and its position, with nothing about its text and without its `queueRank`; and an undisclosed item whose open PR is ours shows as a filled slot, by its ID, with nothing about the PR. Its asks are not shown to visitors at all, in the "Needs Jackson" queue or on the item's page, and they do not count in the public "open asks" number. The owner sees and counts them. Set `isPublic: false` for anything security-sensitive until it is filed upstream. `isPublic` is required when you create an item. There is no default.
+2. **Public fields are public.** For a public item, everything outside `private` is shown to everyone: title, summary, route reason, validation verdict, follow-up note, kind of change, queue rank, links, ask labels and resolutions, and events with `isPublic: true`.
 3. **Private fields are for the owner only.** `private.notes`, `private.impact`, `private.preparedBranch`, `private.agentName`, `private.agentAddress` on an item; `private.recommendation`, `private.draftPointer` on an ask; and events with `isPublic: false`.
 4. **Never send these, in any field, public or private**: local paths, host names, ports, thread ids, token locations, or commentary about maintainers. The one exception is `private.agentAddress`, which exists to hold the address of the item's owning agent (see `GET /api/agent/item-agents`). The server rejects any string that contains `/home/`, `/tmp/`, `/mnt/`, `/Users/`, `/root/` or `~/`. It cannot detect the rest. That is your job.
 5. **Keys are private.** Ask keys and event keys are never shown publicly, so a key may name its subject.
@@ -154,6 +214,7 @@ The server does these on its own:
 - Sets `waitingSince` to now when `waitingOn` changes, unless you send `waitingSince`.
 - Sets `closedAt` to now when the stage becomes `closed`, unless you send `closedAt`.
 - Clears `outcome` and `closedAt` when an item leaves `closed`.
+- Clears `queueRank` when `waitingOn` becomes anything other than `pr_slot`, and when the item closes.
 
 Full example:
 
@@ -179,6 +240,7 @@ Full example:
       "followUpState": "none",
       "followUpNote": null,
       "isPublic": true,
+      "changeKind": "bug",
       "stageNote": "Opened pingdotgg/t3code#33420.",
       "links": [
         {
@@ -223,6 +285,8 @@ Full example:
 | `followUpState` | [follow-up state](#follow-up-state) | The fork patch still to be dropped after a closed outcome |
 | `followUpNote` | string or null | Up to 300 |
 | `isPublic` | boolean | Required on create |
+| `queueRank` | number or null | The item's place in the queue for a [PR slot](#pr-slots): a whole number from 1 to 999, lower first. Anything else is refused: "Must be a whole number from 1 to 999, or null." Allowed only while `waitingOn` is `pr_slot` and the item is not closed; a number sent otherwise is refused: "Allowed only when waitingOn is "pr_slot" and the item is not closed." `null` clears it, and is always accepted. Public for a public item. |
+| `changeKind` | [change kind](#change-kind) or null | The verdict under upstream's test. `null` clears it. Any other value is refused: "Must be one of: bug, behaviour_change, feature." Public for a public item. |
 | `stageNote` | string | Up to 280. Public text for the stage-change event this request causes. Ignored when it causes none. |
 | `stageEventAt` | time | When the stage change happened: the time of the `stage_changed` event this request causes. Defaults to now. Must be a valid time not later than the server's clock; anything else is refused with a 400 whether or not an event is recorded. A valid value has no effect when the request causes no such event. It applies to this request only and is not stored on the item. |
 | `clearUpstreamChange` | boolean | `true` clears the "state changed upstream" marker (see refresh) |
@@ -490,7 +554,7 @@ An item row carries its `number`. Its [ID](#item-ids) is `itemIdPrefix`, a hyphe
 
 `scripts/giveback export` follows the cursors and nests the result: each item carries its `shortId` (`"GB-12"`), `links`, `private`, `asks` (each with its `private`) and `events`. `--raw` gives the tables instead. For one item, use `scripts/giveback show GB-12`.
 
-In a row, a field with no value is absent. `items.originRefs` and `links.ghLabels` are one entry per line. The `gh*` fields, `macroscopeVerdict`, `syncedAt` and `syncError` on a link are the GitHub snapshot.
+In a row, a field with no value is absent. `items.originRefs` and `links.ghLabels` are one entry per line. The `gh*` fields, `macroscopeVerdict`, `syncedAt` and `syncError` on a link are the GitHub snapshot. `links.ghLastActivityAt` is the thread's "updated" time on GitHub. `links.ghClosingNoticeAt` is when `triage:closing` was last applied to a PR; it is present only while the PR carries that label. `items.queueRank` and `items.changeKind` are present only when set.
 
 ### `GET /api/agent/item-agents`
 
@@ -521,6 +585,81 @@ These two are the one exception to the rule against writing internal identifiers
 `unassigned` counts the open items with no `agentAddress`. `incomplete` is `false` in normal operation; if it is ever `true`, the list could not read every private row, an item may show no agent when it has one, and nothing should be dispatched from it. A watcher uses this list to tell an item's agent about activity on its threads; a dispatcher uses it to find items that still need an agent. When an item closes it drops out of the list. Leave the two fields on it: they say who worked the item.
 
 With the script: `scripts/giveback agents`. The script adds one field of its own, `dispatcherAddress`, from the local setting `GIVEBACK_DISPATCHER_ADDRESS` (null when it is not set). The dispatcher is the agent that takes items with no agent.
+
+### `GET /api/agent/capacity`
+
+Bearer `AGENT_SECRET`. Read-only. Whether a [PR slot](#pr-slots) is free, which item is next for one, and how many posts went upstream lately. The dispatcher reads this before it lets an item post.
+
+```json
+{
+  "ok": true,
+  "generatedAt": 1794700000000,
+  "repos": [
+    {
+      "repo": "pingdotgg/t3code",
+      "limit": 3,
+      "open": 3,
+      "free": 0,
+      "slots": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/33420",
+          "repo": "pingdotgg/t3code",
+          "number": 33420,
+          "title": "fix(server): an agent's Stop no longer reads as the user's",
+          "itemSlug": "agent-stop-attribution",
+          "itemNumber": 12,
+          "itemShortId": "GB-12",
+          "itemTitle": "An agent's Stop no longer reads as the user's",
+          "itemIsPublic": true,
+          "ghState": "open",
+          "isDraft": false,
+          "createdAt": 1794238603000,
+          "ci": "success",
+          "labels": ["size:XS", "needs-rebase"],
+          "lastActivityAt": 1794634431000,
+          "closingClock": { "kind": "rebase", "closesAt": 1795239231000, "due": false },
+          "syncedAt": 1794699000000
+        }
+      ],
+      "queue": [
+        {
+          "position": 1,
+          "itemSlug": "composer-draft-lost-on-rename",
+          "itemNumber": 27,
+          "itemShortId": "GB-27",
+          "itemTitle": "Composer draft is lost when its thread is renamed",
+          "itemIsPublic": true,
+          "itemStage": "held",
+          "queueRank": 1,
+          "waitingSince": 1794387600000,
+          "text": "approved",
+          "changeKind": "bug"
+        }
+      ]
+    }
+  ],
+  "posts": {
+    "last7Days": 3,
+    "weeks": [
+      { "start": 1789948800000, "count": 0 },
+      { "start": 1794182400000, "count": 3 }
+    ],
+    "cap": null,
+    "incomplete": false
+  }
+}
+```
+
+- `repos` has one entry for every repository in the [rules map](#upstreams-pr-rules), whether or not anything of ours is there.
+- `slots` are our open PRs, oldest first. `open` is how many there are and `free` is `limit` less `open`, never below 0. When `open` is above `limit`, we are over it: upstream closes a new PR as it opens. **Post only when `free` is above 0.**
+- `ghState` is `open`, or `null` for a link the refresh has not read yet; such a link counts as open. `closingClock` is the [clock](#closing-clocks) running on the PR at `generatedAt`, or `null`. Its `kind` is `notice` or `rebase` (each with `closesAt` and `due`, which is `true` once the deadline has passed), `answered` (with `noticeAt`), or `notice_unknown` (the PR carries the closing label and the time it was applied could not be read).
+- `queue` is every item that waits on `pr_slot` and is not closed, in order: lowest `queueRank` first, unranked items after, longest-waiting first among equals. `position` is 1 for the item that goes next. `text` is `approved`, `awaiting` or `none`, by the [rule above](#pr-slots), and `null` past the tenth entry.
+- Non-public items are included, with their slugs and real titles. This endpoint is for agents; do not republish its output.
+- `posts` counts the events of type `posted`, on every item, public or not: the last 7 days, and each of the last 8 weeks, oldest first. A week starts on Monday 00:00 UTC, and the last entry is the current week, still running. So record every upstream post as a `posted` event, with `at` set to when it was posted. `cap` is a weekly cap on posts; none is set, so it is `null`. `incomplete` is `true` only if more than 300 posts fell in the eight weeks, and then the oldest weeks count low.
+
+The post count is private. The site shows it to the owner alone, and no public query returns it.
+
+With the script: `scripts/giveback capacity`.
 
 ### `GET /api/agent/watchlist`
 
@@ -565,7 +704,7 @@ Bearer `REFRESH_SECRET`. No body. A scheduler calls this; an agent rarely needs 
 
 Each call counts against Lakebed's limit of 1,000 writes a day, and one call handles 20 links. With up to 100 links on open items, a full refresh every 15 minutes uses at most 480 calls a day. Beyond that, lengthen the interval.
 
-It reads GitHub state for a batch of at most 20 links and stores it on each link: state (`open`, `closed`, `merged`), draft flag, merged and closed times, CI rollup, review decision, labels, head SHA, last activity time, the last comment or review by someone other than `Jacksondr5` that is not from a bot, and Macroscope's approvability verdict.
+It reads GitHub state for a batch of at most 20 links and stores it on each link: state (`open`, `closed`, `merged`), draft flag, merged and closed times, CI rollup, review decision, labels, head SHA, last activity time (the thread's `updatedAt`), when the `triage:closing` label was last applied (for a PR that carries it), the last comment or review by someone other than `Jacksondr5` that is not from a bot, and Macroscope's approvability verdict.
 
 It covers every link on an item that is not closed, `held` items included. A link on a closed item is read once and then left alone.
 
@@ -586,19 +725,24 @@ A link is read through its `repo`, `number` and `kind`, not its URL. A `comment`
 
 When `nextCursor` is not null, call `POST /api/refresh?cursor=<nextCursor>` for the next batch. `scripts/giveback refresh` does this.
 
-**The refresh never changes an item's stage.** When a link merges, closes, reopens, or (for our own open PR) begins failing CI, it records an event with actor `github` and sets the item's `upstreamChangedAt` and `upstreamChangeNote`. That marker means "something happened upstream that you have not acted on". Read it in the export, decide what the item's stage should be, and send `clearUpstreamChange: true` with your change.
+**The refresh never changes an item's stage.** When a link merges, closes, reopens, or (for our own open PR) begins failing CI or is put on a [closing clock](#closing-clocks), it records an event with actor `github` and sets the item's `upstreamChangedAt` and `upstreamChangeNote`. That marker means "something happened upstream that you have not acted on". Read it in the export, decide what the item's stage should be, and send `clearUpstreamChange: true` with your change.
 
 | Event type | When |
 |---|---|
 | `upstream_merged`, `upstream_closed`, `upstream_reopened` | A link with role `primary`, `fixes` or `related` changed state |
 | `dependency_merged`, `dependency_closed` | A link with role `base` or `covering` merged or closed |
 | `ci_failing` | CI went from not failing to failing on an open link with ownership `ours` |
+| `rebase_requested` | `needs-rebase` is on one of our open PRs and was not in the stored snapshot |
+| `closing_notice` | `triage:closing` is on one of our open PRs and was not in the stored snapshot |
+
+The two label events are recorded once: later refreshes say nothing while the label stays. If the label is removed and applied again, that is a new event. A PR read for the first time with the label already on it is reported too, because its clock is running. Neither is recorded for a PR that carries `triage:keep-open`, or in a repository with no [rules](#upstreams-pr-rules).
 
 If GitHub cannot be reached or answers with an error, the response is `502`, no snapshot is changed, and `nextCursor` repeats the cursor you sent so the batch can be retried. If GitHub answers but has nothing for one link, that link is listed in `failed`, keeps its old snapshot, and gets a `syncError`. The last error is stored in `syncState` and shown on the site.
 
 Limits of the snapshot:
 
 - "Last activity by someone else" looks at the latest 20 comments and the latest 20 reviews. If all of them are from Jackson or bots, the earlier stored value is kept.
+- The time of a closing notice is read from the PR's latest 20 label events, as upstream's own bot reads it. If the label is on the PR and its event is not among them, the site says the notice's time is not known.
 - The Macroscope verdict is read from the comment the `macroscopeapp` bot posts on a PR (`**Verdict:** ...`), looking at the PR's first four comments. It is null when there is no such comment.
 - `triageBucket` and `triageRank` are **not** refreshed. The T3 triage boards publish no readable data: their rankings are compiled into the page's script. An agent that reads a board sets these two fields through [`POST /api/agent/links`](#post-apiagentlinks), or with the rest of the link through `POST /api/agent/items`.
 
@@ -625,7 +769,17 @@ Labels are in `shared/enums.ts`.
 
 ### Waiting on
 
-`jackson`, `maintainer`, `ci`, `base_pr`, `covering_pr`, `giveback_agent`, `upstream_advance`, `nobody`
+`jackson`, `maintainer`, `ci`, `base_pr`, `covering_pr`, `pr_slot`, `giveback_agent`, `upstream_advance`, `nobody`
+
+`pr_slot`: the item's text is ready and our open PRs fill every slot upstream allows. See [PR slots](#pr-slots).
+
+### Change kind
+
+| Value | Meaning |
+|---|---|
+| `bug` | The product does not do what it already promises: a crash, a regression, a real performance problem |
+| `behaviour_change` | It changes how the product behaves. Upstream counts that as a feature, even when the PR calls it a fix. |
+| `feature` | It adds something the product does not do yet |
 
 ### Outcome
 
@@ -669,9 +823,11 @@ Labels are in `shared/enums.ts`.
 
 ### Event type
 
-`note`, `stage_changed`, `validated`, `route_decided`, `posted`, `ask_opened`, `ask_closed`, `review`, `upstream_merged`, `upstream_closed`, `upstream_reopened`, `ci_failing`, `dependency_merged`, `dependency_closed`, `follow_up`
+`note`, `stage_changed`, `validated`, `route_decided`, `posted`, `ask_opened`, `ask_closed`, `review`, `upstream_merged`, `upstream_closed`, `upstream_reopened`, `ci_failing`, `rebase_requested`, `closing_notice`, `dependency_merged`, `dependency_closed`, `follow_up`
 
-The server records `stage_changed`, `ask_opened`, `ask_closed` and the `upstream_*`, `dependency_*` and `ci_failing` types itself. You may also send any of them.
+The server records `stage_changed`, `ask_opened`, `ask_closed` and the `upstream_*`, `dependency_*`, `ci_failing`, `rebase_requested` and `closing_notice` types itself. You may also send any of them.
+
+`posted` is counted: every event of this type is one upstream post in [`GET /api/agent/capacity`](#get-apiagentcapacity). Send one for each PR, issue, comment or discussion posted upstream, and for nothing else.
 
 ### Follow-up state
 
@@ -694,6 +850,8 @@ The numbers are in `shared/limits.ts`.
 | Links per watch list response | 500 |
 | Links per refresh call | 20 |
 | Items in the dashboard | 350 |
+| Queue rank | 1 to 999 |
+| Queued items whose text approval is read | 10 |
 | Items numbered per `POST /api/agent/items/assign-numbers` | 100 by default, 350 at most |
 | Summary | 300 characters |
 | Event note | 280 characters |
