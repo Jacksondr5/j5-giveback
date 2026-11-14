@@ -15,7 +15,9 @@ import type {
   WaitingOn
 } from "../../shared/enums";
 import { itemIdOf } from "../../shared/itemId";
+import { closingClock, nextSweepAt, rulesFor, sweepTimeUtc, type ClosingClock, type TextApproval } from "../../shared/upstreamRules";
 import type { ListItem } from "./derive";
+import { formatCountdown, formatDateTime, formatDayMonth } from "./format";
 
 /**
  * The address of an item's page: its slug. An undisclosed item has no slug, so
@@ -243,6 +245,103 @@ export function macroscopeSignal(verdict: string): Signal {
 }
 
 // ---------------------------------------------------------------------------
+// Closing clocks
+// ---------------------------------------------------------------------------
+
+/** A clock in words: what it is and when, with the rule behind it for the tooltip. */
+export type ClockWords = { text: string; title: string; tone: Tone };
+
+/**
+ * What to say about the clock upstream's bot has running on one of our PRs.
+ * A running clock takes the tone of a failing check. One that was answered is
+ * no longer running, so it is quiet.
+ */
+export function clockWords(clock: ClosingClock, repo: string, now: number, locale?: string, timeZone?: string): ClockWords {
+  const rules = rulesFor(repo);
+  const sweep = rules ? `daily sweep (${sweepTimeUtc(rules)} UTC)` : "daily sweep";
+  const when = (at: number) => formatDateTime(at, locale, timeZone);
+  const next = rules ? ` The next one is ${when(nextSweepAt(rules, now))}.` : "";
+  switch (clock.kind) {
+    case "notice":
+      return clock.due
+        ? {
+            text: "Due to close at the next daily sweep unless answered",
+            title: `Its closing notice ran out ${when(clock.closesAt)}. Upstream closes it at its ${sweep} unless something happens on the PR first.${next}`,
+            tone: "closed"
+          }
+        : {
+            text: `Closes in ${formatCountdown(clock.closesAt - now)} unless answered`,
+            title: `Upstream gave this PR a closing notice. If nothing happens on the PR, the first ${sweep} after ${when(clock.closesAt)} closes it. Any activity sends it back for another look.`,
+            tone: "closed"
+          };
+    case "answered":
+      return {
+        text: "Notice answered, back for another look",
+        title: `Something happened on the PR after its closing notice of ${when(clock.noticeAt)}, so the next ${sweep} lifts the notice.`,
+        tone: "dim"
+      };
+    case "notice_unknown":
+      return {
+        text: "Closing notice, time not known",
+        title: "The PR carries upstream's closing label, and when it was applied could not be read. Check the PR on GitHub.",
+        tone: "closed"
+      };
+    case "rebase":
+      return clock.due
+        ? {
+            text: "Due to close at the next daily sweep unless rebased",
+            title: `Upstream asked for a rebase, and nothing has happened on the PR since. It has been closable since ${when(clock.closesAt)}: its ${sweep} closes it if it still conflicts.${next}`,
+            tone: "closed"
+          }
+        : {
+            text: `Closes after ${formatDayMonth(clock.closesAt, locale, timeZone)} unless rebased`,
+            title: `Upstream asked for a rebase. If the PR still conflicts and nothing happens on it, the first ${sweep} after ${when(clock.closesAt)} closes it. Any activity restarts the ${rules?.conflictIdleDays ?? 7} days.`,
+            tone: "closed"
+          };
+  }
+}
+
+/** True when a thread has anything to show under "checks": CI, a review, the review bot, a triage place, or a closing clock. */
+export function hasThreadSignals(link: LinkView, now: number): boolean {
+  return (
+    link.ci !== null ||
+    link.reviewDecision !== null ||
+    link.macroscopeVerdict !== null ||
+    link.triageBucket !== null ||
+    link.triageRank !== null ||
+    closingClock(link, now) !== null
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The queue for a PR slot
+// ---------------------------------------------------------------------------
+
+const TEXT_APPROVAL_WORDS: Record<TextApproval, string> = {
+  approved: "Text approved",
+  awaiting: "Text awaits approval",
+  none: "No text yet"
+};
+
+const TEXT_APPROVAL_HINTS: Record<TextApproval, string> = {
+  approved: "Jackson approved the text of the upstream post. It can go up when a slot is free.",
+  awaiting: "The text of the upstream post is written and waits for Jackson's approval.",
+  none: "No text for the upstream post has been put to Jackson yet."
+};
+
+export function textApprovalWords(text: TextApproval): { text: string; title: string } {
+  return { text: TEXT_APPROVAL_WORDS[text], title: TEXT_APPROVAL_HINTS[text] };
+}
+
+/** "2 of 3 in use, 1 free", or what to say when more PRs are open than upstream allows. */
+export function slotWords(open: number, limit: number): string {
+  if (open > limit) return `${open} open, ${open - limit} over the limit of ${limit}`;
+  if (open === 0) return `All ${limit} free`;
+  const free = limit - open;
+  return `${open} of ${limit} in use, ${free === 0 ? "none free" : `${free} free`}`;
+}
+
+// ---------------------------------------------------------------------------
 // Stages, waiting and outcomes
 // ---------------------------------------------------------------------------
 
@@ -274,6 +373,7 @@ const WAITING_WORDS: Record<WaitingOn, string> = {
   ci: "CI",
   base_pr: "its base PR",
   covering_pr: "a covering PR",
+  pr_slot: "a PR slot",
   giveback_agent: "the giveback agent",
   upstream_advance: "an upstream advance",
   nobody: "nobody"

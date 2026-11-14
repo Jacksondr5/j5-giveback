@@ -21,7 +21,7 @@ export const STAGE_DESCRIPTIONS: Record<Stage, string> = {
   found: "A candidate was recorded by a J5 agent.",
   validating: "Being checked against current upstream main and searched for duplicates.",
   deciding: "Validated and real. Needs a route from Jackson.",
-  held: "Valid, with nothing to offer yet. Waiting on someone else's upstream change.",
+  held: "Valid, with nothing to offer yet. Waiting on someone else's upstream change, or on a free PR slot.",
   preparing: "Route chosen. Branch, tests, evidence and post text are being produced.",
   approving: "The exact text of the upstream post is ready for Jackson's approval.",
   offered: "Posted upstream and being babysat.",
@@ -45,6 +45,7 @@ export const WAITING_ON = [
   "ci",
   "base_pr",
   "covering_pr",
+  "pr_slot",
   "giveback_agent",
   "upstream_advance",
   "nobody"
@@ -56,6 +57,7 @@ export const WAITING_ON_LABELS: Record<WaitingOn, string> = {
   ci: "CI",
   base_pr: "Base PR",
   covering_pr: "Covering PR",
+  pr_slot: "A PR slot",
   giveback_agent: "Giveback agent",
   upstream_advance: "Upstream advance",
   nobody: "Nobody"
@@ -83,6 +85,21 @@ export const OUTCOME_LABELS: Record<Outcome, string> = {
   parked: "Parked",
   dropped: "Dropped",
   closed_by_upstream: "Closed by upstream"
+};
+
+// What kind of change an item is, under upstream's own test: a PR must fix a bug,
+// and a change to how the product behaves is a feature, even when the PR calls it a fix.
+export const CHANGE_KINDS = ["bug", "behaviour_change", "feature"] as const;
+export type ChangeKind = (typeof CHANGE_KINDS)[number];
+export const CHANGE_KIND_LABELS: Record<ChangeKind, string> = {
+  bug: "Bug",
+  behaviour_change: "Behaviour change",
+  feature: "Feature"
+};
+export const CHANGE_KIND_DESCRIPTIONS: Record<ChangeKind, string> = {
+  bug: "The product does not do what it already promises: a crash, a regression or a real performance problem.",
+  behaviour_change: "It changes how the product behaves. Upstream counts that as a feature, even when the PR calls it a fix.",
+  feature: "It adds something the product does not do yet."
 };
 
 export const LINK_KINDS = ["pr", "issue", "comment", "discussion"] as const;
@@ -156,6 +173,8 @@ export const EVENT_TYPES = [
   "upstream_closed",
   "upstream_reopened",
   "ci_failing",
+  "rebase_requested",
+  "closing_notice",
   "dependency_merged",
   "dependency_closed",
   "follow_up"
@@ -174,6 +193,8 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   upstream_closed: "Closed upstream",
   upstream_reopened: "Reopened upstream",
   ci_failing: "CI failing",
+  rebase_requested: "Rebase requested upstream",
+  closing_notice: "Closing notice upstream",
   dependency_merged: "Base or covering link merged",
   dependency_closed: "Base or covering link closed",
   follow_up: "J5 follow-up"

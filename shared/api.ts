@@ -3,6 +3,7 @@
 
 import type {
   AskKind,
+  ChangeKind,
   EventActor,
   EventType,
   FollowUpState,
@@ -17,6 +18,7 @@ import type {
   Stage,
   WaitingOn
 } from "./enums";
+import type { ClosingClock, TextApproval } from "./upstreamRules";
 
 // ---------------------------------------------------------------------------
 // Agent endpoint requests
@@ -78,6 +80,13 @@ export type ItemInput = {
   followUpState?: FollowUpState;
   followUpNote?: string | null;
   isPublic?: boolean;
+  /**
+   * The item's place in the queue for a PR slot: a whole number from 1 to 999, lower first. `null` clears it.
+   * Allowed only while `waitingOn` is "pr_slot" and the item is not closed; the server clears it otherwise.
+   */
+  queueRank?: number | null;
+  /** The verdict under upstream's test: a change to how the product behaves is a feature. `null` clears it. */
+  changeKind?: ChangeKind | null;
   /** Defaults to now when the stage becomes "closed". */
   closedAt?: TimeInput | null;
   /** Public note for the stage-change event this request causes, if it causes one. */
@@ -256,6 +265,84 @@ export type WatchlistResponse = {
   nextCursor: string | null;
 };
 
+/** One of our open PRs, in `GET /api/agent/capacity`. It fills one slot. */
+export type CapacitySlot = {
+  url: string;
+  repo: string;
+  number: number;
+  /** The PR's title on GitHub. Null until the first refresh. */
+  title: string | null;
+  itemSlug: string;
+  itemNumber: number | null;
+  itemShortId: string | null;
+  itemTitle: string;
+  itemIsPublic: boolean;
+  /** "open", or null when GitHub has not been read for the link yet. */
+  ghState: GhState | null;
+  isDraft: boolean | null;
+  /** When the PR was opened on GitHub. */
+  createdAt: number | null;
+  ci: GhCi | null;
+  labels: string[];
+  lastActivityAt: number | null;
+  /** The clock upstream's bot has running on the PR, at `generatedAt`. Null when there is none. */
+  closingClock: ClosingClock | null;
+  syncedAt: number | null;
+};
+
+/** One item waiting for a PR slot, in `GET /api/agent/capacity`. */
+export type CapacityQueueEntry = {
+  /** 1 for the item that goes next. */
+  position: number;
+  itemSlug: string;
+  itemNumber: number | null;
+  itemShortId: string | null;
+  itemTitle: string;
+  itemIsPublic: boolean;
+  itemStage: Stage;
+  /** The rank the dispatcher set, or null when it set none. */
+  queueRank: number | null;
+  waitingSince: number;
+  /** Whether Jackson approved the text. Null past the first entries, whose asks are not read. */
+  text: TextApproval | null;
+  changeKind: ChangeKind | null;
+};
+
+export type CapacityRepo = {
+  repo: string;
+  /** Open PRs upstream allows us. */
+  limit: number;
+  /** How many of our PRs are open: `slots.length`. */
+  open: number;
+  /** Slots still free: the limit less `open`, never below 0. */
+  free: number;
+  /** Oldest PR first. */
+  slots: CapacitySlot[];
+  /** In queue order. */
+  queue: CapacityQueueEntry[];
+};
+
+/** Upstream posts counted from events of type "posted", on every item, public or not. */
+export type PostCountsView = {
+  /** Posts in the 7 days up to `generatedAt`. */
+  last7Days: number;
+  /** The last eight weeks, oldest first. A week starts on Monday 00:00 UTC. The last entry is the current week. */
+  weeks: { start: number; count: number }[];
+  /** A weekly cap on posts. None is set, so this is null. */
+  cap: number | null;
+  /** True when more posts fell in the window than one read takes. The oldest weeks then count low. */
+  incomplete: boolean;
+};
+
+/** `GET /api/agent/capacity`: whether a PR slot is free, who is next, and how much was posted lately. */
+export type CapacityResponse = {
+  ok: true;
+  generatedAt: number;
+  /** One entry per repository that has rules, whether or not anything of ours is there. */
+  repos: CapacityRepo[];
+  posts: PostCountsView;
+};
+
 export const EXPORT_TABLES = ["items", "links", "asks", "events", "itemPrivate", "askPrivate", "syncState"] as const;
 export type ExportTable = (typeof EXPORT_TABLES)[number];
 
@@ -316,7 +403,10 @@ export type LinkView = {
   headSha: string | null;
   /** Macroscope's approvability verdict, read from its PR comment. */
   macroscopeVerdict: string | null;
+  /** The thread's "updated" time on GitHub: any push, comment, review or label moves it. */
   lastActivityAt: number | null;
+  /** When upstream's closing label was last applied. Null unless the PR carries it now. */
+  closingNoticeAt: number | null;
   /** Last comment or review by someone other than the fork owner, bots excluded. */
   lastOtherActivityAt: number | null;
   lastOtherActivityBy: string | null;
@@ -360,7 +450,11 @@ export type ItemView = {
   validationVerdict: string | null;
   followUpState: FollowUpState | null;
   followUpNote: string | null;
-  /** Set by the refresh when a link merged, closed, reopened or began failing CI. The agent clears it. */
+  /** Bug, behaviour change or feature. Null when no verdict is recorded. */
+  changeKind: ChangeKind | null;
+  /** The item's place in the queue for a PR slot, as the dispatcher set it. */
+  queueRank: number | null;
+  /** Set by the refresh when a link merged, closed, reopened, began failing CI, or was put on a closing clock. The agent clears it. */
   upstreamChangedAt: number | null;
   upstreamChangeNote: string | null;
   /** The link with role "primary", if any. */
@@ -425,6 +519,35 @@ export type StatsView = {
   upstreamChanged: number;
 };
 
+/** One of our open PRs. It fills one slot. */
+export type PrSlotView = {
+  /** Null when the PR sits on an item the caller may not see: the slot is filled, and nothing is said about the PR. */
+  link: LinkView | null;
+  item: ItemRef;
+};
+
+/** One item waiting for a PR slot. */
+export type QueueEntryView = {
+  /** 1 for the item that goes next. */
+  position: number;
+  item: ItemRef;
+  /** Whether Jackson approved its text. Null for an undisclosed item, and past the first entries, whose asks are not read. */
+  text: TextApproval | null;
+};
+
+/** The PR slots of one repository that has rules. */
+export type RepoSlotsView = {
+  repo: string;
+  /** Open PRs upstream allows us. */
+  limit: number;
+  /** Our open PRs, oldest first. More than `limit` when we are over it. */
+  slots: PrSlotView[];
+  /** Slots still free: the limit less the open PRs, never below 0. */
+  free: number;
+  /** Items waiting for a slot, in order. */
+  queue: QueueEntryView[];
+};
+
 export type OverviewView = {
   generatedAt: number;
   stats: StatsView;
@@ -436,6 +559,8 @@ export type OverviewView = {
   outcomes: { outcome: Outcome; count: number }[];
   /** Oldest first. */
   openAsks: AskView[];
+  /** One entry per repository with rules that has an item of ours in progress. Empty when none has. */
+  prSlots: RepoSlotsView[];
   sync: SyncView;
 };
 

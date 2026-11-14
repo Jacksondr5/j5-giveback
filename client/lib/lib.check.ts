@@ -6,7 +6,31 @@
 // It prints one line per group and throws on the first failure.
 
 import type { ItemView, LinkView, SyncView } from "../../shared/api";
-import { MAIN_PATH_STAGES, STAGES, STAGE_DESCRIPTIONS, STAGE_LABELS } from "../../shared/enums";
+import {
+  CHANGE_KINDS,
+  CHANGE_KIND_DESCRIPTIONS,
+  CHANGE_KIND_LABELS,
+  MAIN_PATH_STAGES,
+  STAGES,
+  STAGE_DESCRIPTIONS,
+  STAGE_LABELS,
+  WAITING_ON,
+  WAITING_ON_LABELS
+} from "../../shared/enums";
+import {
+  POST_WEEKS,
+  RULES_REPOS,
+  closingClock,
+  countPosts,
+  fillsSlot,
+  nextSweepAt,
+  postsWindowStart,
+  queueOrder,
+  rulesFor,
+  sweepTimeUtc,
+  textApproval,
+  weekStartUtc
+} from "../../shared/upstreamRules";
 import {
   candidates,
   dependencyLinks,
@@ -26,18 +50,22 @@ import {
 } from "./derive";
 import { ITEM_ID_PREFIX, formatItemId, isItemNumber, itemIdOf, parseItemId } from "../../shared/itemId";
 import { applyFilters, filtersToSearch, hasFilters, itemsHref, parseFilters, searchedNumber } from "./filters";
-import { DAY, HOUR, MINUTE, WEEK, YEAR, formatAgo, formatSpan, originRefUrl, shortRef } from "./format";
+import { DAY, HOUR, MINUTE, WEEK, YEAR, formatAgo, formatCountdown, formatDayMonth, formatSpan, originRefUrl, shortRef } from "./format";
 import {
   askAction,
   ciSignal,
+  clockWords,
   commentHost,
   groupByStage,
+  hasThreadSignals,
   itemPath,
   listThreads,
   macroscopeSignal,
   outcomeMark,
   roleWord,
+  slotWords,
   stageCounts,
+  textApprovalWords,
   threadName,
   threadSide,
   threadState
@@ -72,6 +100,7 @@ function link(patch: Partial<LinkView> = {}): LinkView {
     headSha: null,
     macroscopeVerdict: null,
     lastActivityAt: null,
+    closingNoticeAt: null,
     lastOtherActivityAt: null,
     lastOtherActivityBy: null,
     triageBucket: null,
@@ -106,6 +135,8 @@ function item(id: string, patch: Partial<ItemView> = {}): ListItem {
     validationVerdict: null,
     followUpState: "none",
     followUpNote: null,
+    changeKind: null,
+    queueRank: null,
     upstreamChangedAt: null,
     upstreamChangeNote: null,
     primaryLink: null,
@@ -330,13 +361,13 @@ console.log("ok  sync state");
 const parsed = parseFilters("?stage=offered&waiting=jackson&outcome=merged&repo=expo%2Fexpo-device-hub&q=stream+closes");
 equal(
   parsed,
-  { stage: "offered", waiting: "jackson", outcome: "merged", repo: "expo/expo-device-hub", q: "stream closes", all: false },
+  { stage: "offered", waiting: "jackson", outcome: "merged", kind: null, repo: "expo/expo-device-hub", q: "stream closes", all: false },
   "parse"
 );
 equal(parseFilters(filtersToSearch(parsed)), parsed, "round trip");
 equal(
   parseFilters("?stage=bogus&waiting=&outcome=nope"),
-  { stage: null, waiting: null, outcome: null, repo: null, q: "", all: false },
+  { stage: null, waiting: null, outcome: null, kind: null, repo: null, q: "", all: false },
   "unknown values"
 );
 equal(itemsHref({ stage: "deciding" }), "/items?stage=deciding", "stage link");
@@ -504,5 +535,220 @@ const staged = [item("o1"), item("o2"), item("d1", { stage: "deciding" }), item(
 equal(groupByStage(staged).map((group) => [group.stage, ids(group.items)]), [["offered", ["o1", "o2"]], ["deciding", ["d1"]], ["offered", ["o3"]]], "consecutive groups");
 equal([...stageCounts(staged)], [["offered", 3], ["deciding", 1]], "stage counts");
 console.log("ok  presentation");
+
+// --- Upstream rules: slots, closing clocks, the queue, posts per week --------------------------
+
+const T3 = "pingdotgg/t3code";
+const rules = rulesFor(T3);
+if (!rules) throw new Error("pingdotgg/t3code has no rules");
+equal(RULES_REPOS, [T3], "the one repository with rules");
+equal([rules.openPrLimit, rules.conflictIdleDays, rules.noticeHours], [3, 7, 72], "limit, idle days, notice hours");
+equal([rules.rebaseLabel, rules.closingLabel, rules.keepOpenLabel], ["needs-rebase", "triage:closing", "triage:keep-open"], "label names");
+equal(rulesFor("PingDotGG/T3Code") === rules, true, "repository names are not case-sensitive");
+equal(rulesFor("expo/expo-device-hub"), null, "a repository outside the map has no rules");
+equal(rulesFor(null), null, "no repository, no rules");
+equal(sweepTimeUtc(rules), "05:23", "the sweep time");
+
+// A slot is one of our PRs that is open, or not yet read.
+equal(fillsSlot({ kind: "pr", ownership: "ours", state: "open" }), true, "our open PR fills a slot");
+equal(fillsSlot({ kind: "pr", ownership: "ours", state: null }), true, "our PR not yet synced fills a slot");
+equal(fillsSlot({ kind: "pr", ownership: "ours", state: "merged" }), false, "a merged PR frees its slot");
+equal(fillsSlot({ kind: "pr", ownership: "ours", state: "closed" }), false, "a closed PR frees its slot");
+equal(fillsSlot({ kind: "pr", ownership: "theirs", state: "open" }), false, "their PR is not ours to count");
+equal(fillsSlot({ kind: "issue", ownership: "ours", state: "open" }), false, "an issue is not a PR");
+equal(fillsSlot({ kind: "comment", ownership: "ours", state: "open" }), false, "a comment is not a PR");
+
+// The clock. NOW is 11 Nov 2026 12:00 UTC.
+const labelled = (labels: string[], patch: Partial<LinkView> = {}) => link({ labels, lastActivityAt: NOW - 2 * DAY, ...patch });
+equal(closingClock(labelled([]), NOW), null, "no label, no clock");
+equal(closingClock(labelled(["size:M", "vouch:unvouched"]), NOW), null, "other labels start nothing");
+equal(
+  closingClock(labelled(["needs-rebase"]), NOW),
+  { kind: "rebase", closesAt: NOW + 5 * DAY, due: false },
+  "a rebase request closes 7 days after the last activity"
+);
+equal(
+  closingClock(labelled(["needs-rebase"], { lastActivityAt: NOW - 7 * DAY }), NOW),
+  { kind: "rebase", closesAt: NOW, due: true },
+  "it is due at 7 days to the millisecond, as upstream counts it"
+);
+equal(closingClock(labelled(["needs-rebase"], { lastActivityAt: NOW - 7 * DAY + 1 }), NOW)?.kind === "rebase", true, "one millisecond short");
+equal(
+  (closingClock(labelled(["needs-rebase"], { lastActivityAt: NOW - 7 * DAY + 1 }), NOW) as { due: boolean }).due,
+  false,
+  "one millisecond short is not due"
+);
+equal(closingClock(labelled(["needs-rebase"], { lastActivityAt: null }), NOW), null, "no activity time, nothing to count from");
+// Only an open PR of ours in a repository with rules.
+equal(closingClock(labelled(["needs-rebase"], { ownership: "theirs" }), NOW), null, "their PR has no clock here");
+equal(closingClock(labelled(["needs-rebase"], { state: "closed" }), NOW), null, "a closed PR has no clock");
+equal(closingClock(labelled(["needs-rebase"], { state: "merged" }), NOW), null, "a merged PR has no clock");
+equal(closingClock(labelled(["needs-rebase"], { state: null }), NOW), null, "an unsynced link has no clock");
+equal(closingClock(labelled(["needs-rebase"], { kind: "issue" }), NOW), null, "an issue has no clock");
+equal(closingClock(labelled(["needs-rebase"], { repo: "expo/expo-device-hub" }), NOW), null, "no rules, no clock");
+// Keep-open stops both.
+equal(closingClock(labelled(["needs-rebase", "triage:keep-open"]), NOW), null, "keep-open stops the rebase clock");
+equal(
+  closingClock(labelled(["triage:closing", "triage:keep-open"], { closingNoticeAt: NOW - DAY, lastActivityAt: NOW - DAY }), NOW),
+  null,
+  "keep-open stops the notice"
+);
+// The notice: 72 hours from when the label was applied.
+const noticed = (patch: Partial<LinkView> = {}) =>
+  labelled(["triage:closing"], { closingNoticeAt: NOW - 31 * HOUR, lastActivityAt: NOW - 31 * HOUR + 2000, ...patch });
+equal(closingClock(noticed(), NOW), { kind: "notice", closesAt: NOW + 41 * HOUR, due: false }, "a notice closes 72 hours after it");
+equal(
+  closingClock(noticed({ lastActivityAt: NOW - 31 * HOUR + 15_000 }), NOW)?.kind,
+  "notice",
+  "15 seconds after the notice is the notice itself"
+);
+equal(
+  closingClock(noticed({ lastActivityAt: NOW - 31 * HOUR + 15_001 }), NOW),
+  { kind: "answered", noticeAt: NOW - 31 * HOUR },
+  "activity more than 15 seconds after the notice answers it"
+);
+equal(closingClock(noticed({ lastActivityAt: null }), NOW)?.kind, "notice", "no activity time is no answer");
+equal(
+  closingClock(noticed({ closingNoticeAt: NOW - 72 * HOUR, lastActivityAt: NOW - 72 * HOUR }), NOW),
+  { kind: "notice", closesAt: NOW, due: true },
+  "due at 72 hours"
+);
+equal(
+  closingClock(noticed({ closingNoticeAt: NOW - 100 * HOUR, lastActivityAt: NOW - HOUR }), NOW)?.kind,
+  "answered",
+  "an answer counts even past the 72 hours: the next sweep lifts the notice"
+);
+equal(closingClock(noticed({ closingNoticeAt: null }), NOW), { kind: "notice_unknown" }, "a notice whose time was not read");
+// The notice outranks the rebase.
+equal(
+  closingClock(labelled(["needs-rebase", "triage:closing"], { closingNoticeAt: NOW - HOUR, lastActivityAt: NOW - HOUR }), NOW),
+  { kind: "notice", closesAt: NOW + 71 * HOUR, due: false },
+  "with both labels the notice is the clock"
+);
+equal(
+  closingClock(labelled(["needs-rebase", "triage:closing"], { closingNoticeAt: NOW - 3 * DAY, lastActivityAt: NOW - DAY }), NOW)?.kind,
+  "answered",
+  "an answered notice still outranks the rebase"
+);
+equal(
+  closingClock(labelled(["needs-rebase", "triage:closing"], { closingNoticeAt: null }), NOW)?.kind,
+  "notice_unknown",
+  "a notice of unknown time does not fall back to the rebase clock"
+);
+
+// The sweep: daily at 05:23 UTC.
+equal(nextSweepAt(rules, Date.UTC(2026, 10, 11, 5, 22, 59)), Date.UTC(2026, 10, 11, 5, 23), "a sweep later the same day");
+equal(nextSweepAt(rules, Date.UTC(2026, 10, 11, 5, 23)), Date.UTC(2026, 10, 11, 5, 23), "at the sweep itself");
+equal(nextSweepAt(rules, NOW), Date.UTC(2026, 10, 12, 5, 23), "after today's sweep, tomorrow's");
+
+// The clock in words.
+const say = (clock: ReturnType<typeof closingClock>) => {
+  if (!clock) throw new Error("expected a clock");
+  return clockWords(clock, T3, NOW, "en-GB", "UTC");
+};
+equal(say(closingClock(noticed(), NOW)).text, "Closes in 41 h unless answered", "a running notice");
+equal(say(closingClock(noticed(), NOW)).tone, "closed", "a running clock has the tone of a failing check");
+const noticedAt = (at: number) => noticed({ closingNoticeAt: at, lastActivityAt: at + 1000 });
+equal(say(closingClock(noticedAt(NOW - 71 * HOUR - 30 * MINUTE), NOW)).text, "Closes in 30 min unless answered", "minutes left");
+equal(say(closingClock(noticedAt(NOW - HOUR - 1), NOW)).text, "Closes in 70 h unless answered", "hours left round down");
+equal(formatCountdown(30 * 1000), "<1 min", "under a minute left");
+equal(formatCountdown(4 * DAY - 1), "95 h", "hours up to four days");
+equal(formatCountdown(4 * DAY), "4 d", "days from four");
+equal(
+  say(closingClock(noticed({ closingNoticeAt: NOW - 80 * HOUR, lastActivityAt: NOW - 80 * HOUR }), NOW)).text,
+  "Due to close at the next daily sweep unless answered",
+  "a notice past its deadline"
+);
+equal(
+  say(closingClock(noticed({ closingNoticeAt: NOW - 80 * HOUR, lastActivityAt: NOW - 80 * HOUR }), NOW)).title.includes("12 Nov 2026, 05:23"),
+  true,
+  "the tooltip names the next sweep"
+);
+equal(say(closingClock(noticed({ lastActivityAt: NOW - HOUR }), NOW)).text, "Notice answered, back for another look", "an answered notice");
+equal(say(closingClock(noticed({ lastActivityAt: NOW - HOUR }), NOW)).tone, "dim", "an answered notice is quiet");
+equal(say(closingClock(noticed({ closingNoticeAt: null }), NOW)).text, "Closing notice, time not known", "a notice of unknown time");
+equal(
+  say(closingClock(labelled(["needs-rebase"], { lastActivityAt: Date.UTC(2026, 10, 14, 5, 33) }), Date.UTC(2026, 10, 14, 12))).text,
+  "Closes after 21 Nov unless rebased",
+  "a rebase request names the day"
+);
+equal(
+  say(closingClock(labelled(["needs-rebase"], { lastActivityAt: NOW - 8 * DAY }), NOW)).text,
+  "Due to close at the next daily sweep unless rebased",
+  "a rebase request past its deadline"
+);
+equal(formatDayMonth(Date.UTC(2026, 10, 21, 5, 33), "en-GB", "UTC"), "21 Nov", "day and month");
+equal(hasThreadSignals(link(), NOW), false, "a bare thread has no signals");
+equal(hasThreadSignals(labelled(["needs-rebase"]), NOW), true, "a clock is a signal");
+equal(hasThreadSignals(link({ ci: "success" }), NOW), true, "CI is a signal");
+
+// The queue for a slot: ranked first in rank order, then unranked, longest-waiting first.
+const queued = (id: string, queueRank: number | null, waitingSince: number) => ({ id, queueRank, waitingSince });
+equal(
+  ids(queueOrder([queued("late", null, NOW), queued("three", 3, NOW - DAY), queued("early", null, NOW - DAY), queued("one", 1, NOW)])),
+  ["one", "three", "early", "late"],
+  "queue order"
+);
+equal(ids(queueOrder([queued("b", 2, NOW), queued("a", 2, NOW - DAY)])), ["a", "b"], "equal ranks: the longest-waiting first");
+equal(queueOrder([]), [], "an empty queue");
+
+// Text approved: the newest text-approval ask decides.
+const textAsk = (openedAt: number, isOpen: boolean, kind = "text_approval") => ({ kind, openedAt, isOpen });
+equal(textApproval([]), "none", "no asks, no text yet");
+equal(textApproval([textAsk(NOW, true, "route_decision"), textAsk(NOW, false, "open_on_nod")]), "none", "other kinds do not count");
+equal(textApproval([textAsk(NOW - DAY, false)]), "approved", "a closed text approval is an approval");
+equal(textApproval([textAsk(NOW - DAY, true)]), "awaiting", "an open one awaits approval");
+equal(textApproval([textAsk(NOW - 2 * DAY, false), textAsk(NOW - DAY, true)]), "awaiting", "a newer open ask outranks an older approval");
+equal(textApproval([textAsk(NOW - DAY, false), textAsk(NOW - 2 * DAY, true)]), "approved", "a newer approval outranks an older open ask");
+equal(textApprovalWords("approved").text, "Text approved", "approved, in words");
+equal(textApprovalWords("awaiting").text, "Text awaits approval", "awaiting, in words");
+equal(textApprovalWords("none").text, "No text yet", "none, in words");
+
+equal(slotWords(0, 3), "All 3 free", "no slot in use");
+equal(slotWords(2, 3), "2 of 3 in use, 1 free", "one free");
+equal(slotWords(3, 3), "3 of 3 in use, none free", "full");
+equal(slotWords(5, 3), "5 open, 2 over the limit of 3", "over the limit");
+
+// Waiting on a PR slot, and the kinds of change.
+equal(WAITING_ON.includes("pr_slot"), true, "pr_slot is something an item can wait on");
+equal(WAITING_ON_LABELS.pr_slot, "A PR slot", "its label");
+equal(CHANGE_KINDS, ["bug", "behaviour_change", "feature"], "the kinds of change");
+equal(CHANGE_KINDS.map((kind) => CHANGE_KIND_LABELS[kind]), ["Bug", "Behaviour change", "Feature"], "their labels");
+equal(CHANGE_KINDS.every((kind) => CHANGE_KIND_DESCRIPTIONS[kind].length > 0), true, "each kind is described");
+equal(parseFilters("?kind=feature").kind, "feature", "the kind filter is read");
+equal(parseFilters("?kind=nonsense").kind, null, "an unknown kind is ignored");
+equal(filtersToSearch({ ...parseFilters(""), kind: "behaviour_change" }), "?kind=behaviour_change", "the kind filter is written");
+const kinded = [item("bug", { changeKind: "bug" }), item("feat", { changeKind: "feature" }), item("none")];
+equal(ids(applyFilters(kinded, parseFilters("?kind=bug"))), ["bug"], "filter by kind");
+equal(ids(applyFilters(kinded, parseFilters(""))), ["bug", "feat", "none"], "no kind filter keeps items with no verdict");
+
+// Posts per week. Weeks start on Monday 00:00 UTC. NOW is a Wednesday.
+const MONDAY = Date.UTC(2026, 10, 9);
+equal(weekStartUtc(NOW), MONDAY, "Wednesday belongs to the week of its Monday");
+equal(weekStartUtc(MONDAY), MONDAY, "Monday 00:00 starts its own week");
+equal(weekStartUtc(MONDAY - 1), MONDAY - WEEK, "Sunday 23:59:59.999 belongs to the week before");
+equal(weekStartUtc(Date.UTC(1970, 0, 1)), Date.UTC(1969, 11, 29), "the first Thursday of the epoch");
+equal(postsWindowStart(NOW), MONDAY - 7 * WEEK, "eight weeks, the current one included");
+const posts = countPosts(
+  [
+    NOW, // now: this week, and in the last 7 days
+    MONDAY, // the first moment of this week
+    MONDAY - 1, // last week, and in the last 7 days
+    NOW - WEEK, // exactly 7 days ago: outside the last 7 days
+    NOW - WEEK + 1, // inside them
+    MONDAY - 7 * WEEK, // the first moment of the window
+    MONDAY - 7 * WEEK - 1, // before it
+    NOW + 1 // ahead of the clock
+  ],
+  NOW
+);
+equal(posts.weeks.length, POST_WEEKS, "one entry per week");
+equal(posts.weeks.map((week) => week.count), [1, 0, 0, 0, 0, 0, 3, 2], "posts counted into their weeks");
+equal(posts.weeks.map((week) => week.start)[7], MONDAY, "the last week is the current one");
+equal(posts.weeks.map((week) => week.start)[0], MONDAY - 7 * WEEK, "the first is seven weeks before it");
+equal(posts.last7Days, 4, "the last 7 days, the boundary excluded");
+equal(countPosts([], NOW).last7Days, 0, "no posts");
+equal(countPosts([], NOW).weeks.every((week) => week.count === 0), true, "no posts in any week");
+console.log("ok  upstream rules");
 
 console.log("all checks passed");

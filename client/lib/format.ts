@@ -25,6 +25,18 @@ export function formatSpan(ms: number): string {
   return `${Math.floor(ms / YEAR)} yr`;
 }
 
+/**
+ * The time left on a clock that runs for a few days: "25 min", "41 h", and days
+ * only past four of them. A 72-hour notice is counted in hours, as it was given.
+ * Rounds down, so the time left is never overstated.
+ */
+export function formatCountdown(ms: number): string {
+  if (!Number.isFinite(ms) || ms < MINUTE) return "<1 min";
+  if (ms < HOUR) return `${Math.floor(ms / MINUTE)} min`;
+  if (ms < 4 * DAY) return `${Math.floor(ms / HOUR)} h`;
+  return `${Math.floor(ms / DAY)} d`;
+}
+
 /** The time from `at` until `now`, as `formatSpan` reads it. */
 export function formatAge(at: number, now: number): string {
   return formatSpan(now - at);
@@ -38,6 +50,11 @@ export function formatAgo(at: number, now: number): string {
 /** A calendar date in the viewer's locale, such as "7 Nov 2026". */
 export function formatDate(at: number, locale?: string, timeZone?: string): string {
   return new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric", timeZone }).format(at);
+}
+
+/** A day with no year, such as "21 Nov": for a date that is days away. */
+export function formatDayMonth(at: number, locale?: string, timeZone?: string): string {
+  return new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", timeZone }).format(at);
 }
 
 /** The exact moment in the viewer's locale, for `title` attributes. */

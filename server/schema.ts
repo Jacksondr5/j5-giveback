@@ -36,7 +36,12 @@ export const schema = {
     agentUpdatedAt: number(),
     // "State changed upstream" marker. Raised by the refresh, cleared by the agent.
     upstreamChangedAt: number().optional(),
-    upstreamChangeNote: string().optional()
+    upstreamChangeNote: string().optional(),
+    // The item's place in the queue for a PR slot, 1 to 999, lower first. Set by the dispatcher agent.
+    // Kept only while the item waits on "pr_slot" and is not closed.
+    queueRank: number().optional(),
+    // "bug", "behaviour_change" or "feature": the verdict under upstream's own test.
+    changeKind: string().optional()
   })
     .index("by_slug", ["slug"])
     // Finds an item by its number. Read in descending order, its first row carries the highest number in use.
@@ -69,7 +74,10 @@ export const schema = {
     // One label per line.
     ghLabels: string().optional(),
     ghHeadSha: string().optional(),
+    // The PR's "updated" time on GitHub. Any push, comment, review or label moves it.
     ghLastActivityAt: number().optional(),
+    // When upstream's closing label was last applied. Set only while the PR carries that label.
+    ghClosingNoticeAt: number().optional(),
     ghOtherActivityAt: number().optional(),
     ghOtherActivityBy: string().optional(),
     macroscopeVerdict: string().optional(),
@@ -80,6 +88,8 @@ export const schema = {
     .index("by_sync_due", ["syncDue"])
     .index("by_role", ["role"])
     .index("by_role_active", ["role", "active"])
+    // Our PRs on items that are not closed: the ones that can fill a PR slot.
+    .index("by_ownership_kind_active", ["ownership", "kind", "active"])
     // A URL can sit on more than one item. POST /api/agent/links finds every copy through this.
     .index("by_url", ["url"]),
 
@@ -109,7 +119,9 @@ export const schema = {
   })
     .index("by_key", ["key"])
     .index("by_item", ["itemId", "at"])
-    .index("by_item_public", ["itemId", "isPublic", "at"]),
+    .index("by_item_public", ["itemId", "isPublic", "at"])
+    // Events of one type in time order, across all items: the upstream posts of the last weeks.
+    .index("by_type_at", ["type", "at"]),
 
   itemPrivate: table({
     itemId: id("items"),

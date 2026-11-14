@@ -2,10 +2,12 @@
 // Pure: takes and returns strings, so links and reloads restore the same view.
 
 import {
+  CHANGE_KINDS,
   OUTCOMES,
   STAGES,
   WAITING_ON,
   isOneOf,
+  type ChangeKind,
   type Outcome,
   type Stage,
   type WaitingOn
@@ -18,6 +20,8 @@ export type ItemFilters = {
   stage: Stage | null;
   waiting: WaitingOn | null;
   outcome: Outcome | null;
+  /** Bug, behaviour change or feature. An item with no verdict matches none of them. */
+  kind: ChangeKind | null;
   repo: string | null;
   /** Free text, matched against the item's ID, title, slug and upstream ref. */
   q: string;
@@ -25,7 +29,7 @@ export type ItemFilters = {
   all: boolean;
 };
 
-export const NO_FILTERS: ItemFilters = { stage: null, waiting: null, outcome: null, repo: null, q: "", all: false };
+export const NO_FILTERS: ItemFilters = { stage: null, waiting: null, outcome: null, kind: null, repo: null, q: "", all: false };
 
 const MAX_QUERY_LENGTH = 100;
 
@@ -35,11 +39,13 @@ export function parseFilters(search: string): ItemFilters {
   const stage = params.get("stage");
   const waiting = params.get("waiting");
   const outcome = params.get("outcome");
+  const kind = params.get("kind");
   const repo = params.get("repo");
   return {
     stage: isOneOf(STAGES, stage) ? stage : null,
     waiting: isOneOf(WAITING_ON, waiting) ? waiting : null,
     outcome: isOneOf(OUTCOMES, outcome) ? outcome : null,
+    kind: isOneOf(CHANGE_KINDS, kind) ? kind : null,
     repo: repo && repo.length <= 100 ? repo : null,
     q: (params.get("q") ?? "").slice(0, MAX_QUERY_LENGTH),
     all: params.get("all") === "1"
@@ -52,6 +58,7 @@ export function filtersToSearch(filters: ItemFilters): string {
   if (filters.stage) params.set("stage", filters.stage);
   if (filters.waiting) params.set("waiting", filters.waiting);
   if (filters.outcome) params.set("outcome", filters.outcome);
+  if (filters.kind) params.set("kind", filters.kind);
   if (filters.repo) params.set("repo", filters.repo);
   if (filters.q.trim()) params.set("q", filters.q);
   if (filters.all) params.set("all", "1");
@@ -114,6 +121,7 @@ export function matchesFilters(item: ListItem, filters: ItemFilters): boolean {
   if (filters.stage && item.stage !== filters.stage) return false;
   if (filters.waiting && item.waitingOn !== filters.waiting) return false;
   if (filters.outcome && item.outcome !== filters.outcome) return false;
+  if (filters.kind && item.changeKind !== filters.kind) return false;
   if (filters.repo && item.targetRepo !== filters.repo) return false;
   const words = filters.q.toLowerCase().split(/\s+/).filter((word) => word.length > 0);
   if (words.length === 0) return true;

@@ -146,6 +146,8 @@ type ItemState = {
   followUpState: string;
   followUpNote: string | null;
   isPublic: boolean;
+  queueRank: number | null;
+  changeKind: string | null;
 };
 
 const ITEM_STATE_KEYS = [
@@ -166,7 +168,9 @@ const ITEM_STATE_KEYS = [
   "validationVerdict",
   "followUpState",
   "followUpNote",
-  "isPublic"
+  "isPublic",
+  "queueRank",
+  "changeKind"
 ] as const satisfies readonly (keyof ItemState)[];
 
 function stateOf(row: ItemRow): ItemState {
@@ -188,7 +192,9 @@ function stateOf(row: ItemRow): ItemState {
     validationVerdict: row.validationVerdict ?? null,
     followUpState: row.followUpState,
     followUpNote: row.followUpNote ?? null,
-    isPublic: row.isPublic
+    isPublic: row.isPublic,
+    queueRank: row.queueRank ?? null,
+    changeKind: row.changeKind ?? null
   };
 }
 
@@ -252,6 +258,18 @@ function planItem(issues: Issues, input: ParsedItem, existing: ItemRow | null, p
   const waitingSince =
     fields.waitingSince ?? (current && current.waitingOn === waitingOn ? current.waitingSince : now);
 
+  // A place in the queue for a PR slot belongs only to an item that is waiting for one.
+  // An item that stops waiting, or closes, loses its place; a request that gives one a place is refused.
+  const queued = waitingOn === "pr_slot" && stage !== "closed";
+  if (typeof fields.queueRank === "number" && !queued) {
+    issues.push({
+      path: `${path}.queueRank`,
+      message: 'Allowed only when waitingOn is "pr_slot" and the item is not closed.'
+    });
+    return null;
+  }
+  const queueRank = queued ? (fields.queueRank !== undefined ? fields.queueRank : (current?.queueRank ?? null)) : null;
+
   const next: ItemState = {
     title: (fields.title ?? current?.title) as string,
     summary: (fields.summary ?? current?.summary) as string,
@@ -272,7 +290,9 @@ function planItem(issues: Issues, input: ParsedItem, existing: ItemRow | null, p
       fields.validationVerdict !== undefined ? fields.validationVerdict : (current?.validationVerdict ?? null),
     followUpState: fields.followUpState ?? current?.followUpState ?? "none",
     followUpNote: fields.followUpNote !== undefined ? fields.followUpNote : (current?.followUpNote ?? null),
-    isPublic: (fields.isPublic ?? current?.isPublic) as boolean
+    isPublic: (fields.isPublic ?? current?.isPublic) as boolean,
+    queueRank,
+    changeKind: fields.changeKind !== undefined ? fields.changeKind : (current?.changeKind ?? null)
   };
   return { input, existing, next };
 }
@@ -300,6 +320,7 @@ const SNAPSHOT_FIELDS = [
   "ghLabels",
   "ghHeadSha",
   "ghLastActivityAt",
+  "ghClosingNoticeAt",
   "ghOtherActivityAt",
   "ghOtherActivityBy",
   "macroscopeVerdict",
@@ -466,7 +487,9 @@ export async function handleItems(ctx: ServerContext, req: EndpointRequest): Pro
         ...(next.lastValidatedAt !== null ? { lastValidatedAt: next.lastValidatedAt } : {}),
         ...(next.lastValidatedSha !== null ? { lastValidatedSha: next.lastValidatedSha } : {}),
         ...(next.validationVerdict !== null ? { validationVerdict: next.validationVerdict } : {}),
-        ...(next.followUpNote !== null ? { followUpNote: next.followUpNote } : {})
+        ...(next.followUpNote !== null ? { followUpNote: next.followUpNote } : {}),
+        ...(next.queueRank !== null ? { queueRank: next.queueRank } : {}),
+        ...(next.changeKind !== null ? { changeKind: next.changeKind } : {})
       });
       itemId = row.id;
       changed = true;

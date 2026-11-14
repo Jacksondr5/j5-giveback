@@ -26,6 +26,8 @@ export const LIMITS = {
   agentAddress: 200,
   askRecommendation: 2000,
   askDraftPointer: 300,
+  // An item's place in the queue for a PR slot: a whole number from 1 to this.
+  queueRankMax: 999,
 
   // Batch sizes. One request is one database transaction with at most 100 index scans,
   // 1,000 writes and 1,000 rows returned, so batches are small.
@@ -52,7 +54,16 @@ export const LIMITS = {
   // A handler may read back 1,000 rows in all: items, one primary link each, and the
   // dependency links of open items (2 x maxOpenDependencyLinksPerRole). 350 + 350 + 200 = 900.
   maxItems: 350,
-  maxOpenDependencyLinksPerRole: 100
+  maxOpenDependencyLinksPerRole: 100,
+
+  // The overview's PR slots. Its reads share the handler's budget with the rest of the overview: see readPrSlots.
+  // Our PRs on items that are not closed, whatever their state on GitHub. Upstream allows 3 open at once.
+  maxOwnPrLinks: 60,
+  // Queued items whose text approval is read, one index scan each, and the asks read for each.
+  queueTextChecks: 10,
+  queueAsksPerItem: 20,
+  // "Posted" events read for the count of upstream posts over the last eight weeks.
+  maxPostsRead: 300
 } as const;
 
 /** Substrings that mark a local filesystem path. No stored string may contain one. */

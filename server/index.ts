@@ -6,6 +6,7 @@ import type {
   OwnerItemDetailView,
   OwnerItemView,
   OwnerOverviewView,
+  PostCountsView,
   ViewerView
 } from "../shared/api";
 import {
@@ -21,6 +22,7 @@ import {
   handleWatchlist
 } from "./agent";
 import { isOwner, requireOwner } from "./auth";
+import { handleCapacity, readPostCounts } from "./capacity";
 import { ownerItemDetail, ownerItems, ownerOverview } from "./owner";
 import { askView, dependenciesOf, eventView, itemView, linkView, readItemDetail, readItemList, readOverview } from "./read";
 import { handleRefresh } from "./refresh";
@@ -95,6 +97,12 @@ export default capsule({
     ownerItem: query(async (ctx, ref: string): Promise<OwnerItemDetailView | null> => {
       requireOwner(ctx.auth, ctx.env);
       return ownerItemDetail(ctx.db as unknown as ReadDb, ref);
+    }),
+
+    /** Upstream posts per week, on every item, public or not. A handler of its own, so it has its own read budget. */
+    ownerPosts: query(async (ctx): Promise<PostCountsView> => {
+      requireOwner(ctx.auth, ctx.env);
+      return readPostCounts(ctx.db as unknown as ReadDb, Date.now());
     })
   },
 
@@ -109,6 +117,7 @@ export default capsule({
     agentExport: endpoint({ method: "GET", path: "/api/agent/export", readOnly: true }, handleExport),
     agentItemAgents: endpoint({ method: "GET", path: "/api/agent/item-agents", readOnly: true }, handleItemAgents),
     agentWatchlist: endpoint({ method: "GET", path: "/api/agent/watchlist", readOnly: true }, handleWatchlist),
+    agentCapacity: endpoint({ method: "GET", path: "/api/agent/capacity", readOnly: true }, handleCapacity),
     refresh: endpoint({ method: "POST", path: "/api/refresh" }, handleRefresh)
   }
 });

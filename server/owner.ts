@@ -22,7 +22,8 @@ async function ownerAsk(db: ReadDb, ask: AskRow, item: ItemRow): Promise<OwnerAs
 }
 
 // One index scan per ask for its private row; a handler may make 100 scans.
-const MAX_ASKS_WITH_PRIVATE = 80;
+// The overview itself makes up to 14 (see readOverview), so 75 here leaves 11 spare.
+const MAX_ASKS_WITH_PRIVATE = 75;
 
 export async function ownerOverview(db: ReadDb): Promise<OwnerOverviewView> {
   const { view, openAskRows } = await readOverview(db, true);

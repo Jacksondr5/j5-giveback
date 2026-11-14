@@ -5,6 +5,7 @@
 import type { ValidationIssue } from "../shared/api";
 import {
   ASK_KINDS,
+  CHANGE_KINDS,
   EVENT_ACTORS,
   EVENT_TYPES,
   FOLLOW_UP_STATES,
@@ -17,6 +18,7 @@ import {
   WAITING_ON,
   isOneOf,
   type AskKind,
+  type ChangeKind,
   type EventActor,
   type EventType,
   type FollowUpState,
@@ -220,6 +222,8 @@ export type ParsedItemFields = {
   followUpState?: FollowUpState;
   followUpNote?: string | null;
   isPublic?: boolean;
+  queueRank?: number | null;
+  changeKind?: ChangeKind | null;
 };
 
 export type ParsedItemPrivate = {
@@ -260,6 +264,8 @@ const ITEM_KEYS = [
   "followUpState",
   "followUpNote",
   "isPublic",
+  "queueRank",
+  "changeKind",
   "stageNote",
   "stageEventAt",
   "clearUpstreamChange",
@@ -413,6 +419,26 @@ function parseItem(issues: Issues, value: unknown, path: string, now: number): P
   if (value.isPublic !== undefined) {
     const isPublic = checkBoolean(issues, value.isPublic, `${path}.isPublic`);
     if (isPublic !== undefined) fields.isPublic = isPublic;
+  }
+  if (value.queueRank === null) {
+    fields.queueRank = null;
+  } else if (value.queueRank !== undefined) {
+    if (
+      typeof value.queueRank === "number" &&
+      Number.isInteger(value.queueRank) &&
+      value.queueRank >= 1 &&
+      value.queueRank <= LIMITS.queueRankMax
+    ) {
+      fields.queueRank = value.queueRank;
+    } else {
+      issues.push({ path: `${path}.queueRank`, message: `Must be a whole number from 1 to ${LIMITS.queueRankMax}, or null.` });
+    }
+  }
+  if (value.changeKind === null) {
+    fields.changeKind = null;
+  } else if (value.changeKind !== undefined) {
+    const changeKind = checkEnum(issues, value.changeKind, `${path}.changeKind`, CHANGE_KINDS);
+    if (changeKind) fields.changeKind = changeKind;
   }
 
   const stageNote = optionalText(issues, value, "stageNote", path, { max: LIMITS.eventNote });

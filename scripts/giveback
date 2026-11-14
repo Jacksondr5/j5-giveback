@@ -40,6 +40,10 @@ Usage:
   giveback watchlist                  Every link on an item that is not closed, with its item and GitHub state.
   giveback agents                     Every item that is not closed, with the agent that owns it (or none).
                                       Also prints the dispatcher's address, which takes items with no agent.
+  giveback capacity                   The PR slots of each upstream repository that limits open PRs: our open
+                                      PRs, the slots still free, and the items waiting for one, in order,
+                                      with whether each one's text is approved. Also the upstream posts of
+                                      the last 7 days and the last 8 weeks.
   giveback load <file>                JSON: {"items":[...],"asks":[...],"events":[...]}, applied in that order.
   giveback export [--raw] [--out FILE]
                                       Everything, public and private. Default: items with their ID
@@ -390,6 +394,14 @@ async function agents(args) {
   print({ ...payload, dispatcherAddress: setting(["GIVEBACK_DISPATCHER_ADDRESS"]) });
 }
 
+// Whether a PR slot is free, and who is next for one. The server computes all of it in one read.
+async function capacity(args) {
+  if (args.length > 0) usageError("capacity takes no arguments.");
+  const { status, payload } = await call("GET", "/api/agent/capacity", "agent");
+  if (status !== 200 || payload.ok !== true) reportFailure("GET", "/api/agent/capacity", status, payload);
+  print(payload);
+}
+
 async function load(args) {
   const data = readJson(args[0]);
   if (!data || typeof data !== "object" || Array.isArray(data)) usageError('expected {"items":[...],"asks":[...],"events":[...]}.');
@@ -609,6 +621,8 @@ async function main() {
       return watchlist(args);
     case "agents":
       return agents(args);
+    case "capacity":
+      return capacity(args);
     case "load":
       return load(args);
     case "export":

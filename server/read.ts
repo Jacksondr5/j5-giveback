@@ -12,6 +12,9 @@ import type {
   LinkView,
   OverviewView,
   OwnerItemView,
+  PrSlotView,
+  QueueEntryView,
+  RepoSlotsView,
   SyncView
 } from "../shared/api";
 import {
@@ -20,6 +23,7 @@ import {
   UNDISCLOSED_TITLE,
   WAITING_ON,
   type AskKind,
+  type ChangeKind,
   type EventActor,
   type EventType,
   type FollowUpState,
@@ -36,6 +40,7 @@ import {
 } from "../shared/enums";
 import { parseItemId } from "../shared/itemId";
 import { LIMITS, SLUG_PATTERN } from "../shared/limits";
+import { RULES_REPOS, fillsSlot, queueOrder, rulesFor, textApproval, type TextApproval, type UpstreamRules } from "../shared/upstreamRules";
 import type { AskRow, EventRow, ItemRow, LinkRow, PublicDb, SyncStateRow } from "./schema";
 
 const MAX_OPEN_ASKS = 200;
@@ -67,6 +72,7 @@ export function linkView(row: LinkRow): LinkView {
     headSha: row.ghHeadSha ?? null,
     macroscopeVerdict: row.macroscopeVerdict ?? null,
     lastActivityAt: row.ghLastActivityAt ?? null,
+    closingNoticeAt: row.ghClosingNoticeAt ?? null,
     lastOtherActivityAt: row.ghOtherActivityAt ?? null,
     lastOtherActivityBy: row.ghOtherActivityBy ?? null,
     triageBucket: row.triageBucket ?? null,
@@ -103,6 +109,10 @@ function undisclosedItemView(row: ItemRow): ItemView {
     validationVerdict: null,
     followUpState: null,
     followUpNote: null,
+    // The kind of change says what the item is. The rank is withheld too: the item's
+    // place in the queue for a PR slot is public, and the overview's queue gives it.
+    changeKind: null,
+    queueRank: null,
     upstreamChangedAt: null,
     upstreamChangeNote: null,
     primaryLink: null,
@@ -134,6 +144,8 @@ function disclosedItemView(row: ItemRow, primary: LinkRow | null, dependencies: 
     validationVerdict: row.validationVerdict ?? null,
     followUpState: row.followUpState as FollowUpState,
     followUpNote: row.followUpNote ?? null,
+    changeKind: (row.changeKind as ChangeKind | undefined) ?? null,
+    queueRank: row.queueRank ?? null,
     upstreamChangedAt: row.upstreamChangedAt ?? null,
     upstreamChangeNote: row.upstreamChangeNote ?? null,
     primaryLink: primary ? linkView(primary) : null,
@@ -201,12 +213,144 @@ export function syncView(row: SyncStateRow | null): SyncView {
   };
 }
 
+// ---------------------------------------------------------------------------
+// PR slots
+// ---------------------------------------------------------------------------
+
+/** One repository's slots and queue, as rows. The views and the agent endpoint are built from this. */
+export type SlotData = {
+  repo: string;
+  rules: UpstreamRules;
+  /** Our open PRs, one entry per PR, oldest first. */
+  slots: { link: LinkRow; item: ItemRow }[];
+  /** Items waiting for a slot, in order. `text` is null when the item's asks were not read. */
+  queue: { item: ItemRow; text: TextApproval | null }[];
+  /** True when an item that is not closed, and that the caller may see, targets this repository. */
+  inUse: boolean;
+};
+
+/**
+ * The PR slots and the queue for them, for every repository that has rules.
+ *
+ * A slot is filled by a PR of ours on an item that is not closed, that is open
+ * on GitHub or has not been read yet. A PR on a closed item does not count: the
+ * refresh no longer reads it, so its state is not known to be current.
+ *
+ * The queue is the items that wait on "pr_slot" and are not closed, taken from
+ * `items`, which the caller has already read.
+ *
+ * With `full` false, nothing is read about a non-public item: its asks are left
+ * alone, and where a PR sits on a public and a non-public item, the public one
+ * names the slot.
+ *
+ * Budget, of a handler's 100 index scans and 1,000 rows returned: one scan for
+ * our PR links (at most LIMITS.maxOwnPrLinks rows), and one scan per queued
+ * item whose text approval is read (at most LIMITS.queueTextChecks scans of
+ * LIMITS.queueAsksPerItem rows each). That is 11 scans and 260 rows at most.
+ */
+export async function readSlotData(db: PublicDb, items: readonly ItemRow[], full: boolean): Promise<SlotData[]> {
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const visible = (item: ItemRow) => full || item.isPublic;
+
+  const ownPrs = await db.links
+    .withIndex("by_ownership_kind_active", (q) => q.eq("ownership", "ours").eq("kind", "pr").eq("active", true))
+    .take(LIMITS.maxOwnPrLinks);
+
+  // One slot per PR. The same PR can sit on two items, as one's own post and another's base.
+  const slotsByRepo = new Map<string, Map<number, { link: LinkRow; item: ItemRow }>>();
+  for (const link of ownPrs) {
+    const repo = link.repo.toLowerCase();
+    const item = itemById.get(link.itemId);
+    if (!rulesFor(repo) || !item || item.stage === "closed") continue;
+    if (!fillsSlot({ kind: link.kind, ownership: link.ownership, state: link.ghState ?? null })) continue;
+    const slots = slotsByRepo.get(repo) ?? new Map<number, { link: LinkRow; item: ItemRow }>();
+    slotsByRepo.set(repo, slots);
+    const held = slots.get(link.number);
+    // An item the caller may see names the slot before one it may not; then the item whose own post the PR is.
+    const better =
+      !held ||
+      (visible(item) && !visible(held.item)) ||
+      (visible(item) === visible(held.item) && link.role === "primary" && held.link.role !== "primary");
+    if (better) slots.set(link.number, { link, item });
+  }
+
+  const data: SlotData[] = [];
+  let textChecks = 0;
+  for (const repo of RULES_REPOS) {
+    const rules = rulesFor(repo);
+    if (!rules) continue;
+    const slots = [...(slotsByRepo.get(repo)?.values() ?? [])].sort(
+      (a, b) => (a.link.ghCreatedAt ?? Infinity) - (b.link.ghCreatedAt ?? Infinity) || a.link.number - b.link.number
+    );
+    const open = items.filter((item) => item.stage !== "closed" && item.targetRepo.toLowerCase() === repo);
+    const waiting = queueOrder(
+      open
+        .filter((item) => item.waitingOn === "pr_slot")
+        .map((item) => ({ item, queueRank: item.queueRank ?? null, waitingSince: item.waitingSince }))
+    );
+    const queue: SlotData["queue"] = [];
+    for (const { item } of waiting) {
+      let text: TextApproval | null = null;
+      if (visible(item) && textChecks < LIMITS.queueTextChecks) {
+        textChecks += 1;
+        // Newest first, so the cap drops old asks and never the text approval in play.
+        const asks = await db.asks
+          .withIndex("by_item", (q) => q.eq("itemId", item.id))
+          .order("desc")
+          .take(LIMITS.queueAsksPerItem);
+        text = textApproval(asks);
+      }
+      queue.push({ item, text });
+    }
+    data.push({ repo, rules, slots, queue, inUse: open.some(visible) });
+  }
+  return data;
+}
+
+/** The slots as a query returns them. A repository nothing of ours is in is left out. */
+export function slotsView(data: readonly SlotData[], full: boolean): RepoSlotsView[] {
+  const views: RepoSlotsView[] = [];
+  for (const { repo, rules, slots, queue, inUse } of data) {
+    if (slots.length === 0 && queue.length === 0 && !inUse) continue;
+    const shown: PrSlotView[] = [];
+    const withheld: PrSlotView[] = [];
+    for (const { link, item } of slots) {
+      if (full || item.isPublic) shown.push({ link: linkView(link), item: itemRef(item, full) });
+      // The slot is filled, and that is all that is said: the links of a non-public item are not shown.
+      else withheld.push({ link: null, item: itemRef(item, false) });
+    }
+    // Withheld slots go last, in ID order, so their place says nothing about the PR's age.
+    withheld.sort((a, b) => (a.item.number ?? Infinity) - (b.item.number ?? Infinity));
+    const entries: QueueEntryView[] = queue.map(({ item, text }, index) => ({
+      position: index + 1,
+      item: itemRef(item, full),
+      text: full || item.isPublic ? text : null
+    }));
+    views.push({
+      repo,
+      limit: rules.openPrLimit,
+      slots: [...shown, ...withheld],
+      free: Math.max(0, rules.openPrLimit - slots.length),
+      queue: entries
+    });
+  }
+  return views;
+}
+
 export type OverviewData = { view: OverviewView; openAskRows: AskRow[] };
 
+/**
+ * The overview. Its budget, of a handler's 100 index scans and 1,000 rows
+ * returned: three scans for the items (at most LIMITS.maxItems rows), the open
+ * asks (at most MAX_OPEN_ASKS) and the sync row, then the PR slots (see
+ * readSlotData). 14 scans and 811 rows at most. The owner's overview adds one
+ * scan and one row per open ask on top (see owner.ts).
+ */
 export async function readOverview(db: PublicDb, full: boolean): Promise<OverviewData> {
   const items = await db.items.withIndex("by_creation").take(LIMITS.maxItems);
   const openAskRows = await db.asks.withIndex("by_open", (q) => q.eq("isOpen", true)).take(MAX_OPEN_ASKS);
   const sync = await db.syncState.withIndex("by_creation").first();
+  const prSlots = slotsView(await readSlotData(db, items, full), full);
 
   const byId = new Map<string, ItemRow>();
   const stageCounts = new Map<string, number>();
@@ -263,6 +407,7 @@ export async function readOverview(db: PublicDb, full: boolean): Promise<Overvie
     waiting: WAITING_ON.map((waitingOn) => ({ waitingOn, count: waitingCounts.get(waitingOn) ?? 0 })),
     outcomes: OUTCOMES.map((outcome) => ({ outcome, count: outcomeCounts.get(outcome) ?? 0 })),
     openAsks,
+    prSlots,
     sync: syncView(sync)
   };
   return { view, openAskRows: keptRows };

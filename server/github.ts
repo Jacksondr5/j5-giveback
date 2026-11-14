@@ -17,6 +17,8 @@ const FIRST_COMMENTS = 4;
 export type LinkTarget = { repo: string; number: number; kind: string };
 
 const ACTOR = "author{login __typename}";
+// How many label events are read to find when a label was last applied. Upstream's own bot reads as many.
+const LABEL_EVENTS = 20;
 
 const PR_FRAGMENT = `
 fragment PrFields on PullRequest {
@@ -27,6 +29,7 @@ fragment PrFields on PullRequest {
   firstComments: comments(first:${FIRST_COMMENTS}){nodes{${ACTOR} createdAt body}}
   comments(last:${RECENT}){nodes{${ACTOR} createdAt}}
   reviews(last:${RECENT}){nodes{${ACTOR} submittedAt}}
+  labelEvents: timelineItems(itemTypes:[LABELED_EVENT],last:${LABEL_EVENTS}){nodes{... on LabeledEvent{createdAt label{name}}}}
 }`;
 const ISSUE_FRAGMENT = `
 fragment IssueFields on Issue {
@@ -79,7 +82,13 @@ export type Snapshot = {
   reviewDecision: GhReviewDecision | null;
   labels: string[];
   headSha: string | null;
+  /** The thread's `updatedAt`: any push, comment, review or label moves it. */
   lastActivityAt: number | null;
+  /**
+   * When the closing label was last applied. Null unless the PR carries that label
+   * now, and null when its label event was not among those read.
+   */
+  closingNoticeAt: number | null;
   /** Null when none of the comments and reviews read were by another person. */
   otherActivityAt: number | null;
   otherActivityBy: string | null;
@@ -151,8 +160,11 @@ function reviewDecisionFrom(value: unknown): GhReviewDecision | null {
   }
 }
 
-/** Turns one `node` from the response into a snapshot, or null when it is not a shape this code knows. */
-export function snapshotFrom(node: unknown, selfLogin: string): Snapshot | null {
+/**
+ * Turns one `node` from the response into a snapshot, or null when it is not a shape this code knows.
+ * `closingLabel` is the label whose time of application is wanted, for a repository that has one.
+ */
+export function snapshotFrom(node: unknown, selfLogin: string, closingLabel: string | null = null): Snapshot | null {
   if (!isObj(node)) return null;
   const typename = node.__typename;
   const title = str(node.title);
@@ -198,6 +210,20 @@ export function snapshotFrom(node: unknown, selfLogin: string): Snapshot | null 
     headSha = str(node.headRefOid);
   }
 
+  const labels = nodes(node.labels)
+    .map((label) => str(label.name))
+    .filter((name): name is string => name !== null);
+  // The label can be removed and applied again, so the last application is the one that counts.
+  // It is kept only while the PR carries the label: an old notice that was lifted is no notice.
+  let closingNoticeAt: number | null = null;
+  if (isPr && closingLabel !== null && labels.includes(closingLabel)) {
+    for (const event of nodes(node.labelEvents)) {
+      const at = time(event.createdAt);
+      if (at === null || !isObj(event.label) || event.label.name !== closingLabel) continue;
+      if (closingNoticeAt === null || at > closingNoticeAt) closingNoticeAt = at;
+    }
+  }
+
   return {
     title: title.slice(0, 200),
     state,
@@ -207,11 +233,10 @@ export function snapshotFrom(node: unknown, selfLogin: string): Snapshot | null 
     closedAt: time(node.closedAt),
     ci,
     reviewDecision: isPr ? reviewDecisionFrom(node.reviewDecision) : null,
-    labels: nodes(node.labels)
-      .map((label) => str(label.name))
-      .filter((name): name is string => name !== null),
+    labels,
     headSha,
     lastActivityAt: time(node.updatedAt),
+    closingNoticeAt,
     otherActivityAt,
     otherActivityBy,
     macroscopeVerdict

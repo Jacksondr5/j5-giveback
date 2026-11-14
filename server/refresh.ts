@@ -3,13 +3,15 @@
 // One call handles one batch of links that are due: every link on an item that
 // is not closed, and any link on a closed item that has never been read. It
 // reads the batch, makes one GraphQL request, then writes. It records an event when a link
-// merged, closed, reopened or began failing CI, and raises the item's
-// "state changed upstream" marker. It never changes an item's stage.
+// merged, closed, reopened or began failing CI, or when upstream's bot put one of our
+// PRs on a closing clock, and raises the item's "state changed upstream" marker.
+// It never changes an item's stage.
 
 import { json, type EndpointRequest, type EndpointResponse, type ServerContext } from "lakebed/server";
 import type { RefreshResponse } from "../shared/api";
 import type { EventType } from "../shared/enums";
 import { CURSOR_PATTERN, LIMITS } from "../shared/limits";
+import { rulesFor, sweepTimeUtc } from "../shared/upstreamRules";
 import { AUTO_KEY_PREFIX, touchSyncState } from "./agent";
 import { apiError, checkBearer } from "./auth";
 import { DEFAULT_SELF_LOGIN, aliasFor, buildQuery, fetchGithub, snapshotFrom, type Snapshot } from "./github";
@@ -23,10 +25,44 @@ function isObj(value: unknown): value is Record<string, unknown> {
 
 type Change = { type: EventType; note: string };
 
-/** Compares the stored snapshot with the new one. A link never synced before produces no change. */
+/**
+ * The clocks upstream's bot started on one of our open PRs since the stored
+ * snapshot: a label that starts one is on the PR now and was not before. A link
+ * read for the first time counts, because the clock runs whether or not it was
+ * seen starting. While the label stays, later refreshes report nothing.
+ */
+function clockChangesFor(link: LinkRow, next: Snapshot): Change[] {
+  const rules = rulesFor(link.repo);
+  if (!rules || link.kind !== "pr" || link.ownership !== "ours" || next.state !== "open") return [];
+  if (next.labels.includes(rules.keepOpenLabel)) return [];
+  const before = new Set((link.ghLabels ?? "").split("\n"));
+  const added = (label: string) => next.labels.includes(label) && !before.has(label);
+  const ref = `${link.repo}#${link.number}`;
+  const sweep = `daily sweep (${sweepTimeUtc(rules)} UTC)`;
+  const changes: Change[] = [];
+  if (added(rules.closingLabel)) {
+    changes.push({
+      type: "closing_notice",
+      note: `${ref} got a closing notice. Unless something happens on it, upstream closes it at the first ${sweep} more than ${rules.noticeHours} hours after the notice.`
+    });
+  }
+  if (added(rules.rebaseLabel)) {
+    changes.push({
+      type: "rebase_requested",
+      note: `${ref} was asked to rebase. Upstream closes it at a ${sweep} once it has conflicted for ${rules.conflictIdleDays} days with no activity.`
+    });
+  }
+  return changes;
+}
+
+/**
+ * Compares the stored snapshot with the new one. A link never synced before
+ * produces no change of state; a closing clock is reported for it all the same.
+ */
 function changesFor(link: LinkRow, next: Snapshot): Change[] {
+  const clocks = clockChangesFor(link, next);
   if (link.syncedAt === undefined || link.ghState === undefined) {
-    return [];
+    return clocks;
   }
   const changes: Change[] = [];
   const ref = `${link.repo}#${link.number}`;
@@ -49,7 +85,8 @@ function changesFor(link: LinkRow, next: Snapshot): Change[] {
   if (link.ownership === "ours" && next.state === "open" && next.ci === "failure" && link.ghCi !== "failure") {
     changes.push({ type: "ci_failing", note: `CI began failing on ${ref}.` });
   }
-  return changes;
+  // The clock goes last, so its note is the one the item's marker carries.
+  return [...changes, ...clocks];
 }
 
 export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): Promise<EndpointResponse> {
@@ -123,7 +160,10 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
       // An error anywhere under this link's alias means some of its fields came back
       // null. A snapshot built from that would overwrite good values, so the link fails whole.
       const aliasError = result.errorsByAlias.get(alias);
-      const snapshot = aliasError === undefined && isObj(repository) ? snapshotFrom(repository.node, selfLogin) : null;
+      const snapshot =
+        aliasError === undefined && isObj(repository)
+          ? snapshotFrom(repository.node, selfLogin, rulesFor(link.repo)?.closingLabel ?? null)
+          : null;
       if (!snapshot) {
         // Keep the old snapshot. Only note that this link could not be read.
         const message = aliasError ?? "GitHub returned nothing usable for this link.";
@@ -148,6 +188,8 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
         ghLabels: snapshot.labels.length > 0 ? snapshot.labels.join("\n") : null,
         ghHeadSha: snapshot.headSha,
         ghLastActivityAt: snapshot.lastActivityAt,
+        // Null clears it: the time is kept only while the PR carries the closing label.
+        ghClosingNoticeAt: snapshot.closingNoticeAt,
         // The query reads only recent comments and reviews. When none of them is by
         // another person, an older stored value still stands.
         ...(snapshot.otherActivityAt !== null && snapshot.otherActivityBy !== null
