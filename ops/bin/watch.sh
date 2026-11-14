@@ -27,7 +27,7 @@
 #
 # News is put in a queue in the state file before anything is sent, and leaves the
 # queue only when its message has been accepted. A message that fails is sent again
-# on the next run, word for word and under the same id, so it cannot arrive twice.
+# on the next run with the same news under the same id, so it cannot arrive twice.
 #
 # Cheap by design: API reads only. No agent runs unless something changed.
 #
@@ -166,8 +166,11 @@ plan="$(jq --argjson agents "$agents" --argjson old "$oldstate" --arg now "$now"
   | [ $old | to_entries[]
       | select(.key | startswith("linger:")) | select((.value | type) == "object")
       | (.key | ltrimstr("linger:")) as $key
+      | (.value.listed // "") as $recorded # where the first version of this script kept the time
       | (.value.items // [])[]
-      | select(type == "object") | select((.item // "") != "") | select((.listed // "") >= $cutoff)
+      | select(type == "object") | select((.item // "") != "")
+      | .listed = (.listed // $recorded)
+      | select(.listed >= $cutoff)
       | . as $kept
       | select([$rows[] | select(.key == $key and .item.item == $kept.item and .item.ours)] | length == 0)
       | { key: $key, scope: "full", state: "",
@@ -316,10 +319,10 @@ while IFS=$'\t' read -r -u 3 key repo n discussion scope ghstate; do
   since="$(jq -r --arg k "$key" '.[$k] // "" | strings' <<<"$oldstate")"
   [ -n "$since" ] || since="$now" # first sight: start watching from now
   previous="$(jq -r --arg k "state:$key" '.[$k] // "" | strings' <<<"$oldstate")"
-  [ "$ghstate" = "-" ] || set_state "state:$key" "$ghstate"
 
   if [ "$scope" = "state" ]; then
     # Only a change of state is news, and the dashboard already knows the state.
+    [ "$ghstate" = "-" ] || set_state "state:$key" "$ghstate"
     if [ "$ghstate" != "-" ] && [ -n "$previous" ] && [ "$previous" != "$ghstate" ]; then
       events_of[$key]="state changed from $previous to $ghstate"
       if [ "$discussion" != "true" ]; then
@@ -360,6 +363,9 @@ while IFS=$'\t' read -r -u 3 key repo n discussion scope ghstate; do
     title_of[$key]="$(cat "$work/title" 2>/dev/null || true)"
   fi
   set_state "$key" "$now"
+  # Only now, with the thread's own events read: a close that this check would
+  # have reported must not be marked as seen when the check failed.
+  [ "$ghstate" = "-" ] || set_state "state:$key" "$ghstate"
   [ -f "$work/fail" ] && set_state "fail:$key" "$(cat "$work/fail")"
 done 3< <(jq -r '.[] | [.key, .repo, .n, (.discussion | tostring), .scope, (if .state == "" then "-" else .state end)] | @tsv' <<<"$threads")
 

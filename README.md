@@ -157,7 +157,7 @@ Settings, in `~/.config/j5-giveback/env`:
 
 `ops/bin/watch.sh --dry-run` prints what it would send, and sends and remembers nothing.
 
-News goes into a queue in `state.json` before anything is sent, and leaves it only when its message is accepted. A message that fails is sent again on the next run, word for word and under the same id, so it does not arrive twice. One that cannot be delivered for 14 days is dropped, with a line in the journal. If the list of item agents says it is incomplete, the run stops before it checks or sends anything.
+News goes into a queue in `state.json` before anything is sent, and leaves it only when its message is accepted. A message that fails is sent again on the next run, with the same news under the same id, so it does not arrive twice. (The lines around the news can differ on a retry, for example when the item has changed hands.) One that cannot be delivered for 14 days is dropped, with a line in the journal. If the list of item agents says it is incomplete, the run stops before it checks or sends anything.
 
 ## Things to know
 
