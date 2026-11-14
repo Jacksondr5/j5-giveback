@@ -321,6 +321,7 @@ const SNAPSHOT_FIELDS = [
   "ghHeadSha",
   "ghLastActivityAt",
   "ghClosingNoticeAt",
+  "ghMergeable",
   "ghOtherActivityAt",
   "ghOtherActivityBy",
   "macroscopeVerdict",

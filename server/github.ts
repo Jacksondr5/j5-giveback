@@ -19,12 +19,14 @@ export type LinkTarget = { repo: string; number: number; kind: string };
 const ACTOR = "author{login __typename}";
 // How many label events are read to find when a label was last applied. Upstream's own bot reads as many.
 const LABEL_EVENTS = 20;
+// A clock depends on labels, so a PR's are read as far as upstream's bot reads them.
+const PR_LABELS = 100;
 
 const PR_FRAGMENT = `
 fragment PrFields on PullRequest {
-  title createdAt prState: state isDraft mergedAt closedAt updatedAt headRefOid reviewDecision
+  title createdAt prState: state isDraft mergedAt closedAt updatedAt headRefOid reviewDecision mergeable
   mergedBy{login __typename}
-  labels(first:20){nodes{name}}
+  labels(first:${PR_LABELS}){nodes{name}}
   commits(last:1){nodes{commit{statusCheckRollup{state}}}}
   firstComments: comments(first:${FIRST_COMMENTS}){nodes{${ACTOR} createdAt body}}
   comments(last:${RECENT}){nodes{${ACTOR} createdAt}}
@@ -89,6 +91,8 @@ export type Snapshot = {
    * now, and null when its label event was not among those read.
    */
   closingNoticeAt: number | null;
+  /** A PR's "MERGEABLE", "CONFLICTING" or "UNKNOWN". Null for anything else. */
+  mergeable: string | null;
   /** Null when none of the comments and reviews read were by another person. */
   otherActivityAt: number | null;
   otherActivityBy: string | null;
@@ -237,6 +241,7 @@ export function snapshotFrom(node: unknown, selfLogin: string, closingLabel: str
     headSha,
     lastActivityAt: time(node.updatedAt),
     closingNoticeAt,
+    mergeable: isPr ? str(node.mergeable) : null,
     otherActivityAt,
     otherActivityBy,
     macroscopeVerdict

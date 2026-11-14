@@ -311,6 +311,9 @@ function RepoSlots({ slots, items }: { slots: RepoSlotsView; items: Map<string, 
           <SlotMeter limit={slots.limit} open={open} />
           <span className={cx("text-sm", over && "font-semibold")}>{slotWords(open, slots.limit)}</span>
           {over ? <span className={cx("text-sm", TEXT_DIM)}>A new PR would be closed as it opens.</span> : null}
+          {slots.partial ? (
+            <span className={cx("text-sm", TEXT_DIM)}>Not every PR of ours could be read, so more may be open.</span>
+          ) : null}
         </p>
         {open > 0 ? (
           <ul className={cx(DIVIDE, "border-t border-(color:--rule)")}>

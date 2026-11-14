@@ -170,10 +170,10 @@ The refresh reads each PR's labels, its "updated" time, and when `triage:closing
 | `triage:keep-open` | Nothing. No clock runs. |
 | `triage:closing`, and nothing happened on it after the notice | "Closes in 41 h unless answered": 72 hours from the notice |
 | `triage:closing`, and something happened more than 15 seconds after the notice | "Notice answered, back for another look" |
-| `needs-rebase` (and not `triage:closing`) | "Closes after 21 Nov unless rebased": 7 days from the PR's last activity |
+| `needs-rebase` (and not `triage:closing`), on a PR that also carries `vouch:unvouched` and that GitHub does not report as mergeable | "Closes after 21 Nov unless rebased": 7 days from the PR's last activity. On any other PR the bot takes `needs-rebase` off at its next sweep, so no clock is shown. |
 | either, past its deadline | "Due to close at the next daily sweep" |
 
-The closing notice outranks the rebase request, as it does in upstream's bot. When the refresh first sees either label on one of our open PRs, it raises the item's "state changed upstream" marker: see [refresh](#post-apirefresh).
+The closing notice outranks the rebase request, as it does in upstream's bot. When the refresh first sees either label on one of our open PRs, it raises the item's "state changed upstream" marker: see [refresh](#post-apirefresh). A closing notice that was lifted and given again raises it again.
 
 ### Bug, behaviour change or feature
 
@@ -554,7 +554,7 @@ An item row carries its `number`. Its [ID](#item-ids) is `itemIdPrefix`, a hyphe
 
 `scripts/giveback export` follows the cursors and nests the result: each item carries its `shortId` (`"GB-12"`), `links`, `private`, `asks` (each with its `private`) and `events`. `--raw` gives the tables instead. For one item, use `scripts/giveback show GB-12`.
 
-In a row, a field with no value is absent. `items.originRefs` and `links.ghLabels` are one entry per line. The `gh*` fields, `macroscopeVerdict`, `syncedAt` and `syncError` on a link are the GitHub snapshot. `links.ghLastActivityAt` is the thread's "updated" time on GitHub. `links.ghClosingNoticeAt` is when `triage:closing` was last applied to a PR; it is present only while the PR carries that label. `items.queueRank` and `items.changeKind` are present only when set.
+In a row, a field with no value is absent. `items.originRefs` and `links.ghLabels` are one entry per line. The `gh*` fields, `macroscopeVerdict`, `syncedAt` and `syncError` on a link are the GitHub snapshot. `links.ghLastActivityAt` is the thread's "updated" time on GitHub. `links.ghClosingNoticeAt` is when `triage:closing` was last applied to a PR; it is present only while the PR carries that label. `links.ghMergeable` is GitHub's `MERGEABLE`, `CONFLICTING` or `UNKNOWN` for a PR. `items.queueRank` and `items.changeKind` are present only when set.
 
 ### `GET /api/agent/item-agents`
 
@@ -600,6 +600,7 @@ Bearer `AGENT_SECRET`. Read-only. Whether a [PR slot](#pr-slots) is free, which 
       "limit": 3,
       "open": 3,
       "free": 0,
+      "incomplete": false,
       "slots": [
         {
           "url": "https://github.com/pingdotgg/t3code/pull/33420",
@@ -651,11 +652,11 @@ Bearer `AGENT_SECRET`. Read-only. Whether a [PR slot](#pr-slots) is free, which 
 ```
 
 - `repos` has one entry for every repository in the [rules map](#upstreams-pr-rules), whether or not anything of ours is there.
-- `slots` are our open PRs, oldest first. `open` is how many there are and `free` is `limit` less `open`, never below 0. When `open` is above `limit`, we are over it: upstream closes a new PR as it opens. **Post only when `free` is above 0.**
+- `slots` are our open PRs, oldest first. `open` is how many there are and `free` is `limit` less `open`, never below 0. When `open` is above `limit`, we are over it: upstream closes a new PR as it opens. **Post only when `free` is above 0.** `incomplete` is `false` in normal operation. It is `true` only when the dashboard holds more of our PR links than one read takes (60, on items that are not closed); `open` is then a floor, `free` is 0, and nothing should be posted on it.
 - `ghState` is `open`, or `null` for a link the refresh has not read yet; such a link counts as open. `closingClock` is the [clock](#closing-clocks) running on the PR at `generatedAt`, or `null`. Its `kind` is `notice` or `rebase` (each with `closesAt` and `due`, which is `true` once the deadline has passed), `answered` (with `noticeAt`), or `notice_unknown` (the PR carries the closing label and the time it was applied could not be read).
-- `queue` is every item that waits on `pr_slot` and is not closed, in order: lowest `queueRank` first, unranked items after, longest-waiting first among equals. `position` is 1 for the item that goes next. `text` is `approved`, `awaiting` or `none`, by the [rule above](#pr-slots), and `null` past the tenth entry.
+- `queue` is every item that waits on `pr_slot` and is not closed, in order: lowest `queueRank` first, unranked items after, longest-waiting first among equals. `position` is 1 for the item that goes next. `text` is `approved`, `awaiting` or `none`, by the [rule above](#pr-slots), and `null` past the tenth entry, whose asks are not read.
 - Non-public items are included, with their slugs and real titles. This endpoint is for agents; do not republish its output.
-- `posts` counts the events of type `posted`, on every item, public or not: the last 7 days, and each of the last 8 weeks, oldest first. A week starts on Monday 00:00 UTC, and the last entry is the current week, still running. So record every upstream post as a `posted` event, with `at` set to when it was posted. `cap` is a weekly cap on posts; none is set, so it is `null`. `incomplete` is `true` only if more than 300 posts fell in the eight weeks, and then the oldest weeks count low.
+- `posts` counts the events of type `posted`, on every item, public or not: the last 7 days, and each of the last 8 weeks, oldest first. A week starts on Monday 00:00 UTC, and the last entry is the current week, still running. So record every upstream post as a `posted` event, with `at` set to when it was posted. `cap` is a weekly cap on posts; none is set, so it is `null`. `incomplete` is `true` only if more than 300 posts fell in the eight weeks; the newest 300 are then counted, and the oldest weeks count low.
 
 The post count is private. The site shows it to the owner alone, and no public query returns it.
 

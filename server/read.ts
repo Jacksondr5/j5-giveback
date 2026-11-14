@@ -73,6 +73,7 @@ export function linkView(row: LinkRow): LinkView {
     macroscopeVerdict: row.macroscopeVerdict ?? null,
     lastActivityAt: row.ghLastActivityAt ?? null,
     closingNoticeAt: row.ghClosingNoticeAt ?? null,
+    mergeable: row.ghMergeable ?? null,
     lastOtherActivityAt: row.ghOtherActivityAt ?? null,
     lastOtherActivityBy: row.ghOtherActivityBy ?? null,
     triageBucket: row.triageBucket ?? null,
@@ -227,6 +228,8 @@ export type SlotData = {
   queue: { item: ItemRow; text: TextApproval | null }[];
   /** True when an item that is not closed, and that the caller may see, targets this repository. */
   inUse: boolean;
+  /** True when there were more PR links of ours than one read takes. The slots may then be short. */
+  incomplete: boolean;
 };
 
 /**
@@ -244,9 +247,10 @@ export type SlotData = {
  * names the slot.
  *
  * Budget, of a handler's 100 index scans and 1,000 rows returned: one scan for
- * our PR links (at most LIMITS.maxOwnPrLinks rows), and one scan per queued
- * item whose text approval is read (at most LIMITS.queueTextChecks scans of
- * LIMITS.queueAsksPerItem rows each). That is 11 scans and 260 rows at most.
+ * our PR links (at most LIMITS.maxOwnPrLinks rows and one more, which shows
+ * that there were more), and one scan of one row per queued item whose text
+ * approval is read (at most LIMITS.queueTextChecks). That is 11 scans and 71
+ * rows at most.
  */
 export async function readSlotData(db: PublicDb, items: readonly ItemRow[], full: boolean): Promise<SlotData[]> {
   const itemById = new Map(items.map((item) => [item.id, item]));
@@ -254,7 +258,10 @@ export async function readSlotData(db: PublicDb, items: readonly ItemRow[], full
 
   const ownPrs = await db.links
     .withIndex("by_ownership_kind_active", (q) => q.eq("ownership", "ours").eq("kind", "pr").eq("active", true))
-    .take(LIMITS.maxOwnPrLinks);
+    .take(LIMITS.maxOwnPrLinks + 1);
+  // The read takes links whatever their state on GitHub, so past the cap an open PR may be
+  // among those left out. The count is then a floor, and no slot is called free.
+  const incomplete = ownPrs.length > LIMITS.maxOwnPrLinks;
 
   // One slot per PR. The same PR can sit on two items, as one's own post and another's base.
   const slotsByRepo = new Map<string, Map<number, { link: LinkRow; item: ItemRow }>>();
@@ -293,16 +300,16 @@ export async function readSlotData(db: PublicDb, items: readonly ItemRow[], full
       let text: TextApproval | null = null;
       if (visible(item) && textChecks < LIMITS.queueTextChecks) {
         textChecks += 1;
-        // Newest first, so the cap drops old asks and never the text approval in play.
+        // The text approval opened last, whatever else was asked about the item since.
         const asks = await db.asks
-          .withIndex("by_item", (q) => q.eq("itemId", item.id))
+          .withIndex("by_item_kind", (q) => q.eq("itemId", item.id).eq("kind", "text_approval"))
           .order("desc")
-          .take(LIMITS.queueAsksPerItem);
+          .take(1);
         text = textApproval(asks);
       }
       queue.push({ item, text });
     }
-    data.push({ repo, rules, slots, queue, inUse: open.some(visible) });
+    data.push({ repo, rules, slots, queue, inUse: open.some(visible), incomplete });
   }
   return data;
 }
@@ -310,7 +317,7 @@ export async function readSlotData(db: PublicDb, items: readonly ItemRow[], full
 /** The slots as a query returns them. A repository nothing of ours is in is left out. */
 export function slotsView(data: readonly SlotData[], full: boolean): RepoSlotsView[] {
   const views: RepoSlotsView[] = [];
-  for (const { repo, rules, slots, queue, inUse } of data) {
+  for (const { repo, rules, slots, queue, inUse, incomplete } of data) {
     if (slots.length === 0 && queue.length === 0 && !inUse) continue;
     const shown: PrSlotView[] = [];
     const withheld: PrSlotView[] = [];
@@ -330,7 +337,9 @@ export function slotsView(data: readonly SlotData[], full: boolean): RepoSlotsVi
       repo,
       limit: rules.openPrLimit,
       slots: [...shown, ...withheld],
-      free: Math.max(0, rules.openPrLimit - slots.length),
+      free: incomplete ? 0 : Math.max(0, rules.openPrLimit - slots.length),
+      // Not named "incomplete": the privacy check reserves that word for the owner's post count.
+      partial: incomplete,
       queue: entries
     });
   }
@@ -343,7 +352,7 @@ export type OverviewData = { view: OverviewView; openAskRows: AskRow[] };
  * The overview. Its budget, of a handler's 100 index scans and 1,000 rows
  * returned: three scans for the items (at most LIMITS.maxItems rows), the open
  * asks (at most MAX_OPEN_ASKS) and the sync row, then the PR slots (see
- * readSlotData). 14 scans and 811 rows at most. The owner's overview adds one
+ * readSlotData). 14 scans and 622 rows at most. The owner's overview adds one
  * scan and one row per open ask on top (see owner.ts).
  */
 export async function readOverview(db: PublicDb, full: boolean): Promise<OverviewData> {

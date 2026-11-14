@@ -40,7 +40,14 @@ function clockChangesFor(link: LinkRow, next: Snapshot): Change[] {
   const ref = `${link.repo}#${link.number}`;
   const sweep = `daily sweep (${sweepTimeUtc(rules)} UTC)`;
   const changes: Change[] = [];
-  if (added(rules.closingLabel)) {
+  // A notice that was lifted and given again between two refreshes leaves the labels as
+  // they were. Its new time is what shows it.
+  const renewed =
+    next.labels.includes(rules.closingLabel) &&
+    typeof link.ghClosingNoticeAt === "number" &&
+    next.closingNoticeAt !== null &&
+    next.closingNoticeAt !== link.ghClosingNoticeAt;
+  if (added(rules.closingLabel) || renewed) {
     changes.push({
       type: "closing_notice",
       note: `${ref} got a closing notice. Unless something happens on it, upstream closes it at the first ${sweep} more than ${rules.noticeHours} hours after the notice.`
@@ -190,6 +197,7 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
         ghLastActivityAt: snapshot.lastActivityAt,
         // Null clears it: the time is kept only while the PR carries the closing label.
         ghClosingNoticeAt: snapshot.closingNoticeAt,
+        ghMergeable: snapshot.mergeable,
         // The query reads only recent comments and reviews. When none of them is by
         // another person, an older stored value still stands.
         ...(snapshot.otherActivityAt !== null && snapshot.otherActivityBy !== null

@@ -23,6 +23,8 @@ export type UpstreamRules = {
   closingLabel: string;
   /** A PR carrying this label is exempt from both clocks. */
   keepOpenLabel: string;
+  /** Upstream puts this on a PR whose author is not vouched for. Only such a PR is asked to rebase. */
+  unvouchedLabel: string;
   /** When the bot's daily sweep runs, in minutes after 00:00 UTC. A close happens at the first sweep after its deadline. */
   sweepMinuteUtc: number;
 };
@@ -36,6 +38,7 @@ export const UPSTREAM_RULES: Readonly<Record<string, UpstreamRules>> = {
     rebaseLabel: "needs-rebase",
     closingLabel: "triage:closing",
     keepOpenLabel: "triage:keep-open",
+    unvouchedLabel: "vouch:unvouched",
     sweepMinuteUtc: 5 * 60 + 23
   }
 };
@@ -69,6 +72,8 @@ export type ClockLink = {
   lastActivityAt: number | null;
   /** When the closing label was last applied. Null when the PR does not carry it, or the time could not be read. */
   closingNoticeAt: number | null;
+  /** GitHub's answer to "can it merge": "MERGEABLE", "CONFLICTING" or "UNKNOWN". Null when it was not read. */
+  mergeable: string | null;
 };
 
 export type ClosingClock =
@@ -87,6 +92,11 @@ export type ClosingClock =
  * Only an open PR of ours in a repository with rules has one, and the keep-open
  * label stops both. A closing notice outranks a rebase request: while a PR
  * carries the notice, the bot does not look at its conflict.
+ *
+ * The rebase clock runs only where the bot would close: on a PR marked as
+ * unvouched that GitHub does not report as mergeable. On any other PR the bot's
+ * next sweep takes the rebase label off instead. When GitHub's answer is not
+ * known, the clock is shown, since the label was put there for a conflict.
  */
 export function closingClock(link: ClockLink, now: number): ClosingClock | null {
   const rules = rulesFor(link.repo);
@@ -104,7 +114,8 @@ export function closingClock(link: ClockLink, now: number): ClosingClock | null 
     return { kind: "notice", closesAt, due: now >= closesAt };
   }
 
-  if (link.labels.includes(rules.rebaseLabel) && link.lastActivityAt !== null) {
+  const subject = link.labels.includes(rules.unvouchedLabel) && link.mergeable !== "MERGEABLE";
+  if (subject && link.labels.includes(rules.rebaseLabel) && link.lastActivityAt !== null) {
     const closesAt = link.lastActivityAt + rules.conflictIdleDays * DAY;
     return { kind: "rebase", closesAt, due: now >= closesAt };
   }

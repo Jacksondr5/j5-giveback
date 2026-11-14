@@ -59,9 +59,8 @@ export const LIMITS = {
   // The overview's PR slots. Its reads share the handler's budget with the rest of the overview: see readPrSlots.
   // Our PRs on items that are not closed, whatever their state on GitHub. Upstream allows 3 open at once.
   maxOwnPrLinks: 60,
-  // Queued items whose text approval is read, one index scan each, and the asks read for each.
+  // Queued items whose text approval is read: one index scan and one row each.
   queueTextChecks: 10,
-  queueAsksPerItem: 20,
   // "Posted" events read for the count of upstream posts over the last eight weeks.
   maxPostsRead: 300
 } as const;

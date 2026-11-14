@@ -314,8 +314,10 @@ export type CapacityRepo = {
   limit: number;
   /** How many of our PRs are open: `slots.length`. */
   open: number;
-  /** Slots still free: the limit less `open`, never below 0. */
+  /** Slots still free: the limit less `open`, never below 0. It is 0 when `incomplete`. */
   free: number;
+  /** True when there were more PR links of ours than one read takes. `open` is then a floor, and nothing should be posted on it. */
+  incomplete: boolean;
   /** Oldest PR first. */
   slots: CapacitySlot[];
   /** In queue order. */
@@ -407,6 +409,8 @@ export type LinkView = {
   lastActivityAt: number | null;
   /** When upstream's closing label was last applied. Null unless the PR carries it now. */
   closingNoticeAt: number | null;
+  /** A PR's "MERGEABLE", "CONFLICTING" or "UNKNOWN" on GitHub. Null when it was not read. */
+  mergeable: string | null;
   /** Last comment or review by someone other than the fork owner, bots excluded. */
   lastOtherActivityAt: number | null;
   lastOtherActivityBy: string | null;
@@ -542,8 +546,10 @@ export type RepoSlotsView = {
   limit: number;
   /** Our open PRs, oldest first. More than `limit` when we are over it. */
   slots: PrSlotView[];
-  /** Slots still free: the limit less the open PRs, never below 0. */
+  /** Slots still free: the limit less the open PRs, never below 0. It is 0 when `partial`. */
   free: number;
+  /** True when there were more PR links of ours than one read takes. The slots shown are then a floor. */
+  partial: boolean;
   /** Items waiting for a slot, in order. */
   queue: QueueEntryView[];
 };

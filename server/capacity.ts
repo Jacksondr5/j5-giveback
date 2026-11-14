@@ -27,15 +27,16 @@ export async function readPostCounts(db: ReadDb, now: number): Promise<PostCount
   const rows = await db.events
     .withIndex("by_type_at", (q) => q.eq("type", "posted").gte("at", postsWindowStart(now)))
     .order("desc")
-    .take(LIMITS.maxPostsRead);
+    .take(LIMITS.maxPostsRead + 1);
+  const counted = rows.slice(0, LIMITS.maxPostsRead);
   return {
     ...countPosts(
-      rows.map((row) => row.at),
+      counted.map((row) => row.at),
       now
     ),
     // No cap on posts has been set. The field is here for the day one is.
     cap: null,
-    incomplete: rows.length >= LIMITS.maxPostsRead
+    incomplete: rows.length > LIMITS.maxPostsRead
   };
 }
 
@@ -43,9 +44,9 @@ export async function readPostCounts(db: ReadDb, now: number): Promise<PostCount
  * GET /api/agent/capacity: bearer AGENT_SECRET, read-only.
  *
  * Budget, of a handler's 100 index scans and 1,000 rows returned: the items
- * (one scan, at most LIMITS.maxItems rows), the PR slots (11 scans and 260 rows
+ * (one scan, at most LIMITS.maxItems rows), the PR slots (11 scans and 71 rows
  * at most, see readSlotData) and the posts (one scan, at most LIMITS.maxPostsRead
- * rows). 13 scans and 910 rows at most.
+ * rows and one more). 13 scans and 722 rows at most.
  */
 export async function handleCapacity(ctx: QueryServerContext, req: EndpointRequest): Promise<EndpointResponse> {
   const denied = checkBearer(ctx.env, req, "AGENT_SECRET");
@@ -55,11 +56,12 @@ export async function handleCapacity(ctx: QueryServerContext, req: EndpointReque
 
   const items = await db.items.withIndex("by_creation").take(LIMITS.maxItems);
   const data = await readSlotData(db, items, true);
-  const repos: CapacityRepo[] = data.map(({ repo, rules, slots, queue }) => ({
+  const repos: CapacityRepo[] = data.map(({ repo, rules, slots, queue, incomplete }) => ({
     repo,
     limit: rules.openPrLimit,
     open: slots.length,
-    free: Math.max(0, rules.openPrLimit - slots.length),
+    free: incomplete ? 0 : Math.max(0, rules.openPrLimit - slots.length),
+    incomplete,
     slots: slots.map(({ link, item }) => ({
       url: link.url,
       repo: link.repo,

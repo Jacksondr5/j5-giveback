@@ -29,7 +29,7 @@ const UNDISCLOSED_TITLE = "Undisclosed candidate";
 const UNDISCLOSED_ALLOWED = ["id", "number", "disclosed", "title", "stage", "waitingOn", "waitingSince", "foundAt", "updatedAt", "closedAt"];
 // Everything the public overview may carry. A new key fails the check until it is added here on purpose.
 const OVERVIEW_KEYS = ["generatedAt", "stats", "pipeline", "waiting", "outcomes", "openAsks", "prSlots", "sync"];
-const REPO_SLOTS_KEYS = ["repo", "limit", "slots", "free", "queue"];
+const REPO_SLOTS_KEYS = ["repo", "limit", "slots", "free", "partial", "queue"];
 const SLOT_KEYS = ["link", "item"];
 const QUEUE_ENTRY_KEYS = ["position", "item", "text"];
 const ITEM_REF_KEYS = ["id", "number", "disclosed", "slug", "title", "stage"];
@@ -266,7 +266,10 @@ async function main() {
     for (const repo of overview.data.prSlots || []) {
       const where = `overview.prSlots(${repo.repo})`;
       onlyKeys(repo, REPO_SLOTS_KEYS, where);
-      check(repo.free === Math.max(0, repo.limit - repo.slots.length), `${where}: free does not follow from the limit and the slots.`);
+      check(
+        repo.free === (repo.partial ? 0 : Math.max(0, repo.limit - repo.slots.length)),
+        `${where}: free does not follow from the limit and the slots.`
+      );
       for (const slot of repo.slots) {
         onlyKeys(slot, SLOT_KEYS, `${where} slot`);
         checkItemRef(slot.item, `${where} slot`);

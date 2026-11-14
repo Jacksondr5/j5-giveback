@@ -78,6 +78,8 @@ export const schema = {
     ghLastActivityAt: number().optional(),
     // When upstream's closing label was last applied. Set only while the PR carries that label.
     ghClosingNoticeAt: number().optional(),
+    // A PR's "MERGEABLE", "CONFLICTING" or "UNKNOWN", as GitHub gives it.
+    ghMergeable: string().optional(),
     ghOtherActivityAt: number().optional(),
     ghOtherActivityBy: string().optional(),
     macroscopeVerdict: string().optional(),
@@ -105,6 +107,8 @@ export const schema = {
   })
     .index("by_key", ["key"])
     .index("by_item", ["itemId"])
+    // An item's asks of one kind, by when they were opened: the newest text approval is one row away.
+    .index("by_item_kind", ["itemId", "kind", "openedAt"])
     .index("by_open", ["isOpen", "openedAt"]),
 
   events: table({

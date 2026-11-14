@@ -101,6 +101,7 @@ function link(patch: Partial<LinkView> = {}): LinkView {
     macroscopeVerdict: null,
     lastActivityAt: null,
     closingNoticeAt: null,
+    mergeable: null,
     lastOtherActivityAt: null,
     lastOtherActivityBy: null,
     triageBucket: null,
@@ -559,9 +560,28 @@ equal(fillsSlot({ kind: "issue", ownership: "ours", state: "open" }), false, "an
 equal(fillsSlot({ kind: "comment", ownership: "ours", state: "open" }), false, "a comment is not a PR");
 
 // The clock. NOW is 11 Nov 2026 12:00 UTC.
-const labelled = (labels: string[], patch: Partial<LinkView> = {}) => link({ labels, lastActivityAt: NOW - 2 * DAY, ...patch });
+// Upstream marks an unvouched author's PR, and only such a PR is asked to rebase. Ours carry the mark.
+const labelled = (labels: string[], patch: Partial<LinkView> = {}) =>
+  link({ labels: [...labels, "vouch:unvouched"], lastActivityAt: NOW - 2 * DAY, ...patch });
 equal(closingClock(labelled([]), NOW), null, "no label, no clock");
-equal(closingClock(labelled(["size:M", "vouch:unvouched"]), NOW), null, "other labels start nothing");
+equal(closingClock(labelled(["size:M"]), NOW), null, "other labels start nothing");
+equal(
+  closingClock(link({ labels: ["needs-rebase"], lastActivityAt: NOW - 2 * DAY }), NOW),
+  null,
+  "without the unvouched mark the bot takes the rebase label off, so no clock runs"
+);
+equal(
+  closingClock(labelled(["needs-rebase"], { mergeable: "MERGEABLE" }), NOW),
+  null,
+  "a PR that merges cleanly is not closed: the label comes off at the next sweep"
+);
+equal(closingClock(labelled(["needs-rebase"], { mergeable: "CONFLICTING" }), NOW)?.kind, "rebase", "a conflicting PR has the clock");
+equal(closingClock(labelled(["needs-rebase"], { mergeable: "UNKNOWN" }), NOW)?.kind, "rebase", "GitHub has not said: the clock is shown");
+equal(
+  closingClock(link({ labels: ["triage:closing"], closingNoticeAt: NOW - HOUR, lastActivityAt: NOW - HOUR }), NOW)?.kind,
+  "notice",
+  "a closing notice needs no unvouched mark"
+);
 equal(
   closingClock(labelled(["needs-rebase"]), NOW),
   { kind: "rebase", closesAt: NOW + 5 * DAY, due: false },
