@@ -242,11 +242,14 @@ thread_events() {
   gh api "repos/$repo/issues/$n/comments?since=$since&per_page=100" --jq '
     .[] | select(.created_at > "'"$since"'") | select(.user.type != "Bot" and .user.login != "'"$ME"'")
     | "\(.created_at) comment by \(.user.login)'"\\($ASSOCIATION)"': \(.body | gsub("\\s+"; " ") | .[0:200]) \(.html_url)"'
+  # A reference counts only from a PR in the same repository. Forks that merge
+  # upstream into themselves reference every PR in the range, and that is not news.
   gh api "repos/$repo/issues/$n/timeline?per_page=100" --paginate --jq '
     .[] | select((.created_at // .submitted_at // "") > "'"$since"'")
     | select((.actor.login // .user.login // "") != "'"$ME"'")
     | select(.event == "labeled" or .event == "unlabeled" or .event == "closed" or .event == "reopened" or .event == "merged"
-             or (.event == "cross-referenced" and (.source.issue.pull_request != null)))
+             or (.event == "cross-referenced" and (.source.issue.pull_request != null)
+                 and ((.source.issue.repository.full_name // "") == "'"$repo"'")))
     | select((.event != "labeled" and .event != "unlabeled") or ((.label.name // "") | test("^(vouch|size):") | not))
     | "\(.created_at // .submitted_at) \(.event) by \(.actor.login // .user.login // "?")"
       + (if .label then ": " + .label.name else "" end)
