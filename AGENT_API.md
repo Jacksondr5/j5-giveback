@@ -24,6 +24,7 @@ Configuration comes from environment variables, or from a file of `KEY=VALUE` li
 | `GIVEBACK_URL` | Base URL of the site, such as `https://j5-giveback.lakebed.app` |
 | `GIVEBACK_AGENT_SECRET` | Bearer secret for every command except `refresh` |
 | `GIVEBACK_REFRESH_SECRET` | Bearer secret for `refresh` |
+| `GIVEBACK_DISPATCHER_ADDRESS` | Optional. The address of the dispatcher agent, which takes items that have no agent. `agents` prints it. |
 | `GIVEBACK_ENV_FILE` | Path of the file. Default: `~/.config/j5-giveback/env` |
 
 ```sh
@@ -517,9 +518,9 @@ These two are the one exception to the rule against writing internal identifiers
 }
 ```
 
-`unassigned` counts the open items with no `agentAddress`. `incomplete` is `false` in normal operation; if it is ever `true`, the list could not read every private row, an item may show no agent when it has one, and nothing should be dispatched from it. A watcher uses this list to tell an item's agent about activity on its threads; a dispatcher uses it to find items that still need an agent. When an item closes it drops out of the list; clear the two fields when its agent is retired.
+`unassigned` counts the open items with no `agentAddress`. `incomplete` is `false` in normal operation; if it is ever `true`, the list could not read every private row, an item may show no agent when it has one, and nothing should be dispatched from it. A watcher uses this list to tell an item's agent about activity on its threads; a dispatcher uses it to find items that still need an agent. When an item closes it drops out of the list. Leave the two fields on it: they say who worked the item.
 
-With the script: `scripts/giveback agents`.
+With the script: `scripts/giveback agents`. The script adds one field of its own, `dispatcherAddress`, from the local setting `GIVEBACK_DISPATCHER_ADDRESS` (null when it is not set). The dispatcher is the agent that takes items with no agent.
 
 ### `GET /api/agent/watchlist`
 

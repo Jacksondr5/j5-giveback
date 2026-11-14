@@ -1,0 +1,12 @@
+[Unit]
+Description=Giveback dashboard: watch upstream threads every 15 minutes
+
+[Timer]
+# At 8, 23, 38 and 53 minutes past the hour: three minutes after each refresh,
+# so the state the watcher reads from the dashboard is fresh.
+OnCalendar=*:8/15
+# Run once after a boot if a run was missed while the machine was off.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

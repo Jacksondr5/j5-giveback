@@ -39,6 +39,7 @@ Usage:
   giveback link apply <file|->        JSON: {"links":[{"url":...,"triageBucket":...,"triageRank":...}]} or an array.
   giveback watchlist                  Every link on an item that is not closed, with its item and GitHub state.
   giveback agents                     Every item that is not closed, with the agent that owns it (or none).
+                                      Also prints the dispatcher's address, which takes items with no agent.
   giveback load <file>                JSON: {"items":[...],"asks":[...],"events":[...]}, applied in that order.
   giveback export [--raw] [--out FILE]
                                       Everything, public and private. Default: items with their ID
@@ -51,6 +52,8 @@ It is never read from arguments.
   GIVEBACK_URL             Base URL, such as https://j5-giveback.lakebed.app
   GIVEBACK_AGENT_SECRET    Bearer secret for every command except refresh
   GIVEBACK_REFRESH_SECRET  Bearer secret for refresh
+  GIVEBACK_DISPATCHER_ADDRESS
+                           Optional. The address of the dispatcher agent. "agents" prints it.
   GIVEBACK_ENV_FILE        Path of the file. Default: ~/.config/j5-giveback/env
 In the file, AGENT_SECRET and REFRESH_SECRET are accepted as names too, so a
 capsule's .env.lakebed.server works for local development.
@@ -383,7 +386,8 @@ async function agents(args) {
   if (args.length > 0) usageError("agents takes no arguments.");
   const { status, payload } = await call("GET", "/api/agent/item-agents", "agent");
   if (status !== 200 || payload.ok !== true) reportFailure("GET", "/api/agent/item-agents", status, payload);
-  print(payload);
+  // The dispatcher is where an item with no agent goes. Its address is local configuration, not dashboard data.
+  print({ ...payload, dispatcherAddress: setting(["GIVEBACK_DISPATCHER_ADDRESS"]) });
 }
 
 async function load(args) {

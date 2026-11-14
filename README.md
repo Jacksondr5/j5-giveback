@@ -94,12 +94,13 @@ Local data resets when `lakebed dev` restarts. Load the seed again.
 
 ## Scheduled jobs
 
-Lakebed has no scheduler, so two jobs run from a machine that stays on, as systemd user timers. `ops/` holds them.
+Lakebed has no scheduler, so three jobs run from a machine that stays on, as systemd user timers. `ops/` holds them.
 
 | Timer | When | What it runs |
 |---|---|---|
 | `giveback-refresh` | Every 15 minutes | `ops/bin/refresh.sh`: asks the site to re-read the state of every open upstream thread from GitHub |
 | `giveback-backup` | Daily at 08:40 | `ops/bin/backup.sh`: saves a full export and deletes copies older than 30 days |
+| `giveback-watch` | Every 15 minutes, 3 minutes after the refresh | `ops/bin/watch.sh`: checks the upstream threads of every item that is not closed, and messages the agent that owns the item when one has new activity |
 
 Install or update them, from a checkout on that machine:
 
@@ -112,10 +113,11 @@ The installed units carry this checkout's path and run the scripts straight from
 
 The jobs find Node on `PATH`, then where fnm, Volta and nvm keep their default version. Set `GIVEBACK_NODE` to choose one.
 
-Two things on that machine are local and must never be committed:
+Three things on that machine are local and must never be committed:
 
-- `~/.config/j5-giveback/env`: the site URL and the two bearer secrets. Three `KEY=value` lines: `GIVEBACK_URL`, `GIVEBACK_AGENT_SECRET`, `GIVEBACK_REFRESH_SECRET`. Keep it readable by its owner only.
+- `~/.config/j5-giveback/env`: the site URL and the two bearer secrets, as `KEY=value` lines: `GIVEBACK_URL`, `GIVEBACK_AGENT_SECRET`, `GIVEBACK_REFRESH_SECRET`. The watcher's settings go here too (below). Keep it readable by its owner only.
 - `~/.local/share/j5-giveback/backups/`: the exports. Each holds everything, private fields included. The dashboard is the only other copy of this data, and Lakebed's alpha gives no recovery guarantee.
+- `~/.local/share/j5-giveback/watch/state.json`: what the watcher has already reported. It names agents' addresses and non-public items' threads.
 
 Check on them:
 
@@ -124,7 +126,35 @@ systemctl --user list-timers | grep giveback
 journalctl --user -u giveback-refresh.service -n 20
 ```
 
-A failed refresh shows on the site as a stale sync. A failed backup shows nowhere but the journal.
+A failed refresh shows on the site as a stale sync. A failed backup or a failed watch shows nowhere but the journal.
+
+### The watcher
+
+`ops/bin/watch.sh` reads `giveback watchlist` for the threads and `giveback agents` for who owns each item, asks GitHub what happened on each thread since its last run, and sends one message per item with `j5 a2a send`. An item with no recorded agent goes to the dispatcher. It needs `gh` (signed in), `jq` and the `j5` binary.
+
+How closely a thread is watched depends on its links:
+
+| Link | What is reported |
+|---|---|
+| `ours` (a thread we posted in) | Comments, reviews, labels, PRs that reference it, review-bot verdicts, failing checks |
+| `theirs`, role `base` or `covering` | Comments and reviews by people, and the thread closing, merging or reopening |
+| `theirs`, role `related` | A change of state alone, taken from the dashboard's own snapshot |
+
+A thread of ours stays watched for 14 days after its item closes, because a reply or a reopening often follows a close. The watcher remembers those threads itself, since the watch list no longer names them.
+
+Settings, in `~/.config/j5-giveback/env`:
+
+| Name | Purpose |
+|---|---|
+| `GIVEBACK_DISPATCHER_ADDRESS` | Required. The dispatcher agent's address. `giveback agents` prints it too. |
+| `J5_TOKEN_FILE` | Required. A file holding the token from `j5 a2a token issue`. |
+| `GIVEBACK_J5_BIN` | The `j5` binary, when it is not on the timer's `PATH` |
+| `J5CODE_HOME`, `J5_ORIGIN` | Passed to `j5` when set |
+| `GIVEBACK_GITHUB_LOGIN` | Our own login, whose activity is not news. Default: the login `gh` is signed in with. |
+| `GIVEBACK_MAINTAINERS` | Free text naming the upstream maintainers. It is added to each message. |
+| `GIVEBACK_WATCH_LINGER_DAYS` | Days a thread of ours stays watched after its item closes. Default 14. |
+
+`ops/bin/watch.sh --dry-run` prints what it would send, and sends and remembers nothing. A delivery that fails is tried again on the next run, under the same message id, so nothing arrives twice.
 
 ## Things to know
 
