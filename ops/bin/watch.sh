@@ -111,8 +111,9 @@ state="$STATE_DIR/state.json"
 # { "<thread>": "<ISO time up to which its activity has been read>",
 #   "fail:<thread>": "<failing check names last seen>",       our PRs
 #   "state:<thread>": "<state last seen on the dashboard>",
-#   "linger:<thread>": { "items": [{ "item", "short", "to", "listed" }] },
-#       the items a thread of ours belongs to, and when the dashboard last said so
+#   "linger:<thread>": { "ownpr", "items": [{ "item", "short", "to", "listed" }] },
+#       the items a thread of ours belongs to, when the dashboard last said so,
+#       and whether the thread is a PR of our own
 #   "outbox": [{ "id", "kind", "item", "short", "to", "closed", "created", "summary" }] }
 #       news that has been read and not yet delivered. "kind" is "slot" for the
 #       note to the dispatcher that one of our PRs closed, and absent otherwise.
@@ -173,13 +174,14 @@ plan="$(jq --argjson agents "$agents" --argjson old "$oldstate" --arg now "$now"
       | select(.key | startswith("linger:")) | select((.value | type) == "object")
       | (.key | ltrimstr("linger:")) as $key
       | (.value.listed // "") as $recorded # where the first version of this script kept the time
+      | (.value.ownpr == true) as $ownpr
       | (.value.items // [])[]
       | select(type == "object") | select((.item // "") != "")
       | .listed = (.listed // $recorded)
       | select(.listed >= $cutoff)
       | . as $kept
       | select([$rows[] | select(.key == $key and .item.item == $kept.item and .item.ours)] | length == 0)
-      | { key: $key, scope: "full", state: "",
+      | { key: $key, scope: "full", state: "", ownpr: $ownpr,
           item: { item: $kept.item, short: ($kept.short // $kept.item),
                   to: (if $owner | has($kept.item) then ($owner[$kept.item].agentAddress // "") else ($kept.to // "") end),
                   closed: ($owner | has($kept.item) | not), ours: true, listed: $kept.listed } } ] as $kept
@@ -193,7 +195,8 @@ plan="$(jq --argjson agents "$agents" --argjson old "$oldstate" --arg now "$now"
           items: (map(.item) | group_by(.item) | map(sort_by(.closed) | .[0])) })),
       linger: ($groups | map(
         { key: ("linger:" + .[0].key),
-          value: { items: (map(.item) | map(select(.ours)) | group_by(.item)
+          value: { ownpr: (map(.ownpr // false) | any),
+                   items: (map(.item) | map(select(.ours)) | group_by(.item)
                            | map(sort_by(.listed) | last | { item, short, to, listed })) } }
         | select(.value.items | length > 0)) | from_entries) }
 ' <<<"$watchlist")"
@@ -249,11 +252,14 @@ thread_events() {
   gh api "repos/$repo/issues/$n/comments?since=$since&per_page=100" --jq '
     .[] | select(.created_at > "'"$since"'") | select(.user.type != "Bot" and .user.login != "'"$ME"'")
     | "\(.created_at) comment by \(.user.login)'"\\($ASSOCIATION)"': \(.body | gsub("\\s+"; " ") | .[0:200]) \(.html_url)"'
+  # Our own activity is not news, except closing or reopening the thread: the item's
+  # agent should know, and a PR of ours that closes frees a slot whoever closed it.
   # A reference counts only from a PR in the same repository. Forks that merge
   # upstream into themselves reference every PR in the range, and that is not news.
   gh api "repos/$repo/issues/$n/timeline?per_page=100" --paginate --jq '
     .[] | select((.created_at // .submitted_at // "") > "'"$since"'")
-    | select((.actor.login // .user.login // "") != "'"$ME"'")
+    | select((.actor.login // .user.login // "") != "'"$ME"'"
+             or .event == "closed" or .event == "reopened" or .event == "merged")
     | select(.event == "labeled" or .event == "unlabeled" or .event == "closed" or .event == "reopened" or .event == "merged"
              or (.event == "cross-referenced" and (.source.issue.pull_request != null)
                  and ((.source.issue.repository.full_name // "") == "'"$repo"'")))
