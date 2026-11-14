@@ -507,6 +507,7 @@ These two are the one exception to the rule against writing internal identifiers
   "ok": true,
   "generatedAt": 1794700000000,
   "unassigned": 1,
+  "incomplete": false,
   "items": [
     { "itemSlug": "merge-back-tooltip-unreachable", "itemNumber": 30, "itemShortId": "GB-30", "itemStage": "deciding",
       "agentName": "GB-30 · Merge back tooltip", "agentAddress": "agent:j5:a2a:..." },
@@ -516,7 +517,7 @@ These two are the one exception to the rule against writing internal identifiers
 }
 ```
 
-`unassigned` counts the open items with no `agentAddress`. A watcher uses this list to tell an item's agent about activity on its threads; a dispatcher uses it to find items that still need an agent. When an item closes it drops out of the list; clear the two fields when its agent is retired.
+`unassigned` counts the open items with no `agentAddress`. `incomplete` is `false` in normal operation; if it is ever `true`, the list could not read every private row, an item may show no agent when it has one, and nothing should be dispatched from it. A watcher uses this list to tell an item's agent about activity on its threads; a dispatcher uses it to find items that still need an agent. When an item closes it drops out of the list; clear the two fields when its agent is retired.
 
 With the script: `scripts/giveback agents`.
 

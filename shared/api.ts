@@ -473,6 +473,8 @@ export type ItemAgentsResponse = {
   generatedAt: number;
   /** How many items that are not closed have no agent recorded. */
   unassigned: number;
+  /** True when not every private row could be read. Then an item may wrongly show no agent. */
+  incomplete: boolean;
   items: ItemAgentEntry[];
 };
 

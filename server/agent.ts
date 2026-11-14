@@ -1070,8 +1070,9 @@ export async function handleExport(ctx: QueryServerContext, req: EndpointRequest
 /**
  * Every item that is not closed, with the agent that owns it. This is how a
  * watcher finds whom to tell about an item, and how a dispatcher finds the
- * items nobody owns. Two reads: the items and the private rows, each at most
- * LIMITS.maxItems, which stays inside a handler's 1,000 rows.
+ * items nobody owns. Two reads: the items (at most LIMITS.maxItems) and the
+ * private rows, with the rest of a handler's 1,000 rows as headroom in case
+ * the private table ever holds a stray or duplicate row.
  */
 export async function handleItemAgents(ctx: QueryServerContext, req: EndpointRequest): Promise<EndpointResponse> {
   const denied = checkBearer(ctx.env, req, "AGENT_SECRET");
@@ -1079,9 +1080,13 @@ export async function handleItemAgents(ctx: QueryServerContext, req: EndpointReq
   const db = ctx.db as unknown as ReadDb;
 
   const items = await db.items.withIndex("by_creation").take(LIMITS.maxItems);
-  const privateRows = await db.itemPrivate.withIndex("by_creation").take(LIMITS.maxItems);
+  const privateCap = 1000 - LIMITS.maxItems;
+  const privateRows = await db.itemPrivate.withIndex("by_creation").take(privateCap);
+  // The oldest row wins, as it does where the owner view and the upsert read one item's row.
   const privateByItem = new Map<string, ItemPrivateRow>();
-  for (const row of privateRows) privateByItem.set(row.itemId, row);
+  for (const row of privateRows) {
+    if (!privateByItem.has(row.itemId)) privateByItem.set(row.itemId, row);
+  }
 
   const entries: ItemAgentEntry[] = [];
   let unassigned = 0;
@@ -1102,7 +1107,15 @@ export async function handleItemAgents(ctx: QueryServerContext, req: EndpointReq
   }
   entries.sort((left, right) => (left.itemNumber ?? Infinity) - (right.itemNumber ?? Infinity));
 
-  const response: ItemAgentsResponse = { ok: true, generatedAt: Date.now(), unassigned, items: entries };
+  const response: ItemAgentsResponse = {
+    ok: true,
+    generatedAt: Date.now(),
+    unassigned,
+    // True only if the private table held more rows than one read can take. An
+    // item may then show no agent when it has one, so do not dispatch on this answer.
+    incomplete: privateRows.length >= privateCap,
+    items: entries
+  };
   return json(response);
 }
 
