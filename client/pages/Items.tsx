@@ -3,6 +3,8 @@
 import { Link, navigate, useLocation } from "lakebed/client";
 import type { ComponentChildren } from "preact";
 import {
+  CHANGE_KINDS,
+  CHANGE_KIND_LABELS,
   OUTCOMES,
   OUTCOME_LABELS,
   ROUTE_LABELS,
@@ -14,8 +16,8 @@ import {
   type Stage
 } from "../../shared/enums";
 import { Icon } from "../components/icons";
-import { AskTag, OutcomeTag, SideKey, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
-import { Age, CARD, FOCUS, ItemTitleLink, LINK, SERIF, Skeleton, TEXT_DIM, YOU_TAG, cx } from "../components/ui";
+import { AskTag, ChangeKindTag, OutcomeTag, SideKey, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
+import { Age, CARD, FOCUS, ItemTitleLink, LINK, SERIF, Skeleton, TEXT_DIM, YOU_TAG, cx, useNowValue } from "../components/ui";
 import { client, useTitle, useViewer } from "../data";
 import { openAsksByItem, repositories, sortForList, type ListAsk, type ListItem } from "../lib/derive";
 import {
@@ -28,7 +30,7 @@ import {
   parseFilters,
   type ItemFilters
 } from "../lib/filters";
-import { askAction, groupByStage, listThreads, stageCounts, stageIcon, stageWaitsOnJackson } from "../lib/present";
+import { askAction, groupByStage, hasThreadSignals, listThreads, stageCounts, stageIcon, stageWaitsOnJackson } from "../lib/present";
 
 // ---------------------------------------------------------------------------
 // Filters
@@ -114,7 +116,7 @@ function Filters({ filters, items }: { filters: ItemFilters; items: ListItem[] }
   return (
     <div aria-label="Filter items" className="space-y-2" role="search">
       <StageTabs counts={stageCounts(items)} filters={filters} total={items.length} />
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,22rem)_repeat(3,minmax(0,13rem))]">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,22rem)_repeat(4,minmax(0,13rem))]">
         <label className="relative col-span-2 block min-w-0 md:col-span-1">
           <span className="sr-only">Search ID, title or ref</span>
           <Icon className={cx("pointer-events-none absolute left-2 top-2", TEXT_DIM)} name="search" />
@@ -138,7 +140,13 @@ function Filters({ filters, items }: { filters: ItemFilters; items: ListItem[] }
           options={OUTCOMES.map((outcome) => ({ value: outcome, label: OUTCOME_LABELS[outcome] }))}
           value={filters.outcome}
         />
-        <label className="col-span-2 block min-w-0 md:col-span-1">
+        <Select
+          label="Kind of change"
+          onChange={(value) => set({ kind: isOneOf(CHANGE_KINDS, value) ? value : null })}
+          options={CHANGE_KINDS.map((kind) => ({ value: kind, label: CHANGE_KIND_LABELS[kind] }))}
+          value={filters.kind}
+        />
+        <label className="block min-w-0">
           <span className="sr-only">Repository</span>
           <select
             className={CONTROL}
@@ -186,10 +194,11 @@ function Threads({ item }: { item: ListItem }) {
   );
 }
 
-/** CI, review, the review bot and triage for the item's primary thread, and the upstream-changed marker. */
+/** A closing clock, CI, review, the review bot and triage for the item's primary thread, and the upstream-changed marker. */
 function Checks({ item }: { item: ListItem }) {
+  const now = useNowValue();
   const link = item.primaryLink;
-  const signals = link !== null && (link.ci !== null || link.reviewDecision !== null || link.macroscopeVerdict !== null || link.triageBucket !== null || link.triageRank !== null);
+  const signals = link !== null && hasThreadSignals(link, now);
   if (!signals && item.upstreamChangedAt === null) return <None label="No checks" />;
   return (
     <div className="space-y-0.5">
@@ -279,6 +288,11 @@ function Table({ groups, asks }: { groups: Group[]; asks: Map<string, ListAsk[]>
             <tr className="border-t border-(color:--rule) first:border-t-0" key={item.id}>
               <th className={cx(TD, "text-left font-normal")} scope="row">
                 <ItemTitleLink item={item} notPublic={item.isPublic === false} />
+                {item.changeKind ? (
+                  <span className="mt-1 block">
+                    <ChangeKindTag kind={item.changeKind} />
+                  </span>
+                ) : null}
               </th>
               <td className={TD}>
                 <Threads item={item} />
@@ -332,6 +346,7 @@ function Stack({ groups, asks }: { groups: Group[]; asks: Map<string, ListAsk[]>
                       )}
                     </>
                   )}
+                  <ChangeKindTag kind={item.changeKind} />
                   {item.route ? <span className={cx("text-sm", TEXT_DIM)}>Route: {ROUTE_LABELS[item.route]}</span> : null}
                 </div>
                 {listThreads(item).length > 0 || item.upstreamChangedAt !== null ? (

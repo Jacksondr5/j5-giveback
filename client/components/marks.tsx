@@ -5,16 +5,29 @@
 
 import type { ComponentChildren } from "preact";
 import type { LinkView } from "../../shared/api";
-import { OUTCOME_LABELS, STAGE_LABELS, type FollowUpState, type Outcome, type Stage, type WaitingOn } from "../../shared/enums";
+import {
+  CHANGE_KIND_DESCRIPTIONS,
+  CHANGE_KIND_LABELS,
+  OUTCOME_LABELS,
+  STAGE_LABELS,
+  type ChangeKind,
+  type FollowUpState,
+  type Outcome,
+  type Stage,
+  type WaitingOn
+} from "../../shared/enums";
+import { closingClock, type TextApproval } from "../../shared/upstreamRules";
 import { fullRef, shortRef } from "../lib/format";
 import {
   ciSignal,
+  clockWords,
   macroscopeSignal,
   outcomeMark,
   reviewSignal,
   roleHint,
   roleWord,
   stageIcon,
+  textApprovalWords,
   threadName,
   threadSide,
   threadState,
@@ -23,7 +36,7 @@ import {
   type Tone
 } from "../lib/present";
 import { Icon } from "./icons";
-import { ExternalLink, FOCUS, REF, TEXT_DIM, TONE_TEXT, YOU_TAG, cx } from "./ui";
+import { ExternalLink, FOCUS, REF, TEXT_DIM, TONE_TEXT, YOU_TAG, cx, useNowValue } from "./ui";
 
 // ---------------------------------------------------------------------------
 // Ours or theirs
@@ -154,18 +167,45 @@ function SignalMark({ signal, short }: { signal: Signal; short: string }) {
 }
 
 /**
- * The live signals of a thread, as a wrapping row: CI, review decision, the
- * review bot's verdict and the triage-board place. `words` spells each one out.
+ * The clock upstream's bot has running on one of our open PRs: what it is and
+ * when, in plain words, with the rule in the tooltip. It carries the weight of
+ * a failing check and no more. Renders nothing when no clock is running.
+ */
+export function ClosingClockMark({ link }: { link: LinkView }) {
+  const now = useNowValue();
+  const clock = closingClock(link, now);
+  if (!clock) return null;
+  const words = clockWords(clock, link.repo, now);
+  return (
+    <span className="inline-flex min-w-0 items-start gap-1 text-sm leading-5" title={words.title}>
+      <Icon className={cx("mt-[0.1875rem]", TONE_TEXT[words.tone])} name="clock" size={14} />
+      {/* The sentence wraps inside a narrow column. */}
+      <span className="min-w-0 break-words">{words.text}</span>
+    </span>
+  );
+}
+
+/**
+ * The live signals of a thread, as a wrapping row: a closing clock when one is
+ * running, then CI, review decision, the review bot's verdict and the
+ * triage-board place. `words` spells each one out; the clock is always in words.
  * Renders nothing when the thread has none.
  */
 export function ThreadSignals({ link, words = false, className }: { link: LinkView; words?: boolean; className?: string }) {
+  const now = useNowValue();
+  const clock = closingClock(link, now) !== null;
   const ci = link.ci ? ciSignal(link.ci) : null;
   const review = link.reviewDecision ? reviewSignal(link.reviewDecision) : null;
   const macroscope = link.macroscopeVerdict ? macroscopeSignal(link.macroscopeVerdict) : null;
   const triage = link.triageBucket !== null || link.triageRank !== null;
-  if (!ci && !review && !macroscope && !triage) return null;
+  if (!clock && !ci && !review && !macroscope && !triage) return null;
   return (
     <ul className={cx("flex flex-wrap items-center gap-x-3 gap-y-0.5", className)}>
+      {clock ? (
+        <li className="min-w-0">
+          <ClosingClockMark link={link} />
+        </li>
+      ) : null}
       {ci ? (
         <li>
           <SignalMark short={words ? ci.text : "CI"} signal={ci} />
@@ -265,6 +305,42 @@ export function OutcomeTag({ outcome }: { outcome: Outcome }) {
   );
 }
 
+/**
+ * Bug, behaviour change or feature: the verdict under upstream's own test, as a
+ * small outlined tag, the mark the item page uses for what a thread is to an item.
+ * Renders nothing when no verdict is recorded, which is always so for an undisclosed item.
+ */
+export function ChangeKindTag({ kind }: { kind: ChangeKind | null }) {
+  if (!kind) return null;
+  return (
+    <span
+      className="whitespace-nowrap rounded border border-(color:--edge) px-1.5 text-xs leading-5"
+      title={`Kind of change: ${CHANGE_KIND_DESCRIPTIONS[kind]}`}
+    >
+      {CHANGE_KIND_LABELS[kind]}
+    </span>
+  );
+}
+
+/** Whether the text of a queued item's upstream post is approved. Amber only when it waits on Jackson. */
+export function TextApprovalMark({ text }: { text: TextApproval }) {
+  const words = textApprovalWords(text);
+  if (text === "awaiting") {
+    return (
+      <span className={cx(YOU_TAG, "inline-flex items-center gap-1 whitespace-nowrap rounded px-1.5 text-sm font-semibold leading-5")} title={words.title}>
+        <Icon name="person" size={14} />
+        {words.text}
+      </span>
+    );
+  }
+  return (
+    <span className={cx("inline-flex items-center gap-1 whitespace-nowrap text-sm leading-5", text === "none" && TEXT_DIM)} title={words.title}>
+      {text === "approved" ? <Icon className={TONE_TEXT.open} name="check" size={14} /> : null}
+      {words.text}
+    </span>
+  );
+}
+
 /** The J5-side clean-up after a closed outcome. Nothing is shown when none is owed. */
 export function FollowUp({ state }: { state: FollowUpState | null }) {
   if (state === "owed") return <span className="whitespace-nowrap text-sm font-semibold leading-5">J5 follow-up owed</span>;
@@ -272,7 +348,7 @@ export function FollowUp({ state }: { state: FollowUpState | null }) {
   return null;
 }
 
-/** Raised by the server when a link merged, closed, reopened or began failing CI. */
+/** Raised by the server when a link merged, closed, reopened, began failing CI, or was put on a closing clock. */
 export function UpstreamChanged({ note }: { note: string | null }) {
   return (
     <span className="inline-flex items-center gap-1 whitespace-nowrap text-sm font-semibold leading-5" title={note ?? undefined}>

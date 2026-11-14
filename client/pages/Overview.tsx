@@ -5,8 +5,21 @@
 
 import { Link } from "lakebed/client";
 import type { ComponentChildren } from "preact";
-import type { OverviewView, OwnerOverviewView, SyncView } from "../../shared/api";
-import { AskTag, FollowUp, OutcomeTag, SideKey, StageTag, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
+import type { OverviewView, OwnerOverviewView, PostCountsView, PrSlotView, QueueEntryView, RepoSlotsView, SyncView } from "../../shared/api";
+import { rulesFor, sweepTimeUtc } from "../../shared/upstreamRules";
+import {
+  AskTag,
+  ChangeKindTag,
+  FollowUp,
+  OutcomeTag,
+  SideKey,
+  StageTag,
+  TextApprovalMark,
+  ThreadSignals,
+  ThreadToken,
+  UpstreamChanged,
+  Waiting
+} from "../components/marks";
 import { Icon } from "../components/icons";
 import { Rail } from "../components/Rail";
 import {
@@ -23,6 +36,7 @@ import {
   PrivateBlock,
   SERIF,
   Section,
+  SilentBoundary,
   Skeleton,
   TEXT_DIM,
   cx,
@@ -48,8 +62,8 @@ import {
   type Move
 } from "../lib/derive";
 import { itemsHref } from "../lib/filters";
-import { WEEK, formatAge, formatAgo, formatDateTime, formatSpan, plural } from "../lib/format";
-import { askAction, listThreads, stageWaitsOnJackson } from "../lib/present";
+import { WEEK, formatAge, formatAgo, formatDateTime, formatDayMonth, formatSpan, plural } from "../lib/format";
+import { askAction, listThreads, slotWords, stageWaitsOnJackson } from "../lib/present";
 
 const OFFERED_SHOWN = 12;
 const CLOSED_SHOWN = 8;
@@ -164,9 +178,10 @@ function AskRow({ ask, index, item }: { ask: ListAsk; index: number; item: ListI
           <ItemTitleLink item={ask.item} notPublic={item?.isPublic === false} />
         </p>
         {detail ? <p className={cx("max-w-[46rem] text-sm", TEXT_DIM)}>{detail}</p> : null}
-        {stageImplied && !thread ? null : (
+        {stageImplied && !thread && !item?.changeKind ? null : (
           <div className={META}>
             {stageImplied ? null : <StageTag stage={ask.item.stage} />}
+            <ChangeKindTag kind={item?.changeKind ?? null} />
             {thread ? <ThreadToken link={thread} /> : null}
           </div>
         )}
@@ -198,6 +213,182 @@ function NeedsJackson({ asks, items }: { asks: ListAsk[]; items: ListItem[] }) {
       )}
     </Section>
   );
+}
+
+// ---------------------------------------------------------------------------
+// PR slots
+// ---------------------------------------------------------------------------
+
+// A slot is a block: filled when one of our PRs holds it, an empty outline when
+// it is free, and in the closed-PR red when it is one more than upstream allows.
+// The outline is solid. Dashed is for what only the owner sees, and a free slot is public.
+const SLOT = "h-3 w-5 rounded-[0.1875rem]";
+
+function SlotMeter({ open, limit }: { open: number; limit: number }) {
+  const blocks = Array.from({ length: Math.max(open, limit) }, (_, index) =>
+    index >= limit ? "bg-(--closed)" : index < open ? "bg-(--ink)" : "border-[1.5px] border-(color:--edge) bg-(--paper)"
+  );
+  return (
+    <span aria-hidden="true" className="inline-flex shrink-0 items-center gap-1">
+      {blocks.map((tone, index) => (
+        <span className={cx(SLOT, tone)} key={index} />
+      ))}
+    </span>
+  );
+}
+
+function SlotRow({ slot, item }: { slot: PrSlotView; item: ListItem | undefined }) {
+  const { link } = slot;
+  return (
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 px-3.5 py-2">
+      <div className="min-w-0">
+        <p>
+          <ItemTitleLink item={slot.item} notPublic={item?.isPublic === false} />
+        </p>
+        <div className={META}>
+          {link ? (
+            <ThreadToken link={link} />
+          ) : (
+            <span className={cx("text-sm", TEXT_DIM)} title="This slot is held by a PR of a candidate whose details are withheld.">
+              Our PR, withheld
+            </span>
+          )}
+          <ChangeKindTag kind={item?.changeKind ?? null} />
+          {link ? <ThreadSignals link={link} /> : null}
+        </div>
+      </div>
+      <div className="pt-0.5 text-right text-sm">
+        {link?.createdAt != null ? <Age at={link.createdAt} label="PR opened" prefix="opened" suffix="ago" /> : null}
+      </div>
+    </li>
+  );
+}
+
+function QueueRow({ entry, item }: { entry: QueueEntryView; item: ListItem | undefined }) {
+  return (
+    <li className="grid grid-cols-[1rem_minmax(0,1fr)] gap-x-2.5 px-3.5 py-2">
+      <span className={cx("pt-0.5 text-right text-sm tabular-nums", TEXT_DIM)}>
+        {entry.position}
+        <span className="sr-only"> in the queue:</span>
+      </span>
+      <div className="min-w-0">
+        <p>
+          <ItemTitleLink item={entry.item} notPublic={item?.isPublic === false} />
+        </p>
+        {entry.text !== null || item?.changeKind ? (
+          <div className={META}>
+            {entry.text !== null ? <TextApprovalMark text={entry.text} /> : null}
+            <ChangeKindTag kind={item?.changeKind ?? null} />
+          </div>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function RepoSlots({ slots, items }: { slots: RepoSlotsView; items: Map<string, ListItem> }) {
+  const rules = rulesFor(slots.repo);
+  const open = slots.slots.length;
+  const over = open > slots.limit;
+  return (
+    <Section
+      aside={
+        <span
+          className={TEXT_DIM}
+          title={
+            rules
+              ? `${slots.repo} closes a contributor's new PR while ${slots.limit} of theirs are open. Its bot sweeps once a day, at ${sweepTimeUtc(rules)} UTC.`
+              : undefined
+          }
+        >
+          {slots.repo} allows {slots.limit} open
+        </span>
+      }
+      title="PR slots"
+    >
+      <div className={cx(CARD, "overflow-hidden")}>
+        <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-3.5 py-2">
+          <SlotMeter limit={slots.limit} open={open} />
+          <span className={cx("text-sm", over && "font-semibold")}>{slotWords(open, slots.limit)}</span>
+          {over ? <span className={cx("text-sm", TEXT_DIM)}>A new PR would be closed as it opens.</span> : null}
+        </p>
+        {open > 0 ? (
+          <ul className={cx(DIVIDE, "border-t border-(color:--rule)")}>
+            {slots.slots.map((slot) => (
+              <SlotRow item={items.get(slot.item.id)} key={slot.link?.id ?? slot.item.id} slot={slot} />
+            ))}
+          </ul>
+        ) : null}
+        {slots.queue.length > 0 ? (
+          <>
+            <h3 className="flex items-baseline gap-x-2 border-y border-(color:--rule) bg-(--paper) px-3.5 py-1.5 text-sm font-semibold">
+              Waiting for a slot
+              <span className={cx("font-normal tabular-nums", TEXT_DIM)}>{slots.queue.length}</span>
+            </h3>
+            <ol className={DIVIDE}>
+              {slots.queue.map((entry) => (
+                <QueueRow entry={entry} item={items.get(entry.item.id)} key={entry.item.id} />
+              ))}
+            </ol>
+          </>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
+/** One panel per upstream repository that limits open PRs. Nothing when no item of ours is in one. */
+function PrSlots({ slots, items }: { slots: RepoSlotsView[]; items: ListItem[] }) {
+  if (slots.length === 0) return null;
+  const byId = new Map(items.map((item) => [item.id, item]));
+  return (
+    <>
+      {slots.map((repo) => (
+        <RepoSlots items={byId} key={repo.repo} slots={repo} />
+      ))}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Upstream posts (owner only)
+// ---------------------------------------------------------------------------
+
+/**
+ * How many posts went upstream lately, on every item, public or not. Only the
+ * owner is sent this. A weekly cap has not been set; when one is, it reads after the count.
+ */
+function PostCounts({ posts }: { posts: PostCountsView }) {
+  const last = posts.weeks.length - 1;
+  return (
+    <PrivateBlock>
+      <p>
+        <span className={cx(SERIF, "text-base font-bold tabular-nums")}>{posts.last7Days}</span>{" "}
+        {posts.last7Days === 1 ? "upstream post" : "upstream posts"} in the last 7 days
+        {posts.cap !== null ? `, of ${posts.cap} allowed` : null}
+      </p>
+      <p className={cx("flex flex-wrap items-baseline gap-x-2", TEXT_DIM)}>
+        <span>Per week:</span>
+        <span className="inline-flex gap-x-2 tabular-nums">
+          {posts.weeks.map((week, index) => (
+            <span
+              className={index === last ? "font-semibold text-(color:--ink)" : undefined}
+              key={week.start}
+              title={`Week from Monday ${formatDayMonth(week.start, undefined, "UTC")} (UTC): ${plural(week.count, "post", "posts")}`}
+            >
+              {week.count}
+            </span>
+          ))}
+        </span>
+        <span>so far this week{posts.incomplete ? "; the oldest weeks count low" : ""}</span>
+      </p>
+    </PrivateBlock>
+  );
+}
+
+function OwnerPosts() {
+  const posts = client.useQuery("ownerPosts");
+  return posts === undefined ? null : <PostCounts posts={posts} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +428,7 @@ function MoveRow({ move }: { move: Move }) {
     >
       <div className={META}>
         <StageTag stage={item.stage} />
+        <ChangeKindTag kind={item.changeKind} />
         {reason === "upstream_changed" ? (
           <>
             <UpstreamChanged note={null} />
@@ -336,6 +528,7 @@ function OfferedRow({ item, asks }: { item: ListItem; asks: ListAsk[] }) {
       </div>
       <div className="order-3 col-span-2 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 @2xl:order-none @2xl:col-span-1 @2xl:col-start-1 @2xl:row-start-2">
         {link ? <ThreadToken link={link} /> : item.disclosed ? <span className={cx("text-sm", TEXT_DIM)}>Nothing of ours</span> : null}
+        <ChangeKindTag kind={item.changeKind} />
         {asks.map((ask) => (
           <AskTag key={ask.id}>{askAction(ask.kind, ask.label).action}</AskTag>
         ))}
@@ -423,6 +616,7 @@ function CandidateRow({ item }: { item: ListItem }) {
     <Entry item={item} trail={<Age at={item.foundAt} label="Found" prefix="found" suffix="ago" />}>
       <div className={META}>
         <StageTag hot={hot} stage={item.stage} />
+        <ChangeKindTag kind={item.changeKind} />
         {waiting ? <Waiting waitingOn={item.waitingOn} /> : null}
         {item.disclosed && item.lastValidatedAt !== null ? (
           <span className={cx("text-sm", TEXT_DIM)}>
@@ -461,6 +655,7 @@ function HeldRow({ item }: { item: ListItem }) {
     <Entry item={item} trail={<Age at={item.waitingSince} label="Waiting since" prefix="waiting" />}>
       <div className={META}>
         {item.waitingOn === "jackson" || links.length === 0 ? <Waiting waitingOn={item.waitingOn} /> : null}
+        <ChangeKindTag kind={item.changeKind} />
         {links.map((link) => (
           <ThreadToken key={link.id} link={link} role />
         ))}
@@ -493,6 +688,7 @@ function ClosedRow({ item }: { item: ListItem }) {
     <Entry item={item} trail={<Age at={closedTime(item)} label="Closed" suffix="ago" />}>
       <div className={META}>
         {item.outcome ? <OutcomeTag outcome={item.outcome} /> : null}
+        <ChangeKindTag kind={item.changeKind} />
         {item.primaryLink ? <ThreadToken link={item.primaryLink} /> : null}
         <FollowUp state={item.followUpState} />
       </div>
@@ -592,8 +788,15 @@ function OverviewBody({
       <div className="grid grid-cols-1 gap-x-8 gap-y-7 lg:grid-cols-[minmax(0,5fr)_minmax(0,8fr)] min-[112.5rem]:grid-cols-[minmax(0,5fr)_minmax(0,8fr)_minmax(0,5fr)] min-[112.5rem]:grid-rows-[auto_1fr]">
         <div className="contents lg:block lg:space-y-7 min-[112.5rem]:contents">
           <div className="contents lg:block lg:space-y-7 min-[112.5rem]:col-start-1 min-[112.5rem]:row-span-2 min-[112.5rem]:row-start-1">
-            <div className="order-1">
+            <div className="order-1 space-y-7">
               <NeedsJackson asks={overview.openAsks} items={items} />
+              <PrSlots items={items} slots={overview.prSlots} />
+              {owner ? (
+                // A failure here costs the count and not the page.
+                <SilentBoundary>
+                  <OwnerPosts />
+                </SilentBoundary>
+              ) : null}
             </div>
             <div className="order-3 empty:hidden">
               <OurMove items={items} />

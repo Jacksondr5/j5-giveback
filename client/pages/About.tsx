@@ -68,7 +68,9 @@ export function AboutPage() {
             <span>
               <span className="font-semibold">{STAGE_LABELS.held}</span> is a side stop, not a step. {STAGE_PROSE.held} A
               held item waits on that change, not on Jackson or the agent. When the change merges or is dropped, the
-              item closes or goes back onto the path.
+              item closes or goes back onto the path. An item is held in one more case: upstream limits how many pull
+              requests one contributor may have open, so a post that is ready while ours are all in use waits for a
+              slot.
             </span>
           </p>
           <p className="mt-2">An item can move back a stage, for example when upstream changes underneath it.</p>

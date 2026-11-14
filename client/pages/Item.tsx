@@ -6,6 +6,8 @@ import type { ComponentChildren } from "preact";
 import { useEffect } from "preact/hooks";
 import type { EventView, ItemDetailView, ItemPrivateView, LinkView, OwnerItemDetailView } from "../../shared/api";
 import {
+  CHANGE_KIND_DESCRIPTIONS,
+  CHANGE_KIND_LABELS,
   EVENT_ACTOR_LABELS,
   EVENT_TYPE_LABELS,
   FOLLOW_UP_STATE_LABELS,
@@ -16,7 +18,7 @@ import {
 } from "../../shared/enums";
 import { itemIdOf } from "../../shared/itemId";
 import { Icon } from "../components/icons";
-import { OutcomeTag, SideGlyph, StageTag, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
+import { ChangeKindTag, OutcomeTag, SideGlyph, StageTag, ThreadSignals, ThreadToken, UpstreamChanged, Waiting } from "../components/marks";
 import { Rail, type Stop } from "../components/Rail";
 import {
   Age,
@@ -373,6 +375,7 @@ function Header({ item, links = [] }: { item: ListItem; links?: readonly LinkVie
       </h1>
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
         <StageTag stage={item.stage} />
+        <ChangeKindTag kind={item.changeKind} />
         {item.outcome ? <OutcomeTag outcome={item.outcome} /> : null}
         {item.stage !== "closed" || item.waitingOn !== "nobody" ? (
           <span className="inline-flex flex-wrap items-center gap-x-1.5">
@@ -472,8 +475,19 @@ function Details({ item }: { item: ListItem }) {
       <Facts>
         <Fact term="Route">{item.route ? ROUTE_LABELS[item.route] : <span className={TEXT_DIM}>Not chosen yet</span>}</Fact>
         {item.routeReason ? <Fact term="Why this route">{item.routeReason}</Fact> : null}
+        {item.changeKind ? (
+          <Fact term="Kind of change">
+            {CHANGE_KIND_LABELS[item.changeKind]}
+            <span className={cx("block text-sm", TEXT_DIM)}>{CHANGE_KIND_DESCRIPTIONS[item.changeKind]}</span>
+          </Fact>
+        ) : null}
         <Fact term="Waiting on">
           <Waiting bare waitingOn={item.waitingOn} /> <span className={TEXT_DIM}>since</span> <DateText at={item.waitingSince} />
+          {item.queueRank !== null ? (
+            <span className={cx("block text-sm", TEXT_DIM)} title="Its place in the queue for a PR slot, as the dispatcher ranked it. Lower goes first.">
+              Queue rank <span className="tabular-nums">{item.queueRank}</span>
+            </span>
+          ) : null}
         </Fact>
         {item.outcome ? (
           <Fact term="Outcome">
