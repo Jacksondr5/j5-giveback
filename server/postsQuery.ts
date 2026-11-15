@@ -13,6 +13,9 @@ const REVIEWS = 50;
 const REOPENS = 10;
 const DISCUSSIONS = 20;
 const DISCUSSION_COMMENTS = 50;
+// Upstream's open-PR limit closes a PR within seconds of its opening, as this account.
+const LIMIT_BOT = "github-actions";
+const LIMIT_CLOSE_WITHIN_MS = 10 * 60_000;
 
 // The comment connection has no author filter: a thread's last comments are read and ours kept.
 const COMMENTS_OF = (type: string) => `...on ${type}{comments(last:${COMMENTS}){nodes{author{login} createdAt}}}`;
@@ -44,7 +47,7 @@ export function buildPostsQuery(repos: readonly string[], login: string, since: 
         "p",
         100,
         "is:pr author",
-        `...on PullRequest{createdAt timelineItems(itemTypes:[REOPENED_EVENT],last:${REOPENS}){nodes{...on ReopenedEvent{createdAt actor{login}}}}}`
+        `...on PullRequest{createdAt merged headRefName timelineItems(itemTypes:[REOPENED_EVENT],last:${REOPENS}){nodes{...on ReopenedEvent{createdAt actor{login}}}} closes:timelineItems(itemTypes:[CLOSED_EVENT],first:1){nodes{...on ClosedEvent{createdAt actor{login}}}}}`
       ),
       mine("i", 100, "is:issue author", "...on Issue{createdAt}"),
       mine("r", 50, "is:pr reviewed-by", `...on PullRequest{reviews(author:${user},last:${REVIEWS}){nodes{submittedAt}}}`),
@@ -129,9 +132,32 @@ export function postsFrom(data: Obj, repos: readonly string[], login: string, si
     const onIssues = searched("m");
     if (!prs || !issues || !reviewed || !onPrs || !onIssues) return `GitHub's answer for ${repo} lacks a search.`;
 
-    for (const pr of prs) {
-      // A PR the limit bot closed as it opened is found too, and counts.
-      add("pr", pr.createdAt);
+    // A PR the limit bot closed as it opened is found too, and counts as a new PR.
+    // The PR that later takes its place does not: we cannot reopen what the bot closed,
+    // so upstream has us open another from the same branch. It is told by that: the
+    // account's PR just before it on the same head branch was closed, unmerged, by the
+    // limit bot, within minutes of opening.
+    const dated = prs
+      .map((pr) => {
+        const close = all(pr.closes)[0];
+        const opened = time(pr.createdAt);
+        const closed = close ? time(close.createdAt) : null;
+        const byLimit =
+          pr.merged !== true &&
+          isObj(close) &&
+          isObj(close.actor) &&
+          close.actor.login === LIMIT_BOT &&
+          opened !== null &&
+          closed !== null &&
+          closed - opened <= LIMIT_CLOSE_WITHIN_MS;
+        return { pr, opened, branch: typeof pr.headRefName === "string" ? pr.headRefName : "", byLimit };
+      })
+      .sort((a, b) => (a.opened ?? 0) - (b.opened ?? 0));
+    const lastOnBranch = new Map<string, boolean>();
+    for (const { pr, branch, byLimit } of dated) {
+      const replaces = branch !== "" && lastOnBranch.get(branch) === true;
+      add(replaces ? "replacement" : "pr", pr.createdAt);
+      if (branch !== "") lastOnBranch.set(branch, byLimit);
       for (const event of page(pr.timelineItems, REOPENS, "createdAt")) if (mine(event.actor)) add("reopen", event.createdAt);
     }
     for (const issue of issues) add("issue", issue.createdAt);

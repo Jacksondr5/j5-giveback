@@ -333,9 +333,12 @@ export const POSTING_CAPS = {
 /**
  * What a post read from GitHub is. "pr" and "issue" are a thread's creation.
  * "reopen" is a PR of ours opened again: a post, and not a new PR.
+ * "replacement" is a PR that takes the place of one the open-PR limit closed
+ * as it opened. We cannot reopen such a PR, so upstream has us open another
+ * from the same branch. It is a post, and not a new PR either.
  * "review" is one submitted review, however many inline comments it carries.
  */
-export const POST_KINDS = ["pr", "issue", "reopen", "review", "comment", "discussion", "discussion_comment"] as const;
+export const POST_KINDS = ["pr", "issue", "reopen", "replacement", "review", "comment", "discussion", "discussion_comment"] as const;
 export type PostKind = (typeof POST_KINDS)[number];
 export type Post = { at: number; kind: PostKind };
 
@@ -430,7 +433,9 @@ export function countPosts(times: readonly number[], now: number): PostCounts {
 /**
  * New PRs and new issues among the posts of the 7 days up to now. A thread
  * counts once, at its creation: a post read from GitHub says what it is by its
- * kind, so a reopened PR is no new PR. A recorded event says it by its URL.
+ * kind, so a reopened PR is no new PR, and neither is the replacement of one
+ * the open-PR limit closed. A recorded event says it by its URL, which cannot
+ * tell a replacement from a new PR.
  */
 export function countNewThreads(
   posts: readonly { at: number; url?: string | null; kind?: PostKind }[],

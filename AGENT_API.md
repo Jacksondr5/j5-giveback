@@ -709,6 +709,7 @@ What counts as one post, from GitHub:
 
 - A PR or an issue the account opened. A PR that upstream's bot closed as it opened counts: it was posted.
 - A PR of ours the account reopened. **A reopened PR is a post, and not a new PR**: it counts in `last7Days`, `last24Hours` and `weeks`, never in `newPrsLast7Days`.
+- A PR that replaces one the open-PR limit closed. We cannot reopen a PR upstream's bot closed, so its replacement is opened from the same branch. **A replacement is a post, and not a new PR**, like a reopen. It is recognised from GitHub alone: the account's PR just before it on the same head branch was closed, unmerged, by `github-actions` within 10 minutes of opening. A PR on the same branch after any other kind of close is a new PR. On the fallback to `posted` events, a replacement cannot be told from a new PR and counts as one.
 - A comment on an issue or a PR.
 - A submitted review, as one post however many inline comments it carries. A reply in a review thread arrives as a review, so it is one post too.
 - A discussion, and a comment or a reply in a discussion.

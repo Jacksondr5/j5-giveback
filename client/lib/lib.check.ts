@@ -957,7 +957,7 @@ equal(
 );
 equal(
   POST_KINDS.map((kind) => countNewThreads([{ at: NOW, kind }], NOW)).map((count) => count.newPrsLast7Days + count.newIssuesLast7Days),
-  [1, 1, 0, 0, 0, 0, 0],
+  [1, 1, 0, 0, 0, 0, 0, 0],
   "only the kinds pr and issue start a thread"
 );
 equal(countNewThreads([{ at: NOW, kind: "reopen", url: "https://github.com/pingdotgg/t3code/pull/1" }], NOW).newPrsLast7Days, 0, "the kind decides, not the URL");
@@ -1025,7 +1025,16 @@ const commentsBy = (...entries: [string | null, number][]) => ({
   comments: { nodes: entries.map(([login, at]) => ({ author: login === null ? null : { login }, createdAt: iso(at) })) }
 });
 const reopenedBy = (...entries: [string, number][]) => ({
-  timelineItems: { nodes: entries.map(([login, at]) => ({ createdAt: iso(at), actor: { login } })) }
+  timelineItems: { nodes: entries.map(([login, at]) => ({ createdAt: iso(at), actor: { login } })) },
+  closes: { nodes: [] }
+});
+/** A PR of ours on a head branch, with who first closed it and how long after it opened. */
+const prOn = (branch: string, openedAt: number, close?: { by: string; after: number; merged?: boolean }) => ({
+  createdAt: iso(openedAt),
+  headRefName: branch,
+  merged: close?.merged === true,
+  timelineItems: { nodes: [] },
+  closes: { nodes: close ? [{ createdAt: iso(openedAt + close.after), actor: { login: close.by } }] : [] }
 });
 const inRepo = (repo: string) => ({ repository: { nameWithOwner: repo } });
 type Answer = Record<string, unknown> & { user: Record<string, unknown> };
@@ -1084,6 +1093,71 @@ equal(
   ["7h comment", "10h discussion_comment"],
   "comments and reopenings are kept by their author; the rest is the account's by the query that found it"
 );
+
+// The replacement of a PR the open-PR limit closed is a post, and no new PR.
+const kindsOf = (...prs: unknown[]) => readOne(answer({ p0: found(prs) })).posts;
+const SECOND = 1000;
+equal(
+  kindsOf(prOn("fix/a", NOW - 5 * HOUR, { by: "github-actions", after: 17 * SECOND }), prOn("fix/a", NOW - HOUR)),
+  ["1h replacement", "5h pr"],
+  "same branch, after a close by the limit bot within seconds: a replacement"
+);
+equal(
+  kindsOf(prOn("fix/a", NOW - 5 * HOUR, { by: "github-actions", after: 17 * SECOND }), prOn("fix/b", NOW - HOUR)),
+  ["1h pr", "5h pr"],
+  "another branch is a new PR"
+);
+equal(
+  kindsOf(prOn("fix/a", NOW - 5 * HOUR, { by: "maintainer", after: 17 * SECOND }), prOn("fix/a", NOW - HOUR)),
+  ["1h pr", "5h pr"],
+  "closed by a person: the next PR on the branch is a new PR"
+);
+equal(
+  kindsOf(prOn("fix/a", NOW - 30 * HOUR, { by: "github-actions", after: 25 * HOUR }), prOn("fix/a", NOW - HOUR)),
+  ["1h pr", "30h pr"],
+  "closed by the bot a day after opening (a conflict or a notice, not the limit): a new PR"
+);
+equal(
+  kindsOf(prOn("fix/a", NOW - 5 * HOUR, { by: "github-actions", after: 17 * SECOND, merged: true }), prOn("fix/a", NOW - HOUR)),
+  ["1h pr", "5h pr"],
+  "a merged PR is replaced by nothing"
+);
+equal(
+  kindsOf(
+    prOn("fix/a", NOW - 9 * HOUR, { by: "github-actions", after: 17 * SECOND }),
+    prOn("fix/a", NOW - 5 * HOUR, { by: "maintainer", after: HOUR }),
+    prOn("fix/a", NOW - HOUR)
+  ),
+  ["1h pr", "5h replacement", "9h pr"],
+  "only the PR just before it on the branch counts: a third PR after a person's close is new"
+);
+equal(
+  kindsOf(
+    prOn("fix/a", NOW - 9 * HOUR, { by: "github-actions", after: 17 * SECOND }),
+    prOn("fix/a", NOW - 5 * HOUR, { by: "github-actions", after: 9 * SECOND }),
+    prOn("fix/a", NOW - HOUR)
+  ),
+  ["1h replacement", "5h replacement", "9h pr"],
+  "a replacement the limit closed again is replaced in turn"
+);
+equal(
+  kindsOf(prOn("", NOW - 5 * HOUR, { by: "github-actions", after: 17 * SECOND }), prOn("", NOW - HOUR)),
+  ["1h pr", "5h pr"],
+  "no branch name read: nothing is taken for a replacement"
+);
+equal(
+  countNewThreads(
+    [
+      { at: NOW - 5 * HOUR, kind: "pr" },
+      { at: NOW - HOUR, kind: "replacement" },
+      { at: NOW - 2 * HOUR, kind: "reopen" }
+    ],
+    NOW
+  ),
+  { newPrsLast7Days: 1, newIssuesLast7Days: 0 },
+  "a replacement and a reopen are posts, and neither is a new PR"
+);
+equal(typeof postsFrom(answer({ p0: found([{ createdAt: iso(NOW), timelineItems: { nodes: [] } }]) }), REPO, "octo", SINCE), "string", "a PR without its close events fails the read");
 
 // Incomplete reads keep what they found.
 equal(readOne(answer({ p0: found([{ createdAt: iso(NOW), ...reopenedBy() }], 2) })), { incomplete: true, posts: ["0h pr"] }, "a search that found more than it returned");
