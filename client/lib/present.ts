@@ -319,39 +319,15 @@ export type TakeoverMarkWords = { icon: "alert" | "xCircleFill" | "hourglass"; t
 
 /**
  * A state that forbids a push is a notice. A stopped pipeline has the tone of a
- * failing check. Waiting on a maintainer is quiet. The words are the state's own.
+ * failing check. Anything else is quiet. The words shown are the label's own.
  */
 export function takeoverWords(state: TakeoverState, marker: string | null): TakeoverMarkWords {
-  if (state.noPush) {
-    return {
-      icon: "alert",
-      tone: "pending",
-      strong: true,
-      title: `Upstream's pipeline has this PR (${state.label}). A push to its branch by anyone else stops the pipeline, so push nothing until the label changes.`
-    };
-  }
-  if (state.stopped) {
-    return {
-      icon: "xCircleFill",
-      tone: "closed",
-      strong: false,
-      title: `Upstream's pipeline stopped and left the PR open (${state.label}).${marker ? ` Its last marker: ${marker}.` : " It gave no reason that was read."}`
-    };
-  }
-  if (state.known) {
-    return {
-      icon: "hourglass",
-      tone: "dim",
-      strong: false,
-      title: `Upstream's pipeline waits on a maintainer's decision (${state.label}). There is usually no comment to answer.`
-    };
-  }
-  return {
-    icon: "alert",
-    tone: "dim",
-    strong: false,
-    title: `A pipeline label this site does not know: ${state.label}. Read the PR before pushing to it.`
-  };
+  // The tooltip says where the words come from, and nothing about what to do.
+  const title = `A label on the PR, set by upstream's pipeline.${marker ? ` The pipeline's last comment marker: ${marker}.` : ""}`;
+  if (state.noPush) return { icon: "alert", tone: "pending", strong: true, title };
+  if (state.stopped) return { icon: "xCircleFill", tone: "closed", strong: false, title };
+  if (state.known) return { icon: "hourglass", tone: "dim", strong: false, title };
+  return { icon: "alert", tone: "dim", strong: false, title };
 }
 
 /** True when a thread has anything to show under "checks": a pipeline state, CI, a review, the review bot, a triage place, or a closing clock. */

@@ -187,13 +187,13 @@ export function ClosingClockMark({ link }: { link: LinkView }) {
 }
 
 /**
- * What upstream's takeover pipeline is doing with one of our open PRs. While a
- * push would stop the pipeline it is a notice, outlined and bold: the one mark
- * in the row that says "do nothing". Stopped, it has the weight of a failing
- * check; waiting on a maintainer, it is quiet. `words` gives the full sentence.
+ * The takeover label on one of our open PRs, as GitHub has it, with the reason
+ * beside it when the pipeline stopped and said why. The site adds no words of
+ * its own. While a push would stop the pipeline the label is outlined and bold;
+ * stopped, it has the weight of a failing check; otherwise it is quiet.
  * Renders nothing when the PR carries no pipeline label.
  */
-export function TakeoverMark({ link, words = false }: { link: LinkView; words?: boolean }) {
+export function TakeoverMark({ link }: { link: LinkView }) {
   const state = takeoverState(link);
   if (!state) return null;
   const mark = takeoverWords(state, link.pipelineMarker);
@@ -206,7 +206,7 @@ export function TakeoverMark({ link, words = false }: { link: LinkView; words?: 
       title={mark.title}
     >
       <Icon className={cx("mt-[0.1875rem]", TONE_TEXT[mark.tone])} name={mark.icon} size={14} />
-      <span className="min-w-0 break-words">{words ? state.text : state.short}</span>
+      <span className="min-w-0 break-words">{state.text}</span>
     </span>
   );
 }
@@ -230,7 +230,7 @@ export function ThreadSignals({ link, words = false, className }: { link: LinkVi
     <ul className={cx("flex flex-wrap items-center gap-x-3 gap-y-0.5", className)}>
       {takeover ? (
         <li className="min-w-0">
-          <TakeoverMark link={link} words={words} />
+          <TakeoverMark link={link} />
         </li>
       ) : null}
       {clock ? (

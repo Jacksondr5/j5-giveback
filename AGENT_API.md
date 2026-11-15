@@ -181,15 +181,17 @@ Since about 2026-11-13, `pingdotgg/t3code` lands most outside PRs through an aut
 
 The pipeline's state is the PR's label that starts with `takeover:`. A PR carries one at a time.
 
-| Label | Meaning | The site says |
-|---|---|---|
-| `takeover:in-progress` | The pipeline is working on the PR, for about half an hour. | "Upstream's pipeline is working on it: do not push" |
-| `takeover:ready` | The pipeline passed it. It is merged within about a minute. | "Pipeline passed it: merging" |
-| `takeover:needs-julius` | It waits on a maintainer's decision, usually with no comment. | "Waiting on a maintainer's decision" |
-| `takeover:blocked` | The pipeline stopped and left the PR open. | "Pipeline stopped", and the reason when one was read: "Pipeline stopped: no bug on base" |
-| any other `takeover:` label | Not known here. | The label itself |
+| Label | Meaning |
+|---|---|
+| `takeover:in-progress` | The pipeline is working on the PR, for about half an hour. |
+| `takeover:ready` | The pipeline passed it. It is merged within about a minute. |
+| `takeover:needs-julius` | It waits on a maintainer's decision, usually with no comment. |
+| `takeover:blocked` | The pipeline stopped and left the PR open. |
+| any other `takeover:` label | Not known here. |
 
-**While a PR carries `takeover:in-progress` or `takeover:ready`, push nothing to its branch.** A push by anyone else stops the pipeline. The site shows these two states as an outlined notice, in every list and on the item's page. In a list the words are shorter: "In pipeline: do not push", "Merging: do not push", "Maintainer to decide", "Pipeline stopped".
+**The site shows the label exactly as GitHub has it**, with no wording of its own, in every list and on the item's page. For `takeover:blocked` it adds the reason from the pipeline's last comment marker when it read one: `takeover:blocked (no-bug-on-base)`. An unknown `takeover:` label is shown the same way.
+
+**While a PR carries `takeover:in-progress` or `takeover:ready`, push nothing to its branch.** A push by anyone else stops the pipeline. The site draws those two labels outlined and bold; it does not say why. The rule is yours to follow.
 
 When the pipeline stops or closes a PR, it comments, and the comment ends with a marker: `<!-- factory:stopped-no-bug-on-base -->`. Values seen or reported: `stopped-moved`, `stopped-no-bug-on-base`, `stopped-cannot-prove`, `stopped-not-proven`, `stopped-reviews`, and for a closure `absent`, `redundant`, `duplicate`, `stacked`, `replaced`. The list is open; others appear. The refresh stores the newest marker on the link as `ghPipelineMarker`, with its comment's time as `ghPipelineMarkerAt`. It stores the value only, never the comment's text, and only a value of at most 60 characters from `a-z`, `0-9` and `-`. Anyone can type the marker into a comment, so only a comment whose author GitHub reports as `OWNER`, `MEMBER` or `COLLABORATOR` of the repository sets it.
 
@@ -687,7 +689,7 @@ Bearer `AGENT_SECRET`. Read-only. Whether a [PR slot](#pr-slots) is free, which 
 - `repos` has one entry for every repository in the [rules map](#upstreams-pr-rules), whether or not anything of ours is there.
 - `slots` are our open PRs, oldest first. `open` is how many there are and `free` is `limit` less `open`, never below 0. When `open` is above `limit`, we are over it: upstream closes a new PR as it opens. **Post only when `free` is above 0.** `incomplete` is `false` in normal operation. It is `true` only when the dashboard holds more of our PR links than one read takes (60, on items that are not closed); `open` is then a floor, `free` is 0, and nothing should be posted on it.
 - `ghState` is `open`, or `null` for a link the refresh has not read yet; such a link counts as open. `closingClock` is the [clock](#closing-clocks) running on the PR at `generatedAt`, or `null`. Its `kind` is `notice` or `rebase` (each with `closesAt` and `due`, which is `true` once the deadline has passed), `answered` (with `noticeAt`), or `notice_unknown` (the PR carries the closing label and the time it was applied could not be read).
-- `takeover` is what upstream's [takeover pipeline](#takeover-pipeline) is doing with the PR, or `null` when it carries no `takeover:` label: `{ "label": "takeover:in-progress", "state": "in-progress", "known": true, "noPush": true, "stopped": false, "reason": null, "text": "Upstream's pipeline is working on it: do not push", "short": "In pipeline: do not push" }`. **When `noPush` is `true`, push nothing to the PR's branch.** `known` is `false` for a label the dashboard has no wording for; `text` is then the label. `reason` is set for a stopped pipeline whose marker was read.
+- `takeover` is what upstream's [takeover pipeline](#takeover-pipeline) is doing with the PR, or `null` when it carries no `takeover:` label: `{ "label": "takeover:in-progress", "state": "in-progress", "known": true, "noPush": true, "stopped": false, "reason": null, "text": "takeover:in-progress" }`. **When `noPush` is `true`, push nothing to the PR's branch.** `known` is `false` for a `takeover:` label the dashboard has not seen before. `text` is what the site shows: the label, with the reason beside it for a stopped pipeline whose marker was read (`reason` is that marker's value without its `stopped-` prefix).
 - `queue` is every item that waits on `pr_slot` and is not closed, in order: lowest `queueRank` first, unranked items after, longest-waiting first among equals. `position` is 1 for the item that goes next. `text` is `approved`, `awaiting` or `none`, by the [rule above](#pr-slots), and `null` past the tenth entry, whose asks are not read.
 - Non-public items are included, with their slugs and real titles. This endpoint is for agents; do not republish its output.
 - `posts` is the count of our own upstream posts: see [the post count](#the-post-count) below.
@@ -798,7 +800,7 @@ When `nextCursor` is not null, call `POST /api/refresh?cursor=<nextCursor>` for 
 
 The two label events are recorded once: later refreshes say nothing while the label stays. If the label is removed and applied again, that is a new event. A PR read for the first time with the label already on it is reported too, because its clock is running. Neither is recorded for a PR that carries `triage:keep-open`, or in a repository with no [rules](#upstreams-pr-rules).
 
-A `pipeline_state` event is recorded the same way: once for each new label, and for a PR read for the first time with a label on it. Its note names the PR and the state in the site's words, such as `pingdotgg/t3code#31330: Pipeline stopped: no bug on base.` For `takeover:in-progress` and `takeover:ready` it adds that nothing may be pushed to the PR's branch. A label that is taken off records nothing. When an item gets several notes in one refresh, its marker carries the last: a state that forbids a push, then a closing clock, then any other pipeline state.
+A `pipeline_state` event is recorded the same way: once for each new label, and for a PR read for the first time with a label on it. Its note names the PR and the label as GitHub has it, such as `pingdotgg/t3code#31330 now carries the label takeover:blocked (no-bug-on-base).` A label that is taken off records nothing. When an item gets several notes in one refresh, its marker carries the last: a state that forbids a push, then a closing clock, then any other pipeline state.
 
 When one of our PRs closes or merges and a pipeline marker is stored for it, the close or merge note ends with the marker: "Upstream's pipeline closed it as: absent." for a closure, and "The pipeline's last marker: stopped-moved." for a merge, or for a closure whose last marker is a stop.
 

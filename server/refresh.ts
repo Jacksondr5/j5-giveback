@@ -80,8 +80,8 @@ function pipelineChangesFor(link: LinkRow, next: Snapshot): Change[] {
     pipelineMarker: next.pipelineMarker ?? link.ghPipelineMarker ?? null
   });
   if (!state || state.label === takeoverLabel((link.ghLabels ?? "").split("\n"), takeover)) return [];
-  const noPush = state.noPush ? " Nothing may be pushed to its branch: a push stops the pipeline." : "";
-  return [{ type: "pipeline_state", note: `${link.repo}#${link.number}: ${state.text}.${noPush}`, noPush: state.noPush }];
+  // The note gives the label as GitHub has it. What to do about it is the agents' rule, not the site's.
+  return [{ type: "pipeline_state", note: `${link.repo}#${link.number} now carries the label ${state.text}.`, noPush: state.noPush }];
 }
 
 /** A few words on the pipeline's last marker, for the note of one of our PRs that closed or merged. */

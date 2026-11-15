@@ -725,20 +725,12 @@ if (!takeover) throw new Error("pingdotgg/t3code has no takeover rules");
 const taken = (state: string, patch: Partial<LinkView> = {}) => link({ labels: ["size:XS", `takeover:${state}`], ...patch });
 const read = (entry: LinkView) => {
   const state = takeoverState(entry);
-  return state && [state.state, state.known, state.noPush, state.text, state.short];
+  return state && [state.state, state.known, state.noPush, state.text];
 };
-equal(
-  read(taken("in-progress")),
-  ["in-progress", true, true, "Upstream's pipeline is working on it: do not push", "In pipeline: do not push"],
-  "in progress: nothing may be pushed"
-);
-equal(read(taken("ready")), ["ready", true, true, "Pipeline passed it: merging", "Merging: do not push"], "ready: nothing may be pushed");
-equal(
-  read(taken("needs-julius")),
-  ["needs-julius", true, false, "Waiting on a maintainer's decision", "Maintainer to decide"],
-  "waiting on a maintainer"
-);
-equal(read(taken("blocked")), ["blocked", true, false, "Pipeline stopped", "Pipeline stopped"], "stopped, with no reason read");
+equal(read(taken("in-progress")), ["in-progress", true, true, "takeover:in-progress"], "in progress: the label as it is, and nothing may be pushed");
+equal(read(taken("ready")), ["ready", true, true, "takeover:ready"], "ready: nothing may be pushed");
+equal(read(taken("needs-julius")), ["needs-julius", true, false, "takeover:needs-julius"], "waiting on a maintainer");
+equal(read(taken("blocked")), ["blocked", true, false, "takeover:blocked"], "stopped, with no reason read");
 equal(
   takeoverState(taken("blocked", { pipelineMarker: "stopped-no-bug-on-base" })),
   {
@@ -747,18 +739,17 @@ equal(
     known: true,
     noPush: false,
     stopped: true,
-    reason: "no bug on base",
-    text: "Pipeline stopped: no bug on base",
-    short: "Pipeline stopped"
+    reason: "no-bug-on-base",
+    text: "takeover:blocked (no-bug-on-base)"
   },
-  "stopped: the marker is the reason, in plain words"
+  "stopped: the marker's reason sits beside the label, as the pipeline wrote it"
 );
 equal(takeoverState(taken("blocked", { pipelineMarker: "absent" }))?.reason, null, "a marker that is not a stop is no reason");
-equal(takeoverState(taken("blocked", { pipelineMarker: "stopped-" }))?.text, "Pipeline stopped", "a stop with nothing after it");
+equal(takeoverState(taken("blocked", { pipelineMarker: "stopped-" }))?.text, "takeover:blocked", "a stop with nothing after it");
 equal(takeoverState(taken("in-progress", { pipelineMarker: "stopped-moved" }))?.reason, null, "only a stopped state has a reason");
 equal(
   takeoverState(taken("on-fire")),
-  { label: "takeover:on-fire", state: "on-fire", known: false, noPush: false, stopped: false, reason: null, text: "takeover:on-fire", short: "takeover:on-fire" },
+  { label: "takeover:on-fire", state: "on-fire", known: false, noPush: false, stopped: false, reason: null, text: "takeover:on-fire" },
   "an unknown state is shown as its label"
 );
 equal(takeoverState(taken("constructor"))?.known, false, "a name every object has is no known state");

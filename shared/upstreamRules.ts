@@ -40,10 +40,11 @@ export type TakeoverRules = {
   /** The pipeline's state is the PR's label with this prefix: "takeover:blocked" is "blocked". */
   labelPrefix: string;
   /**
-   * The states seen so far. `text` is the sentence, `short` the form for a list.
+   * The states seen so far. The site shows the label as GitHub has it, with no
+   * words of its own, so a state here carries only what the code acts on.
    * `noPush`: a push by anyone else stops the pipeline. `stopped`: its last marker is the reason.
    */
-  states: readonly { state: string; text: string; short: string; noPush?: true; stopped?: true }[];
+  states: readonly { state: string; noPush?: true; stopped?: true }[];
   /** A pipeline comment ends with "<!-- <markerName>:<value> -->". */
   markerName: string;
   /** A marker value with this prefix says why the pipeline stopped. */
@@ -64,10 +65,10 @@ export const UPSTREAM_RULES: Readonly<Record<string, UpstreamRules>> = {
     takeover: {
       labelPrefix: "takeover:",
       states: [
-        { state: "in-progress", text: "Upstream's pipeline is working on it: do not push", short: "In pipeline: do not push", noPush: true },
-        { state: "ready", text: "Pipeline passed it: merging", short: "Merging: do not push", noPush: true },
-        { state: "needs-julius", text: "Waiting on a maintainer's decision", short: "Maintainer to decide" },
-        { state: "blocked", text: "Pipeline stopped", short: "Pipeline stopped", stopped: true }
+        { state: "in-progress", noPush: true },
+        { state: "ready", noPush: true },
+        { state: "needs-julius" },
+        { state: "blocked", stopped: true }
       ],
       markerName: "factory",
       stopPrefix: "stopped-"
@@ -204,11 +205,10 @@ export type TakeoverState = {
   noPush: boolean;
   /** True when the pipeline stopped and left the PR open. */
   stopped: boolean;
-  /** Why the pipeline stopped, from its last marker: "no bug on base". Null when it did not say. */
+  /** Why the pipeline stopped, as its last marker has it: "no-bug-on-base". Null when it did not say. */
   reason: string | null;
-  /** The sentence, and the short form for a list. */
+  /** What the site shows: the label as GitHub has it, and the reason beside it when there is one. */
   text: string;
-  short: string;
 };
 
 /**
@@ -223,11 +223,11 @@ export function takeoverState(link: TakeoverLink): TakeoverState | null {
   if (label === null) return null;
   const state = label.slice(takeover.labelPrefix.length);
   const known = takeover.states.find((candidate) => candidate.state === state);
-  if (!known) return { label, state, known: false, noPush: false, stopped: false, reason: null, text: label, short: label };
+  if (!known) return { label, state, known: false, noPush: false, stopped: false, reason: null, text: label };
   const marker = link.pipelineMarker ?? "";
   const reason =
     known.stopped && marker.startsWith(takeover.stopPrefix)
-      ? marker.slice(takeover.stopPrefix.length).replace(/-/g, " ").trim() || null
+      ? marker.slice(takeover.stopPrefix.length) || null
       : null;
   return {
     label,
@@ -236,8 +236,7 @@ export function takeoverState(link: TakeoverLink): TakeoverState | null {
     noPush: known.noPush === true,
     stopped: known.stopped === true,
     reason,
-    text: reason ? `${known.text}: ${reason}` : known.text,
-    short: known.short
+    text: reason ? `${label} (${reason})` : label
   };
 }
 
