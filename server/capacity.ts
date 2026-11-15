@@ -10,7 +10,7 @@ import type { CapacityRepo, CapacityResponse, PostCountsView } from "../shared/a
 import type { ChangeKind, GhCi, GhState, Stage } from "../shared/enums";
 import { isItemNumber, itemIdOf } from "../shared/itemId";
 import { LIMITS } from "../shared/limits";
-import { POSTING_CAPS, closingClock, countNewThreads, countPosts, githubPosts, postsWindowStart } from "../shared/upstreamRules";
+import { POSTING_CAPS, closingClock, countNewThreads, countPosts, githubPosts, postsWindowStart, takeoverState } from "../shared/upstreamRules";
 import { checkBearer } from "./auth";
 import { linkView, readSlotData } from "./read";
 import type { ReadDb } from "./schema";
@@ -108,6 +108,7 @@ export async function handleCapacity(ctx: QueryServerContext, req: EndpointReque
       labels: link.ghLabels ? link.ghLabels.split("\n") : [],
       lastActivityAt: link.ghLastActivityAt ?? null,
       closingClock: closingClock(linkView(link), now),
+      takeover: takeoverState(linkView(link)),
       syncedAt: link.syncedAt ?? null
     })),
     queue: queue.map(({ item, text }, index) => ({

@@ -2,6 +2,7 @@
 // Pure helpers plus one fetch. No database access here.
 
 import type { GhCi, GhReviewDecision, GhState } from "../shared/enums";
+import { pipelineMarker, type UpstreamRules } from "../shared/upstreamRules";
 
 export const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
 export const DEFAULT_SELF_LOGIN = "Jacksondr5";
@@ -21,6 +22,8 @@ const ACTOR = "author{login __typename}";
 const LABEL_EVENTS = 20;
 // A clock depends on labels, so a PR's are read as far as upstream's bot reads them.
 const PR_LABELS = 100;
+// The pipeline's marker is in one of a PR's last comments. Their bodies are large, so few are read.
+const MARKER_COMMENTS = 8;
 
 const PR_FRAGMENT = `
 fragment PrFields on PullRequest {
@@ -30,6 +33,7 @@ fragment PrFields on PullRequest {
   commits(last:1){nodes{commit{statusCheckRollup{state}}}}
   firstComments: comments(first:${FIRST_COMMENTS}){nodes{${ACTOR} createdAt body}}
   comments(last:${RECENT}){nodes{${ACTOR} createdAt}}
+  lastComments: comments(last:${MARKER_COMMENTS}){nodes{createdAt authorAssociation body}}
   reviews(last:${RECENT}){nodes{${ACTOR} submittedAt}}
   labelEvents: timelineItems(itemTypes:[LABELED_EVENT],last:${LABEL_EVENTS}){nodes{... on LabeledEvent{createdAt label{name}}}}
 }`;
@@ -98,6 +102,9 @@ export type Snapshot = {
   otherActivityBy: string | null;
   /** Null when no Macroscope comment was among those read. */
   macroscopeVerdict: string | null;
+  /** The takeover pipeline's last marker and its time. Null when none was among the comments read. */
+  pipelineMarker: string | null;
+  pipelineMarkerAt: number | null;
 };
 
 type Obj = Record<string, unknown>;
@@ -166,9 +173,9 @@ function reviewDecisionFrom(value: unknown): GhReviewDecision | null {
 
 /**
  * Turns one `node` from the response into a snapshot, or null when it is not a shape this code knows.
- * `closingLabel` is the label whose time of application is wanted, for a repository that has one.
+ * `rules` are the repository's, when it has some: its closing label's time and its pipeline's marker are read.
  */
-export function snapshotFrom(node: unknown, selfLogin: string, closingLabel: string | null = null): Snapshot | null {
+export function snapshotFrom(node: unknown, selfLogin: string, rules: UpstreamRules | null = null): Snapshot | null {
   if (!isObj(node)) return null;
   const typename = node.__typename;
   const title = str(node.title);
@@ -220,6 +227,7 @@ export function snapshotFrom(node: unknown, selfLogin: string, closingLabel: str
   // The label can be removed and applied again, so the last application is the one that counts.
   // It is kept only while the PR carries the label: an old notice that was lifted is no notice.
   let closingNoticeAt: number | null = null;
+  const closingLabel = rules?.closingLabel ?? null;
   if (isPr && closingLabel !== null && labels.includes(closingLabel)) {
     for (const event of nodes(node.labelEvents)) {
       const at = time(event.createdAt);
@@ -227,6 +235,18 @@ export function snapshotFrom(node: unknown, selfLogin: string, closingLabel: str
       if (closingNoticeAt === null || at > closingNoticeAt) closingNoticeAt = at;
     }
   }
+
+  const marker =
+    isPr && rules?.takeover
+      ? pipelineMarker(
+          nodes(node.lastComments).map((comment) => ({
+            body: comment.body,
+            at: time(comment.createdAt),
+            association: comment.authorAssociation
+          })),
+          rules.takeover
+        )
+      : null;
 
   return {
     title: title.slice(0, 200),
@@ -244,7 +264,9 @@ export function snapshotFrom(node: unknown, selfLogin: string, closingLabel: str
     mergeable: isPr ? str(node.mergeable) : null,
     otherActivityAt,
     otherActivityBy,
-    macroscopeVerdict
+    macroscopeVerdict,
+    pipelineMarker: marker?.marker ?? null,
+    pipelineMarkerAt: marker?.at ?? null
   };
 }
 

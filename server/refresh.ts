@@ -4,14 +4,15 @@
 // is not closed, and any link on a closed item that has never been read. It
 // reads the batch, makes one GraphQL request, then writes. It records an event when a link
 // merged, closed, reopened or began failing CI, or when upstream's bot put one of our
-// PRs on a closing clock, and raises the item's "state changed upstream" marker.
+// PRs on a closing clock or its takeover pipeline moved one, and raises the item's
+// "state changed upstream" marker.
 // It never changes an item's stage.
 
 import { json, type EndpointRequest, type EndpointResponse, type ServerContext } from "lakebed/server";
 import type { RefreshResponse } from "../shared/api";
 import type { EventType } from "../shared/enums";
 import { CURSOR_PATTERN, LIMITS } from "../shared/limits";
-import { rulesFor, sweepTimeUtc } from "../shared/upstreamRules";
+import { rulesFor, sweepTimeUtc, takeoverLabel, takeoverState } from "../shared/upstreamRules";
 import { AUTO_KEY_PREFIX, touchSyncState } from "./agent";
 import { apiError, checkBearer } from "./auth";
 import { DEFAULT_SELF_LOGIN, aliasFor, buildQuery, fetchGithub, snapshotFrom, type Snapshot } from "./github";
@@ -23,7 +24,7 @@ function isObj(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-type Change = { type: EventType; note: string };
+type Change = { type: EventType; note: string; noPush?: boolean };
 
 /**
  * The clocks upstream's bot started on one of our open PRs since the stored
@@ -63,13 +64,47 @@ function clockChangesFor(link: LinkRow, next: Snapshot): Change[] {
 }
 
 /**
+ * What upstream's takeover pipeline did with one of our open PRs since the stored
+ * snapshot: the PR carries a pipeline label it did not carry before. A link read
+ * for the first time counts. While the label stays, later refreshes report nothing.
+ */
+function pipelineChangesFor(link: LinkRow, next: Snapshot): Change[] {
+  const takeover = rulesFor(link.repo)?.takeover;
+  if (!takeover) return [];
+  const state = takeoverState({
+    repo: link.repo,
+    kind: link.kind,
+    ownership: link.ownership,
+    state: next.state,
+    labels: next.labels,
+    pipelineMarker: next.pipelineMarker ?? link.ghPipelineMarker ?? null
+  });
+  if (!state || state.label === takeoverLabel((link.ghLabels ?? "").split("\n"), takeover)) return [];
+  const noPush = state.noPush ? " Nothing may be pushed to its branch: a push stops the pipeline." : "";
+  return [{ type: "pipeline_state", note: `${link.repo}#${link.number}: ${state.text}.${noPush}`, noPush: state.noPush }];
+}
+
+/** A few words on the pipeline's last marker, for the note of one of our PRs that closed or merged. */
+function markerNote(link: LinkRow, next: Snapshot): string {
+  const takeover = rulesFor(link.repo)?.takeover;
+  const marker = next.pipelineMarker ?? link.ghPipelineMarker;
+  if (!takeover || !marker || link.kind !== "pr" || link.ownership !== "ours") return "";
+  return next.state === "closed" && !marker.startsWith(takeover.stopPrefix)
+    ? ` Upstream's pipeline closed it as: ${marker}.`
+    : ` The pipeline's last marker: ${marker}.`;
+}
+
+/**
  * Compares the stored snapshot with the new one. A link never synced before
- * produces no change of state; a closing clock is reported for it all the same.
+ * produces no change of state; a closing clock or a pipeline state is reported for it all the same.
  */
 function changesFor(link: LinkRow, next: Snapshot): Change[] {
+  // The last note is the one the item's marker carries: "nothing may be pushed" before anything, then a clock.
   const clocks = clockChangesFor(link, next);
+  const pipeline = pipelineChangesFor(link, next);
+  const labelled = pipeline.some((change) => change.noPush) ? [...clocks, ...pipeline] : [...pipeline, ...clocks];
   if (link.syncedAt === undefined || link.ghState === undefined) {
-    return clocks;
+    return labelled;
   }
   const changes: Change[] = [];
   const ref = `${link.repo}#${link.number}`;
@@ -78,11 +113,11 @@ function changesFor(link: LinkRow, next: Snapshot): Change[] {
 
   if (link.ghState !== next.state) {
     if (next.state === "merged") {
-      changes.push({ type: dependency ? "dependency_merged" : "upstream_merged", note: `${label} was merged.` });
+      changes.push({ type: dependency ? "dependency_merged" : "upstream_merged", note: `${label} was merged.${markerNote(link, next)}` });
     } else if (next.state === "closed") {
       changes.push({
         type: dependency ? "dependency_closed" : "upstream_closed",
-        note: `${label} was closed${link.kind === "pr" ? " without merging" : ""}.`
+        note: `${label} was closed${link.kind === "pr" ? " without merging" : ""}.${markerNote(link, next)}`
       });
     } else {
       changes.push({ type: "upstream_reopened", note: `${label} was reopened.` });
@@ -92,8 +127,7 @@ function changesFor(link: LinkRow, next: Snapshot): Change[] {
   if (link.ownership === "ours" && next.state === "open" && next.ci === "failure" && link.ghCi !== "failure") {
     changes.push({ type: "ci_failing", note: `CI began failing on ${ref}.` });
   }
-  // The clock goes last, so its note is the one the item's marker carries.
-  return [...changes, ...clocks];
+  return [...changes, ...labelled];
 }
 
 export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): Promise<EndpointResponse> {
@@ -169,7 +203,7 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
       const aliasError = result.errorsByAlias.get(alias);
       const snapshot =
         aliasError === undefined && isObj(repository)
-          ? snapshotFrom(repository.node, selfLogin, rulesFor(link.repo)?.closingLabel ?? null)
+          ? snapshotFrom(repository.node, selfLogin, rulesFor(link.repo))
           : null;
       if (!snapshot) {
         // Keep the old snapshot. Only note that this link could not be read.
@@ -204,6 +238,10 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
           ? { ghOtherActivityAt: snapshot.otherActivityAt, ghOtherActivityBy: snapshot.otherActivityBy }
           : {}),
         ...(snapshot.macroscopeVerdict !== null ? { macroscopeVerdict: snapshot.macroscopeVerdict } : {}),
+        // Few comments are read for the marker. When none of them carries one, an older stored one still stands.
+        ...(snapshot.pipelineMarker !== null
+          ? { ghPipelineMarker: snapshot.pipelineMarker, ghPipelineMarkerAt: snapshot.pipelineMarkerAt }
+          : {}),
         syncedAt: now,
         syncError: null,
         syncDue: link.active

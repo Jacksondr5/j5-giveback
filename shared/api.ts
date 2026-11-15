@@ -18,7 +18,7 @@ import type {
   Stage,
   WaitingOn
 } from "./enums";
-import type { ClosingClock, TextApproval } from "./upstreamRules";
+import type { ClosingClock, TakeoverState, TextApproval } from "./upstreamRules";
 
 // ---------------------------------------------------------------------------
 // Agent endpoint requests
@@ -287,6 +287,8 @@ export type CapacitySlot = {
   lastActivityAt: number | null;
   /** The clock upstream's bot has running on the PR, at `generatedAt`. Null when there is none. */
   closingClock: ClosingClock | null;
+  /** What upstream's takeover pipeline is doing with the PR. Null when it carries no pipeline label. */
+  takeover: TakeoverState | null;
   syncedAt: number | null;
 };
 
@@ -445,6 +447,9 @@ export type LinkView = {
   closingNoticeAt: number | null;
   /** A PR's "MERGEABLE", "CONFLICTING" or "UNKNOWN" on GitHub. Null when it was not read. */
   mergeable: string | null;
+  /** The last marker of upstream's takeover pipeline on a PR, such as "stopped-moved", and its time. */
+  pipelineMarker: string | null;
+  pipelineMarkerAt: number | null;
   /** Last comment or review by someone other than the fork owner, bots excluded. */
   lastOtherActivityAt: number | null;
   lastOtherActivityBy: string | null;

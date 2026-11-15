@@ -175,6 +175,7 @@ export const EVENT_TYPES = [
   "ci_failing",
   "rebase_requested",
   "closing_notice",
+  "pipeline_state",
   "dependency_merged",
   "dependency_closed",
   "follow_up"
@@ -195,6 +196,7 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   ci_failing: "CI failing",
   rebase_requested: "Rebase requested upstream",
   closing_notice: "Closing notice upstream",
+  pipeline_state: "Upstream pipeline state",
   dependency_merged: "Base or covering link merged",
   dependency_closed: "Base or covering link closed",
   follow_up: "J5 follow-up"

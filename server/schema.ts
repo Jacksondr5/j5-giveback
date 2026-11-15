@@ -83,6 +83,9 @@ export const schema = {
     ghOtherActivityAt: number().optional(),
     ghOtherActivityBy: string().optional(),
     macroscopeVerdict: string().optional(),
+    // The last marker of upstream's takeover pipeline on a PR ("stopped-moved") and its comment's time. Never the comment's text.
+    ghPipelineMarker: string().optional(),
+    ghPipelineMarkerAt: number().optional(),
     syncedAt: number().optional(),
     syncError: string().optional()
   })

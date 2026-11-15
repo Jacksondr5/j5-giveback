@@ -74,6 +74,8 @@ export function linkView(row: LinkRow): LinkView {
     lastActivityAt: row.ghLastActivityAt ?? null,
     closingNoticeAt: row.ghClosingNoticeAt ?? null,
     mergeable: row.ghMergeable ?? null,
+    pipelineMarker: row.ghPipelineMarker ?? null,
+    pipelineMarkerAt: row.ghPipelineMarkerAt ?? null,
     lastOtherActivityAt: row.ghOtherActivityAt ?? null,
     lastOtherActivityBy: row.ghOtherActivityBy ?? null,
     triageBucket: row.triageBucket ?? null,

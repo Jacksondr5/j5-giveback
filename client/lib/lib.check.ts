@@ -112,6 +112,8 @@ function link(patch: Partial<LinkView> = {}): LinkView {
     lastActivityAt: null,
     closingNoticeAt: null,
     mergeable: null,
+    pipelineMarker: null,
+    pipelineMarkerAt: null,
     lastOtherActivityAt: null,
     lastOtherActivityBy: null,
     triageBucket: null,
