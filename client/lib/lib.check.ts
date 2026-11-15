@@ -1,4 +1,4 @@
-// Checks for the pure helpers in this folder, in shared/ and in server/postsQuery.ts. Not part of the app: nothing imports
+// Checks for the pure helpers in this folder, in shared/, in server/postsQuery.ts and in server/github.ts. Not part of the app: nothing imports
 // this file, so Lakebed does not bundle it. It has no test runner to install. Run:
 //
 //   npx esbuild client/lib/lib.check.ts --bundle --format=esm | node --input-type=module
@@ -31,11 +31,14 @@ import {
   postStarts,
   fillsSlot,
   nextSweepAt,
+  pipelineMarker,
   postsWindowStart,
   type Post,
   queueOrder,
   rulesFor,
   sweepTimeUtc,
+  takeoverLabel,
+  takeoverState,
   textApproval,
   weekStartUtc
 } from "../../shared/upstreamRules";
@@ -56,6 +59,7 @@ import {
   type ListAsk,
   type ListItem
 } from "./derive";
+import { buildQuery, snapshotFrom } from "../../server/github";
 import { buildPostsQuery, postsFrom } from "../../server/postsQuery";
 import { ITEM_ID_PREFIX, formatItemId, isItemNumber, itemIdOf, parseItemId } from "../../shared/itemId";
 import { applyFilters, filtersToSearch, hasFilters, itemsHref, parseFilters, searchedNumber } from "./filters";
@@ -75,6 +79,7 @@ import {
   roleWord,
   slotWords,
   stageCounts,
+  takeoverWords,
   textApprovalWords,
   threadName,
   threadSide,
@@ -713,6 +718,127 @@ equal(formatDayMonth(Date.UTC(2026, 10, 21, 5, 33), "en-GB", "UTC"), "21 Nov", "
 equal(hasThreadSignals(link(), NOW), false, "a bare thread has no signals");
 equal(hasThreadSignals(labelled(["needs-rebase"]), NOW), true, "a clock is a signal");
 equal(hasThreadSignals(link({ ci: "success" }), NOW), true, "CI is a signal");
+
+// The takeover pipeline: its state is the PR's "takeover:" label.
+const takeover = rules.takeover;
+if (!takeover) throw new Error("pingdotgg/t3code has no takeover rules");
+const taken = (state: string, patch: Partial<LinkView> = {}) => link({ labels: ["size:XS", `takeover:${state}`], ...patch });
+const read = (entry: LinkView) => {
+  const state = takeoverState(entry);
+  return state && [state.state, state.known, state.noPush, state.text, state.short];
+};
+equal(
+  read(taken("in-progress")),
+  ["in-progress", true, true, "Upstream's pipeline is working on it: do not push", "In pipeline: do not push"],
+  "in progress: nothing may be pushed"
+);
+equal(read(taken("ready")), ["ready", true, true, "Pipeline passed it: merging", "Merging: do not push"], "ready: nothing may be pushed");
+equal(
+  read(taken("needs-julius")),
+  ["needs-julius", true, false, "Waiting on a maintainer's decision", "Maintainer to decide"],
+  "waiting on a maintainer"
+);
+equal(read(taken("blocked")), ["blocked", true, false, "Pipeline stopped", "Pipeline stopped"], "stopped, with no reason read");
+equal(
+  takeoverState(taken("blocked", { pipelineMarker: "stopped-no-bug-on-base" })),
+  {
+    label: "takeover:blocked",
+    state: "blocked",
+    known: true,
+    noPush: false,
+    stopped: true,
+    reason: "no bug on base",
+    text: "Pipeline stopped: no bug on base",
+    short: "Pipeline stopped"
+  },
+  "stopped: the marker is the reason, in plain words"
+);
+equal(takeoverState(taken("blocked", { pipelineMarker: "absent" }))?.reason, null, "a marker that is not a stop is no reason");
+equal(takeoverState(taken("blocked", { pipelineMarker: "stopped-" }))?.text, "Pipeline stopped", "a stop with nothing after it");
+equal(takeoverState(taken("in-progress", { pipelineMarker: "stopped-moved" }))?.reason, null, "only a stopped state has a reason");
+equal(
+  takeoverState(taken("on-fire")),
+  { label: "takeover:on-fire", state: "on-fire", known: false, noPush: false, stopped: false, reason: null, text: "takeover:on-fire", short: "takeover:on-fire" },
+  "an unknown state is shown as its label"
+);
+equal(takeoverState(taken("constructor"))?.known, false, "a name every object has is no known state");
+equal(takeoverState(link({ labels: ["size:XS", "needs-rebase"] })), null, "no pipeline label, no state");
+equal(takeoverState(link({ labels: ["takeover", "takeover:"] })), null, "the bare prefix is no state");
+equal(takeoverState(taken("in-progress", { state: "closed" })), null, "a closed PR has no state");
+equal(takeoverState(taken("in-progress", { state: "merged" })), null, "a merged PR has no state");
+equal(takeoverState(taken("in-progress", { state: null })), null, "an unsynced link has no state");
+equal(takeoverState(taken("in-progress", { ownership: "theirs" })), null, "someone else's PR has no state here");
+equal(takeoverState(taken("in-progress", { kind: "issue" })), null, "an issue has no state");
+equal(takeoverState(taken("in-progress", { repo: "expo/expo-device-hub" })), null, "no rules, no state");
+equal(takeoverState(taken("in-progress", { repo: "PingDotGG/T3Code" }))?.noPush, true, "repository names are not case-sensitive");
+equal(takeoverLabel(["takeover:blocked", "takeover:ready"], takeover), "takeover:ready", "of two labels, the one that forbids a push");
+equal(takeoverLabel(["takeover:blocked", "takeover:needs-julius"], takeover), "takeover:blocked", "otherwise the first");
+equal(takeoverLabel(["size:M"], takeover), null, "no label");
+
+// The marker: "<!-- factory:<value> -->" in a comment by one of upstream's own people. Invented comments.
+const said = (body: unknown, at: number | null, association: unknown = "MEMBER") => ({ body, at, association });
+const stop = "Stopped here: the code moved.\n\n<!-- factory:stopped-moved -->";
+equal(pipelineMarker([said(stop, NOW - HOUR)], takeover), { marker: "stopped-moved", at: NOW - HOUR }, "a marker and its time");
+equal(
+  pipelineMarker([said("<!-- factory:absent -->", NOW - HOUR), said(stop, NOW - DAY), said("Thanks.", NOW)], takeover)?.marker,
+  "absent",
+  "the newest marker wins, whatever the order read"
+);
+equal(pipelineMarker([said(stop, NOW - DAY, "OWNER"), said("<!-- factory:redundant -->", NOW, "COLLABORATOR")], takeover)?.marker, "redundant", "an owner and a collaborator count");
+equal(
+  pipelineMarker([said(stop, NOW - DAY), said("<!-- factory:stopped-reviews -->", NOW, "CONTRIBUTOR")], takeover)?.marker,
+  "stopped-moved",
+  "an outsider's marker is ignored"
+);
+equal(pipelineMarker([said("<!-- factory:ready -->", NOW, "NONE"), said("<!-- factory:ready -->", NOW, null)], takeover), null, "nobody of upstream's said it");
+equal(pipelineMarker([said("No marker here. <!-- another:stopped-moved -->", NOW)], takeover), null, "a body with no marker");
+equal(pipelineMarker([], takeover), null, "no comments");
+equal(pipelineMarker([said(stop, null), said(null, NOW)], takeover), null, "no time, or no body");
+equal(pipelineMarker([said("<!-- factory:Stopped_Moved -->", NOW)], takeover), null, "capitals and underscores are rejected");
+equal(pipelineMarker([said('<!-- factory:x"><script> -->', NOW)], takeover), null, "markup is rejected");
+equal(pipelineMarker([said(`<!-- factory:${"a".repeat(61)} -->`, NOW)], takeover), null, "61 characters are rejected");
+equal(pipelineMarker([said(`<!--factory:${"a".repeat(60)}-->`, NOW)], takeover)?.marker.length, 60, "60 characters, with no spaces, are read");
+equal(
+  pipelineMarker([said("<!-- factory:stopped-moved --> quoted above.\n<!-- factory:duplicate -->", NOW)], takeover)?.marker,
+  "duplicate",
+  "a comment ends with its marker: the last in it counts"
+);
+
+// How the state is drawn.
+const drawn = (entry: LinkView) => {
+  const state = takeoverState(entry);
+  if (!state) throw new Error("expected a takeover state");
+  const words = takeoverWords(state, entry.pipelineMarker);
+  return [words.icon, words.tone, words.strong];
+};
+equal(drawn(taken("in-progress")), ["alert", "pending", true], "in progress is a notice");
+equal(drawn(taken("ready")), ["alert", "pending", true], "ready is a notice");
+equal(drawn(taken("blocked")), ["xCircleFill", "closed", false], "stopped has the tone of a failing check");
+equal(drawn(taken("needs-julius")), ["hourglass", "dim", false], "waiting on a maintainer is quiet");
+equal(drawn(taken("on-fire")), ["alert", "dim", false], "an unknown state");
+const blockedState = takeoverState(taken("blocked"));
+equal(blockedState !== null && takeoverWords(blockedState, "stopped-moved").title.includes("stopped-moved"), true, "the tooltip gives the marker as upstream wrote it");
+
+// The refresh reads the marker from a PR's last comments, under their own alias.
+const linkQuery = buildQuery([{ repo: T3, number: 1, kind: "pr" }]);
+equal(linkQuery.includes("lastComments: comments(last:8){nodes{createdAt authorAssociation body}}"), true, "eight comment bodies are read for the marker");
+equal(/ comments\(last:20\)\{nodes\{[^}]*\}[^}]*body/.test(linkQuery), false, "the recent comments are read without their bodies");
+const at = (ms: number) => new Date(ms).toISOString();
+const prNode = (comments: unknown[]) => ({
+  __typename: "PullRequest",
+  title: "An invented PR",
+  prState: "OPEN",
+  labels: { nodes: [{ name: "takeover:blocked" }] },
+  lastComments: { nodes: comments }
+});
+const stopComment = { createdAt: at(NOW - HOUR), authorAssociation: "MEMBER", body: stop };
+const snap = snapshotFrom(prNode([stopComment, { createdAt: at(NOW), authorAssociation: "CONTRIBUTOR", body: "<!-- factory:absent -->" }]), "octo", rules);
+equal([snap?.pipelineMarker, snap?.pipelineMarkerAt], ["stopped-moved", NOW - HOUR], "a snapshot carries the marker and its time");
+equal(snapshotFrom(prNode([stopComment]), "octo", null)?.pipelineMarker, null, "no rules, no marker read");
+equal(snapshotFrom(prNode([]), "octo", rules)?.pipelineMarker, null, "no marker among the comments");
+equal(snapshotFrom({ ...prNode([stopComment]), __typename: "Issue", issueState: "OPEN" }, "octo", rules)?.pipelineMarker, null, "an issue has no marker");
+equal(hasThreadSignals(taken("needs-julius"), NOW), true, "a pipeline state is a signal");
+equal(hasThreadSignals(taken("needs-julius", { state: "merged" }), NOW), false, "and none once the PR is merged");
 
 // The queue for a slot: ranked first in rank order, then unranked, longest-waiting first.
 const queued = (id: string, queueRank: number | null, waitingSince: number) => ({ id, queueRank, waitingSince });

@@ -15,7 +15,16 @@ import type {
   WaitingOn
 } from "../../shared/enums";
 import { itemIdOf } from "../../shared/itemId";
-import { closingClock, nextSweepAt, rulesFor, sweepTimeUtc, type ClosingClock, type TextApproval } from "../../shared/upstreamRules";
+import {
+  closingClock,
+  nextSweepAt,
+  rulesFor,
+  sweepTimeUtc,
+  takeoverState,
+  type ClosingClock,
+  type TakeoverState,
+  type TextApproval
+} from "../../shared/upstreamRules";
 import type { ListItem } from "./derive";
 import { formatAgo, formatCountdown, formatDateTime, formatDayMonth } from "./format";
 
@@ -301,7 +310,51 @@ export function clockWords(clock: ClosingClock, repo: string, now: number, local
   }
 }
 
-/** True when a thread has anything to show under "checks": CI, a review, the review bot, a triage place, or a closing clock. */
+// ---------------------------------------------------------------------------
+// The takeover pipeline
+// ---------------------------------------------------------------------------
+
+/** How a pipeline state is drawn, with the rule behind it for the tooltip. `strong` is the notice that must not be missed. */
+export type TakeoverMarkWords = { icon: "alert" | "xCircleFill" | "hourglass"; tone: Tone; strong: boolean; title: string };
+
+/**
+ * A state that forbids a push is a notice. A stopped pipeline has the tone of a
+ * failing check. Waiting on a maintainer is quiet. The words are the state's own.
+ */
+export function takeoverWords(state: TakeoverState, marker: string | null): TakeoverMarkWords {
+  if (state.noPush) {
+    return {
+      icon: "alert",
+      tone: "pending",
+      strong: true,
+      title: `Upstream's pipeline has this PR (${state.label}). A push to its branch by anyone else stops the pipeline, so push nothing until the label changes.`
+    };
+  }
+  if (state.stopped) {
+    return {
+      icon: "xCircleFill",
+      tone: "closed",
+      strong: false,
+      title: `Upstream's pipeline stopped and left the PR open (${state.label}).${marker ? ` Its last marker: ${marker}.` : " It gave no reason that was read."}`
+    };
+  }
+  if (state.known) {
+    return {
+      icon: "hourglass",
+      tone: "dim",
+      strong: false,
+      title: `Upstream's pipeline waits on a maintainer's decision (${state.label}). There is usually no comment to answer.`
+    };
+  }
+  return {
+    icon: "alert",
+    tone: "dim",
+    strong: false,
+    title: `A pipeline label this site does not know: ${state.label}. Read the PR before pushing to it.`
+  };
+}
+
+/** True when a thread has anything to show under "checks": a pipeline state, CI, a review, the review bot, a triage place, or a closing clock. */
 export function hasThreadSignals(link: LinkView, now: number): boolean {
   return (
     link.ci !== null ||
@@ -309,7 +362,8 @@ export function hasThreadSignals(link: LinkView, now: number): boolean {
     link.macroscopeVerdict !== null ||
     link.triageBucket !== null ||
     link.triageRank !== null ||
-    closingClock(link, now) !== null
+    closingClock(link, now) !== null ||
+    takeoverState(link) !== null
   );
 }
 

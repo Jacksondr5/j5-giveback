@@ -16,7 +16,7 @@ import {
   type Stage,
   type WaitingOn
 } from "../../shared/enums";
-import { closingClock, type TextApproval } from "../../shared/upstreamRules";
+import { closingClock, takeoverState, type TextApproval } from "../../shared/upstreamRules";
 import { fullRef, shortRef } from "../lib/format";
 import {
   ciSignal,
@@ -27,6 +27,7 @@ import {
   roleHint,
   roleWord,
   stageIcon,
+  takeoverWords,
   textApprovalWords,
   threadName,
   threadSide,
@@ -186,21 +187,52 @@ export function ClosingClockMark({ link }: { link: LinkView }) {
 }
 
 /**
- * The live signals of a thread, as a wrapping row: a closing clock when one is
- * running, then CI, review decision, the review bot's verdict and the
- * triage-board place. `words` spells each one out; the clock is always in words.
- * Renders nothing when the thread has none.
+ * What upstream's takeover pipeline is doing with one of our open PRs. While a
+ * push would stop the pipeline it is a notice, outlined and bold: the one mark
+ * in the row that says "do nothing". Stopped, it has the weight of a failing
+ * check; waiting on a maintainer, it is quiet. `words` gives the full sentence.
+ * Renders nothing when the PR carries no pipeline label.
+ */
+export function TakeoverMark({ link, words = false }: { link: LinkView; words?: boolean }) {
+  const state = takeoverState(link);
+  if (!state) return null;
+  const mark = takeoverWords(state, link.pipelineMarker);
+  return (
+    <span
+      className={cx(
+        "inline-flex min-w-0 items-start gap-1 text-sm leading-5",
+        mark.strong && "rounded border border-(color:--ink) px-1.5 font-semibold"
+      )}
+      title={mark.title}
+    >
+      <Icon className={cx("mt-[0.1875rem]", TONE_TEXT[mark.tone])} name={mark.icon} size={14} />
+      <span className="min-w-0 break-words">{words ? state.text : state.short}</span>
+    </span>
+  );
+}
+
+/**
+ * The live signals of a thread, as a wrapping row: the takeover pipeline's
+ * state and a closing clock when there is one, then CI, review decision, the
+ * review bot's verdict and the triage-board place. `words` spells each one out;
+ * the clock is always in words. Renders nothing when the thread has none.
  */
 export function ThreadSignals({ link, words = false, className }: { link: LinkView; words?: boolean; className?: string }) {
   const now = useNowValue();
   const clock = closingClock(link, now) !== null;
+  const takeover = takeoverState(link) !== null;
   const ci = link.ci ? ciSignal(link.ci) : null;
   const review = link.reviewDecision ? reviewSignal(link.reviewDecision) : null;
   const macroscope = link.macroscopeVerdict ? macroscopeSignal(link.macroscopeVerdict) : null;
   const triage = link.triageBucket !== null || link.triageRank !== null;
-  if (!clock && !ci && !review && !macroscope && !triage) return null;
+  if (!takeover && !clock && !ci && !review && !macroscope && !triage) return null;
   return (
     <ul className={cx("flex flex-wrap items-center gap-x-3 gap-y-0.5", className)}>
+      {takeover ? (
+        <li className="min-w-0">
+          <TakeoverMark link={link} words={words} />
+        </li>
+      ) : null}
       {clock ? (
         <li className="min-w-0">
           <ClosingClockMark link={link} />
@@ -348,7 +380,7 @@ export function FollowUp({ state }: { state: FollowUpState | null }) {
   return null;
 }
 
-/** Raised by the server when a link merged, closed, reopened, began failing CI, or was put on a closing clock. */
+/** Raised by the server when a link merged, closed, reopened, began failing CI, was put on a closing clock, or moved in upstream's pipeline. */
 export function UpstreamChanged({ note }: { note: string | null }) {
   return (
     <span className="inline-flex items-center gap-1 whitespace-nowrap text-sm font-semibold leading-5" title={note ?? undefined}>
