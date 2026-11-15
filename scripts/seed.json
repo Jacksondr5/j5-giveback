@@ -647,7 +647,7 @@
     {
       "slug": "seed-rebase-requested",
       "title": "Offered PR that upstream asked to rebase",
-      "summary": "Seed item on a real PR that carried the needs-rebase label when this was written. Upstream closes such a PR after seven days with no activity, so the refresh starts its closing clock. Shown as ours to exercise that; it is not.",
+      "summary": "Seed item on a real PR that carried needs-rebase when this was written, so the refresh starts its closing clock. On 2026-11-15 it also carried takeover:needs-julius, a state of upstream's pipeline. Shown as ours to exercise both; it is not.",
       "stage": "offered",
       "route": "direct_pr",
       "waitingOn": "giveback_agent",
@@ -661,6 +661,29 @@
           "url": "https://github.com/pingdotgg/t3code/pull/36432",
           "repo": "pingdotgg/t3code",
           "number": 36432,
+          "kind": "pr",
+          "ownership": "ours",
+          "role": "primary"
+        }
+      ]
+    },
+    {
+      "slug": "seed-pipeline-stopped",
+      "title": "Offered PR that upstream's pipeline stopped on",
+      "summary": "Seed item on a real PR that carried the takeover:blocked label on 2026-11-15, with a comment that ends in a stop marker. The refresh reads both, so the site says the pipeline stopped and why. Shown as ours to exercise that; it is not.",
+      "stage": "offered",
+      "route": "direct_pr",
+      "waitingOn": "giveback_agent",
+      "waitingSince": "2026-11-14T20:30:00Z",
+      "targetRepo": "pingdotgg/t3code",
+      "foundAt": "2026-11-13T10:00:00Z",
+      "isPublic": true,
+      "changeKind": "bug",
+      "links": [
+        {
+          "url": "https://github.com/pingdotgg/t3code/pull/36892",
+          "repo": "pingdotgg/t3code",
+          "number": 36892,
           "kind": "pr",
           "ownership": "ours",
           "role": "primary"
