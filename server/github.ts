@@ -2,7 +2,7 @@
 // Pure helpers plus one fetch. No database access here.
 
 import type { GhCi, GhReviewDecision, GhState } from "../shared/enums";
-import { pipelineMarker, type UpstreamRules } from "../shared/upstreamRules";
+import { pipelineMarker, takeoverLabel, type UpstreamRules } from "../shared/upstreamRules";
 
 export const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
 export const DEFAULT_SELF_LOGIN = "Jacksondr5";
@@ -20,6 +20,8 @@ export type LinkTarget = { repo: string; number: number; kind: string };
 const ACTOR = "author{login __typename}";
 // How many label events are read to find when a label was last applied. Upstream's own bot reads as many.
 const LABEL_EVENTS = 20;
+// The pipeline's comment and its label land within moments of each other, in either order.
+const MARKER_SLACK_MS = 10 * 60_000;
 // A clock depends on labels, so a PR's are read as far as upstream's bot reads them.
 const PR_LABELS = 100;
 // The pipeline's marker is in one of a PR's last comments. Their bodies are large, so few are read.
@@ -102,9 +104,15 @@ export type Snapshot = {
   otherActivityBy: string | null;
   /** Null when no Macroscope comment was among those read. */
   macroscopeVerdict: string | null;
-  /** The takeover pipeline's last marker and its time. Null when none was among the comments read. */
+  /**
+   * The takeover pipeline's last marker and its time. Null when none was among the
+   * comments read, and null when the one read is older than the PR's present
+   * pipeline label: that marker is from an earlier run and says nothing of this one.
+   */
   pipelineMarker: string | null;
   pipelineMarkerAt: number | null;
+  /** True when a marker was read and set aside as an earlier run's. A stored one is then stale too. */
+  pipelineMarkerStale: boolean;
 };
 
 type Obj = Record<string, unknown>;
@@ -247,6 +255,19 @@ export function snapshotFrom(node: unknown, selfLogin: string, rules: UpstreamRu
           rules.takeover
         )
       : null;
+  // A marker belongs to the present label only if it was written about when the label
+  // was put on, or after. When the label's own time cannot be read, it is not attributed.
+  let markerStale = false;
+  const pipelineLabel = isPr && rules?.takeover ? takeoverLabel(labels, rules.takeover) : null;
+  if (marker && pipelineLabel !== null) {
+    let labelledAt: number | null = null;
+    for (const event of nodes(node.labelEvents)) {
+      const at = time(event.createdAt);
+      if (at === null || !isObj(event.label) || event.label.name !== pipelineLabel) continue;
+      if (labelledAt === null || at > labelledAt) labelledAt = at;
+    }
+    markerStale = labelledAt === null || marker.at === null || marker.at < labelledAt - MARKER_SLACK_MS;
+  }
 
   return {
     title: title.slice(0, 200),
@@ -265,8 +286,9 @@ export function snapshotFrom(node: unknown, selfLogin: string, rules: UpstreamRu
     otherActivityAt,
     otherActivityBy,
     macroscopeVerdict,
-    pipelineMarker: marker?.marker ?? null,
-    pipelineMarkerAt: marker?.at ?? null
+    pipelineMarker: markerStale ? null : (marker?.marker ?? null),
+    pipelineMarkerAt: markerStale ? null : (marker?.at ?? null),
+    pipelineMarkerStale: markerStale
   };
 }
 

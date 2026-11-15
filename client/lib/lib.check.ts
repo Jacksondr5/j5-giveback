@@ -815,11 +815,13 @@ const linkQuery = buildQuery([{ repo: T3, number: 1, kind: "pr" }]);
 equal(linkQuery.includes("lastComments: comments(last:8){nodes{createdAt authorAssociation body}}"), true, "eight comment bodies are read for the marker");
 equal(/ comments\(last:20\)\{nodes\{[^}]*\}[^}]*body/.test(linkQuery), false, "the recent comments are read without their bodies");
 const at = (ms: number) => new Date(ms).toISOString();
-const prNode = (comments: unknown[]) => ({
+// The label was put on two hours ago unless a test says otherwise.
+const prNode = (comments: unknown[], labelledAt: number | null = NOW - 2 * HOUR) => ({
   __typename: "PullRequest",
   title: "An invented PR",
   prState: "OPEN",
   labels: { nodes: [{ name: "takeover:blocked" }] },
+  labelEvents: { nodes: labelledAt === null ? [] : [{ createdAt: at(labelledAt), label: { name: "takeover:blocked" } }] },
   lastComments: { nodes: comments }
 });
 const stopComment = { createdAt: at(NOW - HOUR), authorAssociation: "MEMBER", body: stop };
@@ -827,6 +829,12 @@ const snap = snapshotFrom(prNode([stopComment, { createdAt: at(NOW), authorAssoc
 equal([snap?.pipelineMarker, snap?.pipelineMarkerAt], ["stopped-moved", NOW - HOUR], "a snapshot carries the marker and its time");
 equal(snapshotFrom(prNode([stopComment]), "octo", null)?.pipelineMarker, null, "no rules, no marker read");
 equal(snapshotFrom(prNode([]), "octo", rules)?.pipelineMarker, null, "no marker among the comments");
+const earlierRun = snapshotFrom(prNode([stopComment], NOW - 20 * MINUTE), "octo", rules);
+equal([earlierRun?.pipelineMarker, earlierRun?.pipelineMarkerStale], [null, true], "a marker older than the present label is an earlier run's: set aside");
+equal(snapshotFrom(prNode([stopComment], NOW - HOUR + 5 * MINUTE), "octo", rules)?.pipelineMarker, "stopped-moved", "the comment may land a few minutes before its label");
+const untimed = snapshotFrom(prNode([stopComment], null), "octo", rules);
+equal([untimed?.pipelineMarker, untimed?.pipelineMarkerStale], [null, true], "the label's own time could not be read: the marker is not attributed");
+equal(snapshotFrom(prNode([]), "octo", rules)?.pipelineMarkerStale, false, "nothing read is not stale: a stored marker may stand");
 equal(snapshotFrom({ ...prNode([stopComment]), __typename: "Issue", issueState: "OPEN" }, "octo", rules)?.pipelineMarker, null, "an issue has no marker");
 equal(hasThreadSignals(taken("needs-julius"), NOW), true, "a pipeline state is a signal");
 equal(hasThreadSignals(taken("needs-julius", { state: "merged" }), NOW), false, "and none once the PR is merged");

@@ -45,7 +45,8 @@ export const LIMITS = {
   exportRowsPerPage: 500,
   // The watch list reads every item (maxItems rows) beside one page of links, inside the 1,000 rows a handler may return.
   watchlistLinksPerPage: 500,
-  refreshLinksPerBatch: 20,
+  // 15, not 20: a PR's last comments are read with their bodies, and one answer has 3.5 seconds.
+  refreshLinksPerBatch: 15,
   // Items one call of the number backfill numbers: one write each, inside the 5-second transaction limit.
   assignNumbersPerCall: 100,
 

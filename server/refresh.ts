@@ -77,21 +77,40 @@ function pipelineChangesFor(link: LinkRow, next: Snapshot): Change[] {
     ownership: link.ownership,
     state: next.state,
     labels: next.labels,
-    pipelineMarker: next.pipelineMarker ?? link.ghPipelineMarker ?? null
+    pipelineMarker: markerToStore(link, next)
   });
   if (!state || state.label === takeoverLabel((link.ghLabels ?? "").split("\n"), takeover)) return [];
   // The note gives the label as GitHub has it. What to do about it is the agents' rule, not the site's.
   return [{ type: "pipeline_state", note: `${link.repo}#${link.number} now carries the label ${state.text}.`, noPush: state.noPush }];
 }
 
-/** A few words on the pipeline's last marker, for the note of one of our PRs that closed or merged. */
+const HOUR_MS = 3_600_000;
+
+/**
+ * The pipeline marker a link keeps after this read. One just read stands. With
+ * none read, the stored one stands only while the PR's pipeline label is the
+ * same and the read did not find it to be an earlier run's: a marker must never
+ * pass as the reason for a stop it was not written about.
+ */
+function markerToStore(link: LinkRow, next: Snapshot): string | null {
+  if (next.pipelineMarker !== null) return next.pipelineMarker;
+  const takeover = rulesFor(link.repo)?.takeover;
+  if (!takeover || next.pipelineMarkerStale) return null;
+  const before = takeoverLabel((link.ghLabels ?? "").split("\n"), takeover);
+  return takeoverLabel(next.labels, takeover) === before ? (link.ghPipelineMarker ?? null) : null;
+}
+
+/**
+ * A few words for the note of one of our PRs that the pipeline closed: only when
+ * its closing marker was read now and was written about when the PR closed.
+ */
 function markerNote(link: LinkRow, next: Snapshot): string {
   const takeover = rulesFor(link.repo)?.takeover;
-  const marker = next.pipelineMarker ?? link.ghPipelineMarker;
-  if (!takeover || !marker || link.kind !== "pr" || link.ownership !== "ours") return "";
-  return next.state === "closed" && !marker.startsWith(takeover.stopPrefix)
-    ? ` Upstream's pipeline closed it as: ${marker}.`
-    : ` The pipeline's last marker: ${marker}.`;
+  const marker = next.pipelineMarker;
+  if (!takeover || !marker || link.kind !== "pr" || link.ownership !== "ours" || next.state !== "closed") return "";
+  if (marker.startsWith(takeover.stopPrefix)) return "";
+  const near = next.pipelineMarkerAt !== null && next.closedAt !== null && Math.abs(next.closedAt - next.pipelineMarkerAt) <= HOUR_MS;
+  return near ? ` Upstream's pipeline closed it as: ${marker}.` : "";
 }
 
 /**
@@ -193,7 +212,11 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
     }
     rateLimitRemaining = result.rateLimitRemaining;
     const selfLogin = ctx.env.GITHUB_SELF_LOGIN || DEFAULT_SELF_LOGIN;
-    const marked = new Map<string, string>();
+    // An item's marker carries one note. Across all its links the weightiest stands: a
+    // pipeline state that forbids a push, then a closing clock, then anything else. Of equals, the last.
+    const marked = new Map<string, { note: string; weight: number }>();
+    const weightOf = (change: Change) =>
+      change.noPush ? 3 : change.type === "closing_notice" || change.type === "rebase_requested" ? 2 : 1;
 
     for (const [index, link] of links.entries()) {
       const alias = aliasFor(index);
@@ -238,10 +261,12 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
           ? { ghOtherActivityAt: snapshot.otherActivityAt, ghOtherActivityBy: snapshot.otherActivityBy }
           : {}),
         ...(snapshot.macroscopeVerdict !== null ? { macroscopeVerdict: snapshot.macroscopeVerdict } : {}),
-        // Few comments are read for the marker. When none of them carries one, an older stored one still stands.
+        // Few comments are read for the marker: see markerToStore for when a stored one still stands.
         ...(snapshot.pipelineMarker !== null
           ? { ghPipelineMarker: snapshot.pipelineMarker, ghPipelineMarkerAt: snapshot.pipelineMarkerAt }
-          : {}),
+          : markerToStore(link, snapshot) === null
+            ? { ghPipelineMarker: null, ghPipelineMarkerAt: null }
+            : {}),
         syncedAt: now,
         syncError: null,
         syncDue: link.active
@@ -260,12 +285,13 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
           isPublic: true
         });
         eventCount += 1;
-        marked.set(link.itemId, change.note);
+        const weight = weightOf(change);
+        if (weight >= (marked.get(link.itemId)?.weight ?? 0)) marked.set(link.itemId, { note: change.note, weight });
       }
     }
 
     // Raise the marker. The stage is the agent's to change.
-    for (const [itemId, note] of marked) {
+    for (const [itemId, { note }] of marked) {
       await db.items.update(itemId, { upstreamChangedAt: now, upstreamChangeNote: note });
     }
   }
