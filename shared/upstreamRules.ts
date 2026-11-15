@@ -332,13 +332,13 @@ export const POSTING_CAPS = {
 
 /**
  * What a post read from GitHub is. "pr" and "issue" are a thread's creation.
- * "reopen" is a PR of ours opened again: a post, and not a new PR.
- * "replacement" is a PR that takes the place of one the open-PR limit closed
- * as it opened. We cannot reopen such a PR, so upstream has us open another
- * from the same branch. It is a post, and not a new PR either.
+ * "reopen" is a PR of ours opened again: a post, and not a new PR. The PR
+ * that takes the place of one the open-PR limit closed as it opened is a
+ * "reopen" too: we cannot reopen such a PR, so upstream has us open another
+ * from the same branch, and it counts the same way.
  * "review" is one submitted review, however many inline comments it carries.
  */
-export const POST_KINDS = ["pr", "issue", "reopen", "replacement", "review", "comment", "discussion", "discussion_comment"] as const;
+export const POST_KINDS = ["pr", "issue", "reopen", "review", "comment", "discussion", "discussion_comment"] as const;
 export type PostKind = (typeof POST_KINDS)[number];
 export type Post = { at: number; kind: PostKind };
 

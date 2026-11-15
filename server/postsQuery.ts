@@ -47,7 +47,7 @@ export function buildPostsQuery(repos: readonly string[], login: string, since: 
         "p",
         100,
         "is:pr author",
-        `...on PullRequest{createdAt merged headRefName timelineItems(itemTypes:[REOPENED_EVENT],last:${REOPENS}){nodes{...on ReopenedEvent{createdAt actor{login}}}} closes:timelineItems(itemTypes:[CLOSED_EVENT],first:1){nodes{...on ClosedEvent{createdAt actor{login}}}}}`
+        `...on PullRequest{createdAt state headRefName headRepository{nameWithOwner} timelineItems(itemTypes:[REOPENED_EVENT],last:${REOPENS}){nodes{...on ReopenedEvent{createdAt actor{login}}}} closes:timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{...on ClosedEvent{createdAt actor{login}}}}}`
       ),
       mine("i", 100, "is:issue author", "...on Issue{createdAt}"),
       mine("r", 50, "is:pr reviewed-by", `...on PullRequest{reviews(author:${user},last:${REVIEWS}){nodes{submittedAt}}}`),
@@ -134,30 +134,42 @@ export function postsFrom(data: Obj, repos: readonly string[], login: string, si
 
     // A PR the limit bot closed as it opened is found too, and counts as a new PR.
     // The PR that later takes its place does not: we cannot reopen what the bot closed,
-    // so upstream has us open another from the same branch. It is told by that: the
-    // account's PR just before it on the same head branch was closed, unmerged, by the
-    // limit bot, within minutes of opening.
+    // so upstream has us open another from the same branch, and it counts as a reopen.
+    //
+    // Calling a new PR a replacement would make the count low, so every doubt counts
+    // as a new PR. A PR is a replacement only when the account's PR just before it, on
+    // the same branch of the same head repository, is closed now, and its last close
+    // was the limit bot's, within minutes of its opening, inside the window, and before
+    // this PR was opened. With the search cut short, a PR between the two may be
+    // missing, so nothing is called a replacement.
+    const cutShort = (data[`p${n}`] as Obj).issueCount !== prs.length;
     const dated = prs
       .map((pr) => {
         const close = all(pr.closes)[0];
         const opened = time(pr.createdAt);
         const closed = close ? time(close.createdAt) : null;
-        const byLimit =
-          pr.merged !== true &&
+        const limitClosedAt =
+          pr.state === "CLOSED" &&
           isObj(close) &&
           isObj(close.actor) &&
           close.actor.login === LIMIT_BOT &&
           opened !== null &&
           closed !== null &&
-          closed - opened <= LIMIT_CLOSE_WITHIN_MS;
-        return { pr, opened, branch: typeof pr.headRefName === "string" ? pr.headRefName : "", byLimit };
+          closed >= since &&
+          closed - opened <= LIMIT_CLOSE_WITHIN_MS
+            ? closed
+            : null;
+        const repoName = isObj(pr.headRepository) && typeof pr.headRepository.nameWithOwner === "string" ? pr.headRepository.nameWithOwner : "";
+        const branch = repoName !== "" && typeof pr.headRefName === "string" && pr.headRefName !== "" ? `${repoName.toLowerCase()}:${pr.headRefName}` : "";
+        return { pr, opened, branch, limitClosedAt };
       })
       .sort((a, b) => (a.opened ?? 0) - (b.opened ?? 0));
-    const lastOnBranch = new Map<string, boolean>();
-    for (const { pr, branch, byLimit } of dated) {
-      const replaces = branch !== "" && lastOnBranch.get(branch) === true;
-      add(replaces ? "replacement" : "pr", pr.createdAt);
-      if (branch !== "") lastOnBranch.set(branch, byLimit);
+    const lastOnBranch = new Map<string, number | null>();
+    for (const { pr, opened, branch, limitClosedAt } of dated) {
+      const before = branch === "" ? null : (lastOnBranch.get(branch) ?? null);
+      const replaces = !cutShort && before !== null && opened !== null && before < opened;
+      add(replaces ? "reopen" : "pr", pr.createdAt);
+      if (branch !== "") lastOnBranch.set(branch, limitClosedAt);
       for (const event of page(pr.timelineItems, REOPENS, "createdAt")) if (mine(event.actor)) add("reopen", event.createdAt);
     }
     for (const issue of issues) add("issue", issue.createdAt);
