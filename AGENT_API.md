@@ -175,6 +175,30 @@ The refresh reads each PR's labels, its "updated" time, and when `triage:closing
 
 The closing notice outranks the rebase request, as it does in upstream's bot. When the refresh first sees either label on one of our open PRs, it raises the item's "state changed upstream" marker: see [refresh](#post-apirefresh). A closing notice that was lifted and given again raises it again.
 
+### Takeover pipeline
+
+Since about 2026-11-13, `pingdotgg/t3code` lands most outside PRs through an automated "takeover" pipeline that runs under a maintainer's account. It merges `main` into the contributor's branch, may add commits, reviews, and captures evidence. **This was observed on 2026-11-15. Nothing in upstream's repository defines it, and it is expected to change.** The labels on the PR are the source of truth: when the site and the PR disagree, believe the PR.
+
+The pipeline's state is the PR's label that starts with `takeover:`. A PR carries one at a time.
+
+| Label | Meaning | The site says |
+|---|---|---|
+| `takeover:in-progress` | The pipeline is working on the PR, for about half an hour. | "Upstream's pipeline is working on it: do not push" |
+| `takeover:ready` | The pipeline passed it. It is merged within about a minute. | "Pipeline passed it: merging" |
+| `takeover:needs-julius` | It waits on a maintainer's decision, usually with no comment. | "Waiting on a maintainer's decision" |
+| `takeover:blocked` | The pipeline stopped and left the PR open. | "Pipeline stopped", and the reason when one was read: "Pipeline stopped: no bug on base" |
+| any other `takeover:` label | Not known here. | The label itself |
+
+**While a PR carries `takeover:in-progress` or `takeover:ready`, push nothing to its branch.** A push by anyone else stops the pipeline. The site shows these two states as an outlined notice, in every list and on the item's page. In a list the words are shorter: "In pipeline: do not push", "Merging: do not push", "Maintainer to decide", "Pipeline stopped".
+
+When the pipeline stops or closes a PR, it comments, and the comment ends with a marker: `<!-- factory:stopped-no-bug-on-base -->`. Values seen or reported: `stopped-moved`, `stopped-no-bug-on-base`, `stopped-cannot-prove`, `stopped-not-proven`, `stopped-reviews`, and for a closure `absent`, `redundant`, `duplicate`, `stacked`, `replaced`. The list is open; others appear. The refresh stores the newest marker on the link as `ghPipelineMarker`, with its comment's time as `ghPipelineMarkerAt`. It stores the value only, never the comment's text, and only a value of at most 60 characters from `a-z`, `0-9` and `-`. Anyone can type the marker into a comment, so only a comment whose author GitHub reports as `OWNER`, `MEMBER` or `COLLABORATOR` of the repository sets it.
+
+For `takeover:blocked`, a marker that starts with `stopped-` is the reason: the prefix is dropped and hyphens become spaces. A blocked PR's last marker is its reason, whatever its age.
+
+Only an open PR of ours (kind `pr`, ownership `ours`) in a repository with rules has a pipeline state. When the refresh sees a `takeover:` label on one that is new or different from the stored one, it records a `pipeline_state` event and raises the item's "state changed upstream" marker: see [refresh](#post-apirefresh). [`GET /api/agent/capacity`](#get-apiagentcapacity) gives each slot's state as `takeover`.
+
+Every name above is in one place, `takeover` in `shared/upstreamRules.ts`: the label prefix, the known states and their wording, which states forbid a push, the marker's name, and the prefix of a stop. Revise it there.
+
 ### Bug, behaviour change or feature
 
 Upstream's test: a PR must fix a bug, and a change to how the product behaves is a feature, even when the PR calls it a fix. Record the verdict on the item as `changeKind`: `bug`, `behaviour_change` or `feature`. See [change kind](#change-kind). The site shows it on the item's page and in every list.
@@ -554,7 +578,7 @@ An item row carries its `number`. Its [ID](#item-ids) is `itemIdPrefix`, a hyphe
 
 `scripts/giveback export` follows the cursors and nests the result: each item carries its `shortId` (`"GB-12"`), `links`, `private`, `asks` (each with its `private`) and `events`. `--raw` gives the tables instead. For one item, use `scripts/giveback show GB-12`.
 
-In a row, a field with no value is absent. `items.originRefs` and `links.ghLabels` are one entry per line. The `gh*` fields, `macroscopeVerdict`, `syncedAt` and `syncError` on a link are the GitHub snapshot. `links.ghLastActivityAt` is the thread's "updated" time on GitHub. `links.ghClosingNoticeAt` is when `triage:closing` was last applied to a PR; it is present only while the PR carries that label. `links.ghMergeable` is GitHub's `MERGEABLE`, `CONFLICTING` or `UNKNOWN` for a PR. `items.queueRank` and `items.changeKind` are present only when set.
+In a row, a field with no value is absent. `items.originRefs` and `links.ghLabels` are one entry per line. The `gh*` fields, `macroscopeVerdict`, `syncedAt` and `syncError` on a link are the GitHub snapshot. `links.ghLastActivityAt` is the thread's "updated" time on GitHub. `links.ghClosingNoticeAt` is when `triage:closing` was last applied to a PR; it is present only while the PR carries that label. `links.ghMergeable` is GitHub's `MERGEABLE`, `CONFLICTING` or `UNKNOWN` for a PR. `links.ghPipelineMarker` and `links.ghPipelineMarkerAt` are the last marker of upstream's [takeover pipeline](#takeover-pipeline) on a PR, such as `stopped-moved`, and the time of the comment that carried it; they are present once a marker has been read. `items.queueRank` and `items.changeKind` are present only when set.
 
 ### `GET /api/agent/item-agents`
 
@@ -619,6 +643,7 @@ Bearer `AGENT_SECRET`. Read-only. Whether a [PR slot](#pr-slots) is free, which 
           "labels": ["size:XS", "needs-rebase"],
           "lastActivityAt": 1794634431000,
           "closingClock": { "kind": "rebase", "closesAt": 1795239231000, "due": false },
+          "takeover": null,
           "syncedAt": 1794699000000
         }
       ],
@@ -662,6 +687,7 @@ Bearer `AGENT_SECRET`. Read-only. Whether a [PR slot](#pr-slots) is free, which 
 - `repos` has one entry for every repository in the [rules map](#upstreams-pr-rules), whether or not anything of ours is there.
 - `slots` are our open PRs, oldest first. `open` is how many there are and `free` is `limit` less `open`, never below 0. When `open` is above `limit`, we are over it: upstream closes a new PR as it opens. **Post only when `free` is above 0.** `incomplete` is `false` in normal operation. It is `true` only when the dashboard holds more of our PR links than one read takes (60, on items that are not closed); `open` is then a floor, `free` is 0, and nothing should be posted on it.
 - `ghState` is `open`, or `null` for a link the refresh has not read yet; such a link counts as open. `closingClock` is the [clock](#closing-clocks) running on the PR at `generatedAt`, or `null`. Its `kind` is `notice` or `rebase` (each with `closesAt` and `due`, which is `true` once the deadline has passed), `answered` (with `noticeAt`), or `notice_unknown` (the PR carries the closing label and the time it was applied could not be read).
+- `takeover` is what upstream's [takeover pipeline](#takeover-pipeline) is doing with the PR, or `null` when it carries no `takeover:` label: `{ "label": "takeover:in-progress", "state": "in-progress", "known": true, "noPush": true, "stopped": false, "reason": null, "text": "Upstream's pipeline is working on it: do not push", "short": "In pipeline: do not push" }`. **When `noPush` is `true`, push nothing to the PR's branch.** `known` is `false` for a label the dashboard has no wording for; `text` is then the label. `reason` is set for a stopped pipeline whose marker was read.
 - `queue` is every item that waits on `pr_slot` and is not closed, in order: lowest `queueRank` first, unranked items after, longest-waiting first among equals. `position` is 1 for the item that goes next. `text` is `approved`, `awaiting` or `none`, by the [rule above](#pr-slots), and `null` past the tenth entry, whose asks are not read.
 - Non-public items are included, with their slugs and real titles. This endpoint is for agents; do not republish its output.
 - `posts` is the count of our own upstream posts: see [the post count](#the-post-count) below.
@@ -738,7 +764,7 @@ Bearer `REFRESH_SECRET`. No body. A scheduler calls this; an agent rarely needs 
 
 Each call counts against Lakebed's limit of 1,000 writes a day, and one call handles 20 links. With up to 100 links on open items, a full refresh every 15 minutes uses at most 480 calls a day, and [the read of our own posts](#post-apirefreshposts) 96 more. Beyond that, lengthen the interval.
 
-It reads GitHub state for a batch of at most 20 links and stores it on each link: state (`open`, `closed`, `merged`), draft flag, merged and closed times, CI rollup, review decision, labels, head SHA, last activity time (the thread's `updatedAt`), when the `triage:closing` label was last applied (for a PR that carries it), the last comment or review by someone other than `Jacksondr5` that is not from a bot, and Macroscope's approvability verdict.
+It reads GitHub state for a batch of at most 20 links and stores it on each link: state (`open`, `closed`, `merged`), draft flag, merged and closed times, CI rollup, review decision, labels, head SHA, last activity time (the thread's `updatedAt`), when the `triage:closing` label was last applied (for a PR that carries it), the last marker of the [takeover pipeline](#takeover-pipeline) (for a PR in a repository with rules), the last comment or review by someone other than `Jacksondr5` that is not from a bot, and Macroscope's approvability verdict.
 
 It covers every link on an item that is not closed, `held` items included. A link on a closed item is read once and then left alone.
 
@@ -759,7 +785,7 @@ A link is read through its `repo`, `number` and `kind`, not its URL. A `comment`
 
 When `nextCursor` is not null, call `POST /api/refresh?cursor=<nextCursor>` for the next batch. `scripts/giveback refresh` does this, and then calls [`POST /api/refresh/posts`](#post-apirefreshposts) once.
 
-**The refresh never changes an item's stage.** When a link merges, closes, reopens, or (for our own open PR) begins failing CI or is put on a [closing clock](#closing-clocks), it records an event with actor `github` and sets the item's `upstreamChangedAt` and `upstreamChangeNote`. That marker means "something happened upstream that you have not acted on". Read it in the export, decide what the item's stage should be, and send `clearUpstreamChange: true` with your change.
+**The refresh never changes an item's stage.** When a link merges, closes, reopens, or (for our own open PR) begins failing CI, is put on a [closing clock](#closing-clocks) or gets a new [takeover pipeline](#takeover-pipeline) state, it records an event with actor `github` and sets the item's `upstreamChangedAt` and `upstreamChangeNote`. That marker means "something happened upstream that you have not acted on". Read it in the export, decide what the item's stage should be, and send `clearUpstreamChange: true` with your change.
 
 | Event type | When |
 |---|---|
@@ -768,8 +794,13 @@ When `nextCursor` is not null, call `POST /api/refresh?cursor=<nextCursor>` for 
 | `ci_failing` | CI went from not failing to failing on an open link with ownership `ours` |
 | `rebase_requested` | `needs-rebase` is on one of our open PRs and was not in the stored snapshot |
 | `closing_notice` | `triage:closing` is on one of our open PRs and was not in the stored snapshot |
+| `pipeline_state` | A `takeover:` label is on one of our open PRs, and the stored snapshot had none or a different one |
 
 The two label events are recorded once: later refreshes say nothing while the label stays. If the label is removed and applied again, that is a new event. A PR read for the first time with the label already on it is reported too, because its clock is running. Neither is recorded for a PR that carries `triage:keep-open`, or in a repository with no [rules](#upstreams-pr-rules).
+
+A `pipeline_state` event is recorded the same way: once for each new label, and for a PR read for the first time with a label on it. Its note names the PR and the state in the site's words, such as `pingdotgg/t3code#31330: Pipeline stopped: no bug on base.` For `takeover:in-progress` and `takeover:ready` it adds that nothing may be pushed to the PR's branch. A label that is taken off records nothing. When an item gets several notes in one refresh, its marker carries the last: a state that forbids a push, then a closing clock, then any other pipeline state.
+
+When one of our PRs closes or merges and a pipeline marker is stored for it, the close or merge note ends with the marker: "Upstream's pipeline closed it as: absent." for a closure, and "The pipeline's last marker: stopped-moved." for a merge, or for a closure whose last marker is a stop.
 
 If GitHub cannot be reached or answers with an error, the response is `502`, no snapshot is changed, and `nextCursor` repeats the cursor you sent so the batch can be retried. If GitHub answers but has nothing for one link, that link is listed in `failed`, keeps its old snapshot, and gets a `syncError`. The last error is stored in `syncState` and shown on the site.
 
@@ -777,6 +808,7 @@ Limits of the snapshot:
 
 - "Last activity by someone else" looks at the latest 20 comments and the latest 20 reviews. If all of them are from Jackson or bots, the earlier stored value is kept.
 - The time of a closing notice is read from the PR's latest 20 label events, as upstream's own bot reads it. If the label is on the PR and its event is not among them, the site says the notice's time is not known.
+- The pipeline marker is read from the bodies of a PR's last 8 comments. When none of them carries one, the stored marker is kept, so an old marker can outlive what it was about. The state itself comes from the label, which is read on every refresh.
 - The Macroscope verdict is read from the comment the `macroscopeapp` bot posts on a PR (`**Verdict:** ...`), looking at the PR's first four comments. It is null when there is no such comment.
 - `triageBucket` and `triageRank` are **not** refreshed. The T3 triage boards publish no readable data: their rankings are compiled into the page's script. An agent that reads a board sets these two fields through [`POST /api/agent/links`](#post-apiagentlinks), or with the rest of the link through `POST /api/agent/items`.
 
@@ -884,9 +916,9 @@ Labels are in `shared/enums.ts`.
 
 ### Event type
 
-`note`, `stage_changed`, `validated`, `route_decided`, `posted`, `ask_opened`, `ask_closed`, `review`, `upstream_merged`, `upstream_closed`, `upstream_reopened`, `ci_failing`, `rebase_requested`, `closing_notice`, `dependency_merged`, `dependency_closed`, `follow_up`
+`note`, `stage_changed`, `validated`, `route_decided`, `posted`, `ask_opened`, `ask_closed`, `review`, `upstream_merged`, `upstream_closed`, `upstream_reopened`, `ci_failing`, `rebase_requested`, `closing_notice`, `pipeline_state`, `dependency_merged`, `dependency_closed`, `follow_up`
 
-The server records `stage_changed`, `ask_opened`, `ask_closed` and the `upstream_*`, `dependency_*`, `ci_failing`, `rebase_requested` and `closing_notice` types itself. You may also send any of them.
+The server records `stage_changed`, `ask_opened`, `ask_closed` and the `upstream_*`, `dependency_*`, `ci_failing`, `rebase_requested`, `closing_notice` and `pipeline_state` types itself. You may also send any of them.
 
 Send a `posted` event for each PR, issue, comment, review or discussion post that goes upstream, and for nothing else. It is the item's own record of the post. [The post count](#the-post-count) is taken from GitHub; when GitHub cannot be read, it is taken from these events instead, one post each.
 

@@ -17,7 +17,7 @@ Every item has a short ID, `GB-<n>` (GB for give-back), that a person can say or
 | `shared/api.ts` | Request and response types for the endpoints and the queries |
 | `shared/itemId.ts` | The item ID: its prefix, and how it is formatted and parsed |
 | `shared/limits.ts` | Length and batch limits |
-| `shared/upstreamRules.ts` | The rules an upstream repository enforces by bot: the open PR limit, the closing clocks, and the count of posts per week |
+| `shared/upstreamRules.ts` | The rules an upstream repository enforces by bot: the open PR limit, the closing clocks, the takeover pipeline's states, and the count of posts per week |
 | `server/schema.ts` | Tables and indexes |
 | `server/read.ts` | Read paths over the public tables |
 | `server/owner.ts` | Owner read paths, which add the private tables |
