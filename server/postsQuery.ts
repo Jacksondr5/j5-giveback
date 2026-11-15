@@ -3,7 +3,7 @@
 
 import { LIMITS } from "../shared/limits";
 import type { Post, PostKind } from "../shared/upstreamRules";
-import { isObj, nodes, time } from "./github";
+import { isObj, time } from "./github";
 
 type Obj = Record<string, unknown>;
 
@@ -67,17 +67,33 @@ export type PostsRead = { posts: Post[]; incomplete: boolean };
  *
  * Incomplete: a search found more threads than it returned, a page came back
  * full with nothing in it older than the window, or more posts were found than a row keeps.
+ *
+ * Nothing unreadable is skipped. A connection that is missing, or a node that is
+ * null, fails the read: GitHub puts a null where it could not load something, and
+ * a count that left it out would be low and look complete.
  */
 export function postsFrom(data: Obj, repos: readonly string[], login: string, since: number): Map<string, PostsRead> | string {
   const user = data.user;
-  if (!isObj(user)) return `GitHub has no user ${login}.`;
+  // The message is stored and returned, so it does not name the login.
+  if (!isObj(user)) return "GitHub has no user of that login.";
+  let unreadable = false;
+  /** A connection's nodes, every one of them. Anything else marks the answer unreadable. */
+  const all = (connection: unknown): Obj[] => {
+    const list = isObj(connection) ? connection.nodes : null;
+    if (!Array.isArray(list) || !list.every(isObj)) {
+      unreadable = true;
+      return [];
+    }
+    return list as Obj[];
+  };
   const mine = (actor: unknown) => isObj(actor) && typeof actor.login === "string" && actor.login.toLowerCase() === login.toLowerCase();
   const inWindow = (list: Obj[], field: string) => list.every((node) => (time(node[field]) ?? since) >= since);
   const newest = (list: Obj[]) => Math.max(0, ...list.map((node) => time(node.createdAt) ?? 0));
 
   // Discussion comments, from both ends. Two full pages with no overlap leave a gap between
   // them; the gap can hold posts of the window only if the newer page is all inside it.
-  const ends = [nodes(user.f), nodes(user.l)] as const;
+  const ends = [all(user.f), all(user.l)] as const;
+  const discussions = all(user.d);
   const discussionComments = new Map(ends.flat().map((comment) => [comment.id, comment]));
   const newer = newest(ends[0]) >= newest(ends[1]) ? ends[0] : ends[1];
   const gap = discussionComments.size >= 2 * DISCUSSION_COMMENTS && inWindow(newer, "createdAt");
@@ -91,15 +107,16 @@ export function postsFrom(data: Obj, repos: readonly string[], login: string, si
       if (at !== null && at >= since) posts.push({ at, kind });
     };
     const page = (connection: unknown, size: number, field: string): Obj[] => {
-      const list = nodes(connection);
+      const list = all(connection);
       if (list.length >= size && inWindow(list, field)) incomplete = true;
       return list;
     };
     const searched = (alias: string): Obj[] | null => {
       const result = data[alias + n];
-      if (!isObj(result) || !Array.isArray(result.nodes) || typeof result.issueCount !== "number") return null;
-      if (result.issueCount > result.nodes.length) incomplete = true;
-      return result.nodes.filter(isObj);
+      if (!isObj(result) || typeof result.issueCount !== "number") return null;
+      const list = all(result);
+      if (result.issueCount > list.length) incomplete = true;
+      return list;
     };
     const here = (holder: unknown) =>
       isObj(holder) && isObj(holder.repository) && String(holder.repository.nameWithOwner).toLowerCase() === repo.toLowerCase();
@@ -123,9 +140,11 @@ export function postsFrom(data: Obj, repos: readonly string[], login: string, si
     for (const thread of [...onPrs, ...onIssues]) {
       for (const comment of page(thread.comments, COMMENTS, "createdAt")) if (mine(comment.author)) add("comment", comment.createdAt);
     }
-    for (const discussion of page(user.d, DISCUSSIONS, "createdAt")) if (here(discussion)) add("discussion", discussion.createdAt);
+    if (discussions.length >= DISCUSSIONS && inWindow(discussions, "createdAt")) incomplete = true;
+    for (const discussion of discussions) if (here(discussion)) add("discussion", discussion.createdAt);
     for (const comment of discussionComments.values()) if (here(comment.discussion)) add("discussion_comment", comment.createdAt);
 
+    if (unreadable) return `GitHub's answer for ${repo} has a part that cannot be read.`;
     posts.sort((a, b) => b.at - a.at);
     out.set(repo, { posts: posts.slice(0, LIMITS.maxPostsStored), incomplete: incomplete || posts.length > LIMITS.maxPostsStored });
   }

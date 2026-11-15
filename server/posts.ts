@@ -57,6 +57,11 @@ export async function handleRefreshPosts(ctx: ServerContext, req: EndpointReques
     else await db.githubPosts.update(row.id, entry ? { ...fields, error: null, errorAt: null } : fields);
     if (entry) repos.push({ repo, incomplete: entry.incomplete });
   }
+  // The rows are in the export, so a write here moves its revision like any other:
+  // an export whose pages straddle this call can tell, and starts again.
+  const state = await db.syncState.withIndex("by_creation").first();
+  if (state) await db.syncState.update(state.id, { revision: (state.revision ?? 0) + 1 });
+  else await db.syncState.insert({ revision: 1 });
 
   if (!read) {
     ctx.log.warn("GitHub post read failed", { message });

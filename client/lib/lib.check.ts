@@ -959,7 +959,7 @@ equal(
 );
 
 // Incomplete reads keep what they found.
-equal(readOne(answer({ p0: found([{ createdAt: iso(NOW) }], 2) })), { incomplete: true, posts: ["0h pr"] }, "a search that found more than it returned");
+equal(readOne(answer({ p0: found([{ createdAt: iso(NOW), ...reopenedBy() }], 2) })), { incomplete: true, posts: ["0h pr"] }, "a search that found more than it returned");
 equal(readOne(answer({ m0: found([], 51) })).incomplete, true, "the same for any of the searches");
 const fullPage = (size: number, oldest: number) => Array.from({ length: size }, (_, index) => (index === 0 ? oldest : NOW - HOUR));
 const theirs = (times: number[]) => commentsBy(...times.map((at): [string, number] => ["someone", at]));
@@ -987,6 +987,19 @@ equal(postsFrom(answer({ k0: { issueCount: 0 } }), REPO, "octo", SINCE), "GitHub
 equal(typeof postsFrom(answer({ c0: null }), REPO, "octo", SINCE), "string", "a search is missing");
 equal(typeof postsFrom(answer({ i0: { nodes: [] } }), REPO, "octo", SINCE), "string", "a search without its count");
 equal(typeof postsFrom({ ...answer(), user: null }, REPO, "octo", SINCE), "string", "no user");
+equal(String(postsFrom({ ...answer(), user: null }, REPO, "octo", SINCE)).includes("octo"), false, "the failure does not name the login");
+equal(
+  typeof postsFrom({ ...answer(), i0: { issueCount: 1, nodes: [null] } }, REPO, "octo", SINCE),
+  "string",
+  "a null where a thread should be fails the read: it must not count as nothing"
+);
+equal(typeof postsFrom({ ...answer(), p0: { issueCount: 1, nodes: [{ createdAt: null, timelineItems: null }] } }, REPO, "octo", SINCE), "string", "a missing connection fails the read");
+equal(
+  typeof postsFrom({ ...answer(), c0: { issueCount: 1, nodes: [{ comments: { nodes: [null] } }] } }, REPO, "octo", SINCE),
+  "string",
+  "a null comment fails the read"
+);
+equal(typeof postsFrom({ ...answer(), user: { ...(answer().user as object), f: null } }, REPO, "octo", SINCE), "string", "a missing discussion connection fails the read");
 equal(typeof postsFrom(answer(), [...REPO, "example/second"], "octo", SINCE), "string", "a second repository with no answer");
 
 // More posts than a row keeps: the newest are kept.
