@@ -42,14 +42,16 @@ Usage:
                                       Also prints the dispatcher's address, which takes items with no agent.
   giveback capacity                   The PR slots of each upstream repository that limits open PRs: our open
                                       PRs, the slots still free, and the items waiting for one, in order,
-                                      with whether each one's text is approved. Also the upstream posts of
-                                      the last 7 days and the last 8 weeks.
+                                      with whether each one's text is approved. Also our upstream posts of
+                                      the last 7 days and the last 8 weeks, and where that count comes from.
   giveback load <file>                JSON: {"items":[...],"asks":[...],"events":[...]}, applied in that order.
   giveback export [--raw] [--out FILE]
                                       Everything, public and private. Default: items with their ID
                                       (shortId), links, private fields, asks and events nested.
                                       --raw: the table rows.
-  giveback refresh                    Refresh GitHub state for every link on an open item.
+  giveback refresh                    Refresh GitHub state for every link on an open item, then read our
+                                      account's own posts from GitHub for the post count ("posts" in the
+                                      output). A failed read of the posts is a warning, not a failure.
 
 Configuration comes from environment variables, or from a file of KEY=VALUE lines.
 It is never read from arguments.
@@ -63,7 +65,8 @@ In the file, AGENT_SECRET and REFRESH_SECRET are accepted as names too, so a
 capsule's .env.lakebed.server works for local development.
 
 TIME is an ISO 8601 string or epoch milliseconds. "-" reads JSON from standard input.
-Exit status: 0 on success, 1 when the server refused the request, 2 on a usage error.`;
+Exit status: 0 on success, 1 when the server refused the request, 2 on a usage error.
+"refresh" exits 0 when the links were refreshed, even if the posts could not be read.`;
 
 function fail(message, code) {
   process.stderr.write(`giveback: ${message}\n`);
@@ -512,6 +515,7 @@ function nest({ exportedAt, itemIdPrefix, tables }) {
     exportedAt,
     counts: Object.fromEntries(Object.entries(tables).map(([name, rows]) => [name, rows.length])),
     syncState: (tables.syncState || [])[0] ? without(tables.syncState[0], meta) : null,
+    githubPosts: (tables.githubPosts || []).map((row) => without(row, meta)),
     items
   };
 }
@@ -566,14 +570,49 @@ async function assignNumbers(args) {
   fail(`assign-numbers did not finish within ${MAX_PAGES} requests.`);
 }
 
+/**
+ * Asks the server to read our account's own posts from GitHub, for the post count.
+ * Never exits: whatever goes wrong comes back as { ok: false, ... }, because the
+ * links are refreshed by then and the count falls back to the recorded posts by itself.
+ * A server that does not have the endpoint yet answers 404, which is reported the same way.
+ */
+async function refreshPosts() {
+  const route = "/api/refresh/posts";
+  let status = null;
+  let payload = null;
+  try {
+    const response = await fetch(`${baseUrl()}${route}`, { method: "POST", headers: { authorization: `Bearer ${secret("refresh")}` } });
+    status = response.status;
+    payload = JSON.parse(await response.text());
+  } catch (error) {
+    if (status === null) return { ok: false, error: "unreachable", message: `cannot reach ${route}: ${error.cause?.code || error.message}` };
+  }
+  if (status === 200 && payload && payload.ok === true) return payload;
+  const message = (payload && (payload.message || payload.error)) || "no message";
+  return { ok: false, status, error: (payload && payload.error) || "http_error", message: `POST ${route} failed with HTTP ${status}: ${message}` };
+}
+
+// The links first, in batches, then the account's posts. The exit status is the links': 1 when a batch
+// was refused, 0 otherwise. A failed read of the posts is printed under "posts" and warned about on
+// standard error, and does not change the status: the link snapshots are fresh, the dashboard counts
+// from the recorded posts meanwhile and says so, and a timer that runs this would otherwise be marked
+// failed every 15 minutes for something the next run usually repairs.
 async function refresh() {
   const total = { ok: true, batches: 0, links: 0, refreshed: 0, events: 0, failed: [], rateLimitRemaining: null };
+  const finish = async () => {
+    total.posts = await refreshPosts();
+    print(total);
+    if (!total.posts.ok) {
+      process.stderr.write(`giveback: warning: the account's posts were not read from GitHub. ${total.posts.message}\n`);
+    }
+  };
   let cursor = null;
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const route = `/api/refresh${cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`}`;
     const { status, payload } = await call("POST", route, "refresh");
     if (status !== 200 || payload.ok !== true) {
-      print(total);
+      // The posts are read all the same: they do not depend on the links.
+      await finish();
       reportFailure("POST", "/api/refresh", status, payload);
     }
     total.batches += 1;
@@ -584,7 +623,7 @@ async function refresh() {
     total.rateLimitRemaining = payload.rateLimitRemaining ?? total.rateLimitRemaining;
     cursor = payload.nextCursor;
     if (cursor === null) {
-      print(total);
+      await finish();
       return;
     }
   }
