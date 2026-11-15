@@ -21,7 +21,9 @@ import {
   POST_WEEKS,
   RULES_REPOS,
   closingClock,
+  countNewThreads,
   countPosts,
+  postStarts,
   fillsSlot,
   nextSweepAt,
   postsWindowStart,
@@ -768,6 +770,27 @@ equal(posts.weeks.map((week) => week.start)[7], MONDAY, "the last week is the cu
 equal(posts.weeks.map((week) => week.start)[0], MONDAY - 7 * WEEK, "the first is seven weeks before it");
 equal(posts.last7Days, 4, "the last 7 days, the boundary excluded");
 equal(countPosts([], NOW).last7Days, 0, "no posts");
+equal(countPosts([NOW - HOUR, NOW - DAY + 1, NOW - DAY, NOW + HOUR], NOW).last24Hours, 2, "24 hours: the edge is out, and so is a post dated ahead");
+equal(postStarts("https://github.com/pingdotgg/t3code/pull/33420"), "pr", "a PR's own address");
+equal(postStarts("https://github.com/pingdotgg/t3code/issues/28178"), "issue", "an issue's own address");
+equal(postStarts("https://github.com/pingdotgg/t3code/issues/28178#issuecomment-1"), null, "a comment starts nothing");
+equal(postStarts("https://github.com/pingdotgg/t3code/pull/33420#pullrequestreview-1"), null, "a review reply starts nothing");
+equal(postStarts("https://github.com/pingdotgg/t3code/discussions/25274"), null, "a discussion is neither");
+equal(postStarts(null), null, "no URL");
+equal(
+  countNewThreads(
+    [
+      { at: NOW - HOUR, url: "https://github.com/pingdotgg/t3code/pull/1" },
+      { at: NOW - 2 * DAY, url: "https://github.com/pingdotgg/t3code/issues/2" },
+      { at: NOW - 2 * DAY, url: "https://github.com/pingdotgg/t3code/issues/2#issuecomment-9" },
+      { at: NOW - 8 * DAY, url: "https://github.com/pingdotgg/t3code/pull/3" },
+      { at: NOW - HOUR }
+    ],
+    NOW
+  ),
+  { newPrsLast7Days: 1, newIssuesLast7Days: 1 },
+  "new threads in the last 7 days"
+);
 equal(countPosts([], NOW).weeks.every((week) => week.count === 0), true, "no posts in any week");
 console.log("ok  upstream rules");
 

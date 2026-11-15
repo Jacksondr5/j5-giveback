@@ -34,7 +34,7 @@ const SLOT_KEYS = ["link", "item"];
 const QUEUE_ENTRY_KEYS = ["position", "item", "text"];
 const ITEM_REF_KEYS = ["id", "number", "disclosed", "slug", "title", "stage"];
 // Names that belong to the owner's post count. None may appear in what a visitor is sent.
-const POST_COUNT_KEYS = ["last7Days", "weeks", "incomplete"];
+const POST_COUNT_KEYS = ["last7Days", "last24Hours", "newPrsLast7Days", "newIssuesLast7Days", "dailyCap", "newPrCap", "newIssueCap", "weeks", "incomplete"];
 const MIN_SENTINEL_LENGTH = 6;
 
 function fail(message) {

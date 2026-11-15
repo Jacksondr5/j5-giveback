@@ -330,8 +330,17 @@ export type PostCountsView = {
   last7Days: number;
   /** The last eight weeks, oldest first. A week starts on Monday 00:00 UTC. The last entry is the current week. */
   weeks: { start: number; count: number }[];
-  /** A weekly cap on posts. None is set, so this is null. */
+  /** Posts in the 24 hours up to `generatedAt`. */
+  last24Hours: number;
+  /** Among the last 7 days' posts: those that opened a PR, and those that filed an issue, by their URL. */
+  newPrsLast7Days: number;
+  newIssuesLast7Days: number;
+  /** Jackson's cap on posts in 7 days. A guide to stay near. Null when none is set. */
   cap: number | null;
+  /** His caps on posts in 24 hours, new PRs in 7 days and new issues in 7 days. */
+  dailyCap: number | null;
+  newPrCap: number | null;
+  newIssueCap: number | null;
   /** True when more posts fell in the window than one read takes. The oldest weeks then count low. */
   incomplete: boolean;
 };

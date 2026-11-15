@@ -10,7 +10,7 @@ import type { CapacityRepo, CapacityResponse, PostCountsView } from "../shared/a
 import type { ChangeKind, GhCi, GhState, Stage } from "../shared/enums";
 import { isItemNumber, itemIdOf } from "../shared/itemId";
 import { LIMITS } from "../shared/limits";
-import { closingClock, countPosts, postsWindowStart } from "../shared/upstreamRules";
+import { POSTING_CAPS, closingClock, countNewThreads, countPosts, postsWindowStart } from "../shared/upstreamRules";
 import { checkBearer } from "./auth";
 import { linkView, readSlotData } from "./read";
 import type { ReadDb } from "./schema";
@@ -34,8 +34,11 @@ export async function readPostCounts(db: ReadDb, now: number): Promise<PostCount
       counted.map((row) => row.at),
       now
     ),
-    // No cap on posts has been set. The field is here for the day one is.
-    cap: null,
+    ...countNewThreads(counted, now),
+    cap: POSTING_CAPS.perWeek,
+    dailyCap: POSTING_CAPS.perDay,
+    newPrCap: POSTING_CAPS.newPrsPerWeek,
+    newIssueCap: POSTING_CAPS.newIssuesPerWeek,
     incomplete: rows.length > LIMITS.maxPostsRead
   };
 }

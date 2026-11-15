@@ -357,9 +357,15 @@ function PrSlots({ slots, items }: { slots: RepoSlotsView[]; items: ListItem[] }
 // Upstream posts (owner only)
 // ---------------------------------------------------------------------------
 
+/** "2 of 3", in bold once the cap is reached. With no cap, the count alone. */
+function OfCap({ count, cap }: { count: number; cap: number | null }) {
+  if (cap === null) return <span className="tabular-nums">{count}</span>;
+  return <span className={cx("tabular-nums", count >= cap && "font-semibold text-(color:--ink)")}>{`${count} of ${cap}`}</span>;
+}
+
 /**
- * How many posts went upstream lately, on every item, public or not. Only the
- * owner is sent this. A weekly cap has not been set; when one is, it reads after the count.
+ * How many posts went upstream lately, on every item, public or not, against
+ * Jackson's own caps. Only the owner is sent this.
  */
 function PostCounts({ posts }: { posts: PostCountsView }) {
   const last = posts.weeks.length - 1;
@@ -368,7 +374,18 @@ function PostCounts({ posts }: { posts: PostCountsView }) {
       <p>
         <span className={cx(SERIF, "text-base font-bold tabular-nums")}>{posts.last7Days}</span>{" "}
         {posts.last7Days === 1 ? "upstream post" : "upstream posts"} in the last 7 days
-        {posts.cap !== null ? `, of ${posts.cap} allowed` : null}
+        {posts.cap !== null ? `, of about ${posts.cap}` : null}
+      </p>
+      <p className={cx("flex flex-wrap items-baseline gap-x-3", TEXT_DIM)}>
+        <span>
+          Last 24 h: <OfCap cap={posts.dailyCap} count={posts.last24Hours} />
+        </span>
+        <span>
+          New PRs, 7 days: <OfCap cap={posts.newPrCap} count={posts.newPrsLast7Days} />
+        </span>
+        <span>
+          New issues, 7 days: <OfCap cap={posts.newIssueCap} count={posts.newIssuesLast7Days} />
+        </span>
       </p>
       <p className={cx("flex flex-wrap items-baseline gap-x-2", TEXT_DIM)}>
         <span>Per week:</span>

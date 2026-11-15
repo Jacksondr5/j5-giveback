@@ -195,9 +195,36 @@ export function postsWindowStart(now: number): number {
   return weekStartUtc(now) - (POST_WEEKS - 1) * WEEK;
 }
 
+/**
+ * Our own limits on how much goes upstream, set by Jackson on 2026-11-14. They
+ * are his, not upstream's: upstream has sanctioned only bursts far above these.
+ * "About" for the week: it is a guide to stay near, and the day's limit is firm.
+ */
+export const POSTING_CAPS = {
+  /** All upstream posts together, in 7 days. */
+  perWeek: 10,
+  /** All upstream posts together, in 24 hours. */
+  perDay: 3,
+  /** New PRs opened in 7 days. */
+  newPrsPerWeek: 2,
+  /** New issues filed in 7 days. */
+  newIssuesPerWeek: 2
+} as const;
+
+/** What a post's URL says it started: a PR, an issue, or neither (a comment, a reply, a discussion post, or no URL). */
+export function postStarts(url: string | null | undefined): "pr" | "issue" | null {
+  if (typeof url !== "string") return null;
+  // A comment's URL carries a fragment, so only the thread's own address matches.
+  const match = /^https:\/\/github\.com\/[^/]+\/[^/]+\/(pull|issues)\/[0-9]+\/?$/.exec(url);
+  if (!match) return null;
+  return match[1] === "pull" ? "pr" : "issue";
+}
+
 export type PostCounts = {
   /** Posts in the 7 days up to now. */
   last7Days: number;
+  /** Posts in the 24 hours up to now. */
+  last24Hours: number;
   /** One entry per week, oldest first. The last is the current week, which is still running. */
   weeks: { start: number; count: number }[];
 };
@@ -207,12 +234,30 @@ export function countPosts(times: readonly number[], now: number): PostCounts {
   const first = postsWindowStart(now);
   const weeks = Array.from({ length: POST_WEEKS }, (_, index) => ({ start: first + index * WEEK, count: 0 }));
   let last7Days = 0;
+  let last24Hours = 0;
   for (const at of times) {
     // A post dated ahead of the clock has not happened yet.
     if (at > now) continue;
     if (at > now - WEEK) last7Days += 1;
+    if (at > now - DAY) last24Hours += 1;
     const week = weeks[Math.floor((at - first) / WEEK)];
     if (at >= first && week) week.count += 1;
   }
-  return { last7Days, weeks };
+  return { last7Days, last24Hours, weeks };
+}
+
+/** New PRs and new issues among the posts of the 7 days up to now. */
+export function countNewThreads(
+  posts: readonly { at: number; url?: string | null }[],
+  now: number
+): { newPrsLast7Days: number; newIssuesLast7Days: number } {
+  let newPrsLast7Days = 0;
+  let newIssuesLast7Days = 0;
+  for (const post of posts) {
+    if (post.at > now || post.at <= now - WEEK) continue;
+    const starts = postStarts(post.url);
+    if (starts === "pr") newPrsLast7Days += 1;
+    else if (starts === "issue") newIssuesLast7Days += 1;
+  }
+  return { newPrsLast7Days, newIssuesLast7Days };
 }
