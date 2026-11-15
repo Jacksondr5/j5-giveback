@@ -219,12 +219,15 @@ SQUASH='gsub("<!--[^>]*-->"; "") | gsub("<[^>]*>"; "") | gsub("\\s+"; " ")'
 # One line for a person's comment on an issue or a PR. Upstream's landing pipeline
 # comments from a maintainer's account and ends its comment with a marker such as
 # "<!-- factory:stopped-moved -->". That marker is the state and the reason, so the
-# line leads with it, and such a comment is quoted at greater length.
-COMMENT_LINE='([.body | match("<!--\\s*factory:([a-z0-9-]+)\\s*-->"; "g") | .captures[0].string] | last) as $marker
+# line leads with it, and such a comment is quoted at greater length. Anyone can type
+# the marker, so it counts only in a comment by one of the repository's own people.
+COMMENT_LINE='(if ((.author_association // "") | test("^(OWNER|MEMBER|COLLABORATOR)$"))
+     then ([(.body // "") | match("<!--\\s*factory:([a-z0-9-]+)\\s*-->"; "g") | .captures[0].string] | last)
+     else null end) as $marker
     | "\(.created_at) "
       + (if $marker then "pipeline comment (factory:" + $marker + ") by " else "comment by " end)
       + .user.login + '"$ASSOCIATION"' + ": "
-      + (.body | '"$SQUASH"' | .[0:(if $marker then 500 else 200 end)]) + " " + .html_url'
+      + ((.body // "") | '"$SQUASH"' | .[0:(if $marker then 500 else 200 end)]) + " " + .html_url'
 
 # On our PRs the review bots matter too: Macroscope's approvability verdict gates
 # upstream's deeper review, CodeRabbit can post actionable findings, and a failing
@@ -508,7 +511,7 @@ Check \`giveback capacity\`. If a slot is free and an item is waiting in the que
   body="new upstream activity on $short.
 
 $note$summary
-Read the activity in full, and the item with \`giveback show $short\`. Then handle it as step 6 of contributing.md in the t3code-giveback skill says. A login marked [MEMBER], [OWNER] or [COLLABORATOR] belongs to the upstream repository. A line that says "pipeline comment", or a "takeover:" label, comes from upstream's automated landing pipeline: while a PR carries takeover:in-progress or takeover:ready, push nothing to its branch.${MAINTAINERS:+ Maintainers: $MAINTAINERS.} Post nothing upstream that $OWNER_NAME has not approved. If the activity needs nothing from us, do nothing and reply to no one."
+Read the activity in full, and the item with \`giveback show $short\`. Then handle it as step 6 of contributing.md in the t3code-giveback skill says. A login marked [MEMBER], [OWNER] or [COLLABORATOR] belongs to the upstream repository. A line that says pipeline comment, or a takeover: label, comes from upstream's automated landing pipeline: while a PR carries takeover:in-progress or takeover:ready, push nothing to its branch.${MAINTAINERS:+ Maintainers: $MAINTAINERS.} Post nothing upstream that $OWNER_NAME has not approved. If the activity needs nothing from us, do nothing and reply to no one."
 
   printf '== %s -> %s\n%s' "$short" "$to" "$summary"
   status=0
