@@ -214,8 +214,8 @@ export const POSTING_CAPS = {
 /** What a post's URL says it started: a PR, an issue, or neither (a comment, a reply, a discussion post, or no URL). */
 export function postStarts(url: string | null | undefined): "pr" | "issue" | null {
   if (typeof url !== "string") return null;
-  // A comment's URL carries a fragment, so only the thread's own address matches.
-  const match = /^https:\/\/github\.com\/[^/]+\/[^/]+\/(pull|issues)\/[0-9]+\/?$/.exec(url);
+  // A comment's URL carries a fragment, so only the thread's own address matches. A query string changes nothing.
+  const match = /^https:\/\/github\.com\/[^/]+\/[^/]+\/(pull|issues)\/[0-9]+\/?(?:\?[^#]*)?$/.exec(url);
   if (!match) return null;
   return match[1] === "pull" ? "pr" : "issue";
 }

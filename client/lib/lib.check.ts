@@ -777,6 +777,9 @@ equal(postStarts("https://github.com/pingdotgg/t3code/issues/28178#issuecomment-
 equal(postStarts("https://github.com/pingdotgg/t3code/pull/33420#pullrequestreview-1"), null, "a review reply starts nothing");
 equal(postStarts("https://github.com/pingdotgg/t3code/discussions/25274"), null, "a discussion is neither");
 equal(postStarts(null), null, "no URL");
+equal(postStarts("https://github.com/pingdotgg/t3code/pull/1?plain=1"), "pr", "a query string is still the PR's own address");
+equal(postStarts("https://github.com/pingdotgg/t3code/issues/2/?utm_source=x"), "issue", "and the issue's");
+equal(postStarts("https://github.com/pingdotgg/t3code/pull/1?plain=1#discussion_r1"), null, "a fragment after a query is still a comment");
 equal(
   countNewThreads(
     [
