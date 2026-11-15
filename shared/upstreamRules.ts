@@ -1,6 +1,7 @@
 // The contribution rules an upstream repository enforces with a bot, and what
 // follows from them here: how many PRs of ours may be open, when one of them is
-// due to be closed, and how many posts went upstream in a week.
+// due to be closed, what upstream's takeover pipeline is doing with one, and
+// how many posts went upstream in a week.
 //
 // Pure TypeScript: imported by the server and the client. No DOM, no Lakebed.
 //
@@ -27,6 +28,26 @@ export type UpstreamRules = {
   unvouchedLabel: string;
   /** When the bot's daily sweep runs, in minutes after 00:00 UTC. A close happens at the first sweep after its deadline. */
   sweepMinuteUtc: number;
+  /** The takeover pipeline. Null where there is none. */
+  takeover: TakeoverRules | null;
+};
+
+/**
+ * Upstream's "takeover" pipeline, as observed on 2026-11-15. Nothing in their
+ * repository defines it and it is expected to change: every name it uses is here.
+ */
+export type TakeoverRules = {
+  /** The pipeline's state is the PR's label with this prefix: "takeover:blocked" is "blocked". */
+  labelPrefix: string;
+  /**
+   * The states seen so far. `text` is the sentence, `short` the form for a list.
+   * `noPush`: a push by anyone else stops the pipeline. `stopped`: its last marker is the reason.
+   */
+  states: readonly { state: string; text: string; short: string; noPush?: true; stopped?: true }[];
+  /** A pipeline comment ends with "<!-- <markerName>:<value> -->". */
+  markerName: string;
+  /** A marker value with this prefix says why the pipeline stopped. */
+  stopPrefix: string;
 };
 
 /** "owner/name" in lower case → its rules. */
@@ -39,7 +60,18 @@ export const UPSTREAM_RULES: Readonly<Record<string, UpstreamRules>> = {
     closingLabel: "triage:closing",
     keepOpenLabel: "triage:keep-open",
     unvouchedLabel: "vouch:unvouched",
-    sweepMinuteUtc: 5 * 60 + 23
+    sweepMinuteUtc: 5 * 60 + 23,
+    takeover: {
+      labelPrefix: "takeover:",
+      states: [
+        { state: "in-progress", text: "Upstream's pipeline is working on it: do not push", short: "In pipeline: do not push", noPush: true },
+        { state: "ready", text: "Pipeline passed it: merging", short: "Merging: do not push", noPush: true },
+        { state: "needs-julius", text: "Waiting on a maintainer's decision", short: "Maintainer to decide" },
+        { state: "blocked", text: "Pipeline stopped", short: "Pipeline stopped", stopped: true }
+      ],
+      markerName: "factory",
+      stopPrefix: "stopped-"
+    }
   }
 };
 
@@ -142,6 +174,94 @@ export function sweepTimeUtc(rules: UpstreamRules): string {
  */
 export function fillsSlot(link: { kind: string; ownership: string; state: string | null }): boolean {
   return link.kind === "pr" && link.ownership === "ours" && (link.state === "open" || link.state === null);
+}
+
+// ---------------------------------------------------------------------------
+// The takeover pipeline
+// ---------------------------------------------------------------------------
+
+/** The label that carries the pipeline's state, or null. Of two, one that forbids a push wins. */
+export function takeoverLabel(labels: readonly string[], takeover: TakeoverRules): string | null {
+  const prefix = takeover.labelPrefix;
+  const found = labels.filter((label) => label.startsWith(prefix) && label.length > prefix.length);
+  const noPush = found.find((label) => takeover.states.some((known) => known.noPush && prefix + known.state === label));
+  return noPush ?? found[0] ?? null;
+}
+
+/** What the state reads from a link. `LinkView` has all of it. */
+export type TakeoverLink = Pick<ClockLink, "repo" | "kind" | "ownership" | "state" | "labels"> & {
+  /** The value of the pipeline's last marker, such as "stopped-moved". */
+  pipelineMarker: string | null;
+};
+
+export type TakeoverState = {
+  /** The label as upstream wrote it, and its suffix: "takeover:blocked", "blocked". */
+  label: string;
+  state: string;
+  /** False for a suffix that is not in the rules. It then reads as its label. */
+  known: boolean;
+  /** True while nothing may be pushed to the PR's branch. */
+  noPush: boolean;
+  /** True when the pipeline stopped and left the PR open. */
+  stopped: boolean;
+  /** Why the pipeline stopped, from its last marker: "no bug on base". Null when it did not say. */
+  reason: string | null;
+  /** The sentence, and the short form for a list. */
+  text: string;
+  short: string;
+};
+
+/**
+ * What upstream's pipeline is doing with a link, or null: only an open PR of
+ * ours in a repository with rules, carrying a pipeline label, has a state.
+ * A stopped PR's last marker is its reason, whenever it was written.
+ */
+export function takeoverState(link: TakeoverLink): TakeoverState | null {
+  const takeover = rulesFor(link.repo)?.takeover;
+  if (!takeover || link.kind !== "pr" || link.ownership !== "ours" || link.state !== "open") return null;
+  const label = takeoverLabel(link.labels, takeover);
+  if (label === null) return null;
+  const state = label.slice(takeover.labelPrefix.length);
+  const known = takeover.states.find((candidate) => candidate.state === state);
+  if (!known) return { label, state, known: false, noPush: false, stopped: false, reason: null, text: label, short: label };
+  const marker = link.pipelineMarker ?? "";
+  const reason =
+    known.stopped && marker.startsWith(takeover.stopPrefix)
+      ? marker.slice(takeover.stopPrefix.length).replace(/-/g, " ").trim() || null
+      : null;
+  return {
+    label,
+    state,
+    known: true,
+    noPush: known.noPush === true,
+    stopped: known.stopped === true,
+    reason,
+    text: reason ? `${known.text}: ${reason}` : known.text,
+    short: known.short
+  };
+}
+
+// Anyone can type the marker into a comment, so only one by upstream's own people counts.
+const MARKER_AUTHORS = ["OWNER", "MEMBER", "COLLABORATOR"];
+
+/**
+ * The pipeline's last marker among a PR's comments: the newest comment by one of
+ * upstream's own people that carries one. The value is kept, never the text.
+ */
+export function pipelineMarker(
+  comments: readonly { body: unknown; at: number | null; association: unknown }[],
+  takeover: TakeoverRules
+): { marker: string; at: number } | null {
+  const pattern = new RegExp(`<!--\\s*${takeover.markerName}:([a-z0-9-]{1,60})\\s*-->`, "g");
+  let newest: { marker: string; at: number } | null = null;
+  for (const comment of comments) {
+    if (typeof comment.body !== "string" || comment.at === null) continue;
+    if (typeof comment.association !== "string" || !MARKER_AUTHORS.includes(comment.association)) continue;
+    // A comment ends with its marker, so the last one in it is the one.
+    const marker = [...comment.body.matchAll(pattern)].pop()?.[1];
+    if (marker && (newest === null || comment.at > newest.at)) newest = { marker, at: comment.at };
+  }
+  return newest;
 }
 
 // ---------------------------------------------------------------------------
