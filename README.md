@@ -24,6 +24,7 @@ Every item has a short ID, `GB-<n>` (GB for give-back), that a person can say or
 | `server/agent.ts`, `server/validate.ts` | The agent endpoints and their payload validation |
 | `server/capacity.ts` | The capacity endpoint and the count of upstream posts, for the owner and the agents only |
 | `server/refresh.ts`, `server/github.ts` | The GitHub refresh |
+| `server/posts.ts` | The read of our account's own posts from GitHub, for the owner's post count |
 | `server/auth.ts` | Bearer check and owner check |
 | `scripts/giveback` | Command-line client for agents |
 | `scripts/seed.json` | Seed data for local development |
@@ -43,7 +44,7 @@ Every item has a short ID, `GB-<n>` (GB for give-back), that a person can say or
 
 ### The privacy boundary
 
-Private data is in two tables, `itemPrivate` and `askPrivate`. The public queries get a database type (`PublicDb`) that does not contain those tables, so a public query that reads them is a TypeScript error. Lakebed's build does not run the type checker, so that guard holds only when the code is checked with `tsc`. The check that runs against real responses is `scripts/privacy-check`.
+Private data is in three tables: `itemPrivate`, `askPrivate`, and `githubPosts`, which holds when our GitHub account posted upstream. The public queries get a database type (`PublicDb`) that does not contain those tables, so a public query that reads them is a TypeScript error. Lakebed's build does not run the type checker, so that guard holds only when the code is checked with `tsc`. The check that runs against real responses is `scripts/privacy-check`.
 
 An item with `isPublic: false` is counted in the totals, the stage counts and the waiting-on counts (never in outcome, follow-up or upstream-change counts, which would reveal its state) and shown as "Undisclosed candidate" with its ID, its stage, what it waits on, and its dates. Its public handles are its ID and its row id, a random UUID; the site links to it by ID. A bare number says nothing about the item, and it is how the owner and the agents name it. `item(ref)` finds it by either handle and returns the same redacted form; it does not find it by slug, so a guessed slug confirms nothing. Its links, asks and events are not read at all, and its asks do not appear in the public "Needs Jackson" queue.
 
@@ -70,8 +71,9 @@ Put these in `.env.lakebed.server`, which Git ignores. `.env.lakebed.server.exam
 | Name | Used for |
 |---|---|
 | `AGENT_SECRET` | Bearer secret for `/api/agent/*` |
-| `REFRESH_SECRET` | Bearer secret for `/api/refresh` |
+| `REFRESH_SECRET` | Bearer secret for `/api/refresh` and `/api/refresh/posts` |
 | `GITHUB_TOKEN` | Reading GitHub. Read-only access to public repositories is enough. |
+| `GITHUB_LOGIN` | The GitHub account whose own posts are counted against the posting caps, such as `Jacksondr5`. Unset, nothing is read for the count and it falls back to the recorded `posted` events. |
 | `OWNER_IDS` | Lakebed user ids that may read private data, separated by commas or spaces |
 | `GITHUB_SELF_LOGIN` | Optional. The fork owner's GitHub login. Default `Jacksondr5`. |
 | `GITHUB_GRAPHQL_URL` | Optional, for tests against a stand-in server. Leave it unset in a deploy. |
@@ -91,7 +93,7 @@ npx lakebed dev --port 4517
 # In another terminal:
 export GIVEBACK_URL=http://127.0.0.1:4517 GIVEBACK_ENV_FILE=.env.lakebed.server
 scripts/giveback load scripts/seed.json   # every stage and outcome, held and queued items, non-public items, asks, events
-scripts/giveback refresh                  # reads the real upstream PRs in the seed, and starts their closing clocks
+scripts/giveback refresh                  # reads the real upstream PRs in the seed, and starts their closing clocks; with GITHUB_LOGIN set, reads that account's posts
 scripts/privacy-check scripts/seed.json   # exits 0 when nothing private is exposed
 ```
 
@@ -103,7 +105,7 @@ Lakebed has no scheduler, so three jobs run from a machine that stays on, as sys
 
 | Timer | When | What it runs |
 |---|---|---|
-| `giveback-refresh` | Every 15 minutes | `ops/bin/refresh.sh`: asks the site to re-read the state of every open upstream thread from GitHub |
+| `giveback-refresh` | Every 15 minutes | `ops/bin/refresh.sh`: asks the site to re-read the state of every open upstream thread from GitHub, and our account's own posts for the post count |
 | `giveback-backup` | Daily at 08:40 | `ops/bin/backup.sh`: saves a full export and deletes copies older than 30 days |
 | `giveback-watch` | Every 15 minutes, 3 minutes after the refresh | `ops/bin/watch.sh`: checks the upstream threads of every item that is not closed, and messages the agent that owns the item when one has new activity |
 
@@ -131,7 +133,7 @@ systemctl --user list-timers | grep giveback
 journalctl --user -u giveback-refresh.service -n 20
 ```
 
-A failed refresh shows on the site as a stale sync. A failed backup or a failed watch shows nowhere but the journal.
+A failed refresh shows on the site as a stale sync. A failed read of our own posts does not fail the job: it is a warning in the journal, and after two hours the owner's post count says it is counted from recorded posts. A failed backup or a failed watch shows nowhere but the journal.
 
 ### The watcher
 

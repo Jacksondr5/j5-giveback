@@ -60,7 +60,7 @@ scripts/giveback watchlist
 # See whether a PR slot is free, and which item is next for one.
 scripts/giveback capacity
 
-# Refresh GitHub state for every link on an open item.
+# Refresh GitHub state for every link on an open item, and read our account's posts for the post count.
 scripts/giveback refresh
 ```
 
@@ -192,7 +192,7 @@ The site is public. Read these before writing.
 
 ## Endpoints
 
-Every request carries `Authorization: Bearer <secret>`. The agent endpoints take `AGENT_SECRET`. The refresh endpoint takes `REFRESH_SECRET`. Request and response bodies are JSON.
+Every request carries `Authorization: Bearer <secret>`. The agent endpoints take `AGENT_SECRET`. The two refresh endpoints take `REFRESH_SECRET`. Request and response bodies are JSON.
 
 Times in a request are either epoch **milliseconds** or an ISO 8601 string such as `"2026-11-09T15:38:46Z"`. Times in a response are epoch milliseconds. The site shows dates in the reader's own time zone, so for a date with no time of day send midday UTC (`"2026-10-30T12:00:00Z"`): midnight UTC shows as the day before in the Americas.
 
@@ -546,7 +546,7 @@ GET /api/agent/export?cursor=<nextCursor from the previous response>
 }
 ```
 
-The tables are `items`, `links`, `asks`, `events`, `itemPrivate`, `askPrivate` and `syncState`. A table can be split across two responses; concatenate its rows. Rows join on `links.itemId`, `asks.itemId`, `events.itemId`, `itemPrivate.itemId` and `askPrivate.askId`.
+The tables are `items`, `links`, `asks`, `events`, `itemPrivate`, `askPrivate`, `syncState` and `githubPosts`. A table can be split across two responses; concatenate its rows. `githubPosts` holds one row per repository with rules: our account's posts there as [`POST /api/refresh/posts`](#post-apirefreshposts) last read them, one per line in `posts`. It is private, and the nested export carries it as `githubPosts`. Rows join on `links.itemId`, `asks.itemId`, `events.itemId`, `itemPrivate.itemId` and `askPrivate.askId`.
 
 Each response is a separate read. `revision` goes up on every agent write and every refresh, so if two pages of one export carry different values, a write landed between them and the copy is not consistent: start again. `scripts/giveback export` does this for you.
 
@@ -640,6 +640,8 @@ Bearer `AGENT_SECRET`. Read-only. Whether a [PR slot](#pr-slots) is free, which 
     }
   ],
   "posts": {
+    "source": "github",
+    "countedAt": 1794699600000,
     "last7Days": 3,
     "weeks": [
       { "start": 1789948800000, "count": 0 },
@@ -662,7 +664,32 @@ Bearer `AGENT_SECRET`. Read-only. Whether a [PR slot](#pr-slots) is free, which 
 - `ghState` is `open`, or `null` for a link the refresh has not read yet; such a link counts as open. `closingClock` is the [clock](#closing-clocks) running on the PR at `generatedAt`, or `null`. Its `kind` is `notice` or `rebase` (each with `closesAt` and `due`, which is `true` once the deadline has passed), `answered` (with `noticeAt`), or `notice_unknown` (the PR carries the closing label and the time it was applied could not be read).
 - `queue` is every item that waits on `pr_slot` and is not closed, in order: lowest `queueRank` first, unranked items after, longest-waiting first among equals. `position` is 1 for the item that goes next. `text` is `approved`, `awaiting` or `none`, by the [rule above](#pr-slots), and `null` past the tenth entry, whose asks are not read.
 - Non-public items are included, with their slugs and real titles. This endpoint is for agents; do not republish its output.
-- `posts` counts the events of type `posted`, on every item, public or not: the last 7 days, and each of the last 8 weeks, oldest first. A week starts on Monday 00:00 UTC, and the last entry is the current week, still running. So record every upstream post as a `posted` event, with `at` set to when it was posted. `last24Hours` counts the same events over the last 24 hours. `newPrsLast7Days` and `newIssuesLast7Days` count, among the last 7 days' posts, those whose `url` is a PR's or an issue's own address (`.../pull/123`, `.../issues/123`, with no `#` fragment); so give a `posted` event the URL of what was posted. The caps are Jackson's own, not upstream's: `cap` is about how many posts may go up in 7 days, `dailyCap` in 24 hours, `newPrCap` and `newIssueCap` how many new PRs and new issues in 7 days. **Before a post, check that it would not take a count past its cap.** The weekly figure is a guide to stay near; the others are firm. `incomplete` is `true` only if more than 300 posts fell in the eight weeks; the newest 300 are then counted, and the oldest weeks count low.
+- `posts` is the count of our own upstream posts: see [the post count](#the-post-count) below.
+
+#### The post count
+
+`posts` counts what our GitHub account posted in the repositories of the [rules map](#upstreams-pr-rules): the last 7 days (`last7Days`), the last 24 hours (`last24Hours`), and each of the last 8 weeks (`weeks`, oldest first). A week starts on Monday 00:00 UTC, and the last entry is the current week, still running.
+
+**It is counted from GitHub, for the whole account.** [`POST /api/refresh/posts`](#post-apirefreshposts) reads the account's posts every 15 minutes, so the count includes a post no agent recorded and every post Jackson writes himself. `source` says where the count comes from, and `countedAt` when GitHub was read for it:
+
+| `source` | Means | `countedAt` | `incomplete` |
+|---|---|---|---|
+| `github` | Counted from GitHub. Every repository with rules was read successfully in the last 2 hours. | The time of that read: the oldest, when there is more than one repository | `false`, or `true` when GitHub held more than the read took, so the count may be low |
+| `events` | The fallback: counted from the events of type `posted`, on every item, public or not. Used when the server secret `GITHUB_LOGIN` is not set, or no read has succeeded for 2 hours. | `null` | Always `true`: this count misses every post nobody recorded |
+
+What counts as one post, from GitHub:
+
+- A PR or an issue the account opened. A PR that upstream's bot closed as it opened counts: it was posted.
+- A PR of ours the account reopened. **A reopened PR is a post, and not a new PR**: it counts in `last7Days`, `last24Hours` and `weeks`, never in `newPrsLast7Days`.
+- A comment on an issue or a PR.
+- A submitted review, as one post however many inline comments it carries. A reply in a review thread arrives as a review, so it is one post too.
+- A discussion, and a comment or a reply in a discussion.
+
+`newPrsLast7Days` and `newIssuesLast7Days` count a thread once, at its creation. On the fallback they are the `posted` events of the last 7 days whose `url` is a PR's or an issue's own address (`.../pull/123`, `.../issues/123`, with no `#` fragment). The fallback cannot tell a reopened PR from a new one.
+
+The caps are Jackson's own, not upstream's: `cap` is about how many posts may go up in 7 days, `dailyCap` in 24 hours, `newPrCap` and `newIssueCap` how many new PRs and new issues in 7 days. **Before a post, check that it would not take a count past its cap.** The weekly figure is a guide to stay near; the others are firm. When `incomplete` is `true` the real count may be higher than the one shown, so leave room. The count is up to 15 minutes behind GitHub: a post made since `countedAt` is not in it yet.
+
+**Still record every upstream post as a [`posted` event](#event-type)**, with `at` set to when it was posted and `url` set to what was posted. The events are each item's history, which GitHub does not hold, and they are the count whenever GitHub cannot be read.
 
 The post count is private. The site shows it to the owner alone, and no public query returns it.
 
@@ -709,7 +736,7 @@ Returns every link on an item that is not closed: the upstream threads worth pol
 
 Bearer `REFRESH_SECRET`. No body. A scheduler calls this; an agent rarely needs to.
 
-Each call counts against Lakebed's limit of 1,000 writes a day, and one call handles 20 links. With up to 100 links on open items, a full refresh every 15 minutes uses at most 480 calls a day. Beyond that, lengthen the interval.
+Each call counts against Lakebed's limit of 1,000 writes a day, and one call handles 20 links. With up to 100 links on open items, a full refresh every 15 minutes uses at most 480 calls a day, and [the read of our own posts](#post-apirefreshposts) 96 more. Beyond that, lengthen the interval.
 
 It reads GitHub state for a batch of at most 20 links and stores it on each link: state (`open`, `closed`, `merged`), draft flag, merged and closed times, CI rollup, review decision, labels, head SHA, last activity time (the thread's `updatedAt`), when the `triage:closing` label was last applied (for a PR that carries it), the last comment or review by someone other than `Jacksondr5` that is not from a bot, and Macroscope's approvability verdict.
 
@@ -730,7 +757,7 @@ A link is read through its `repo`, `number` and `kind`, not its URL. A `comment`
 }
 ```
 
-When `nextCursor` is not null, call `POST /api/refresh?cursor=<nextCursor>` for the next batch. `scripts/giveback refresh` does this.
+When `nextCursor` is not null, call `POST /api/refresh?cursor=<nextCursor>` for the next batch. `scripts/giveback refresh` does this, and then calls [`POST /api/refresh/posts`](#post-apirefreshposts) once.
 
 **The refresh never changes an item's stage.** When a link merges, closes, reopens, or (for our own open PR) begins failing CI or is put on a [closing clock](#closing-clocks), it records an event with actor `github` and sets the item's `upstreamChangedAt` and `upstreamChangeNote`. That marker means "something happened upstream that you have not acted on". Read it in the export, decide what the item's stage should be, and send `clearUpstreamChange: true` with your change.
 
@@ -752,6 +779,33 @@ Limits of the snapshot:
 - The time of a closing notice is read from the PR's latest 20 label events, as upstream's own bot reads it. If the label is on the PR and its event is not among them, the site says the notice's time is not known.
 - The Macroscope verdict is read from the comment the `macroscopeapp` bot posts on a PR (`**Verdict:** ...`), looking at the PR's first four comments. It is null when there is no such comment.
 - `triageBucket` and `triageRank` are **not** refreshed. The T3 triage boards publish no readable data: their rankings are compiled into the page's script. An agent that reads a board sets these two fields through [`POST /api/agent/links`](#post-apiagentlinks), or with the rest of the link through `POST /api/agent/items`.
+
+### `POST /api/refresh/posts`
+
+Bearer `REFRESH_SECRET`. No body. Reads our account's own posts from GitHub, for [the post count](#the-post-count). `scripts/giveback refresh` calls it once, after the link batches, so the scheduler that runs the refresh runs this too: one more call per run, 96 a day at 15 minutes.
+
+The account is the server secret `GITHUB_LOGIN`. With it unset, nothing is fetched and nothing is stored, the response is `{ "ok": true, "configured": false, "repos": [] }`, and the count comes from the `posted` events.
+
+One call makes one GitHub request, which covers every repository in the [rules map](#upstreams-pr-rules) and the last 8 weeks, the same weeks the count shows. For each repository it stores one private row: when it was read, whether the read was incomplete, and one line per post holding a time and a kind (`pr`, `issue`, `reopen`, `review`, `comment`, `discussion`, `discussion_comment`). No URL and no title is stored.
+
+```json
+{
+  "ok": true,
+  "configured": true,
+  "repos": [{ "repo": "pingdotgg/t3code", "incomplete": false }],
+  "rateLimitRemaining": 4650
+}
+```
+
+The response carries no count. The count is for the owner and for [`GET /api/agent/capacity`](#get-apiagentcapacity).
+
+A read is `incomplete` when GitHub held more than the read took and the rest may fall in the 8 weeks: a search found more threads than it returned (100 PRs or 100 issues the account opened, 50 PRs it reviewed, 50 PRs or 50 issues it commented on), a thread's page came back full with nothing in it older than the 8 weeks (its last 100 comments, 50 reviews or 10 reopenings; the account's newest 20 discussions or 50 discussion comments), or more than 600 posts were found. What was read is kept and counted.
+
+If GitHub cannot be reached, rejects the token, or answers with any error beside its data, the response is `502` with `"ok": false`, an `error` and a `message`. **A failed read changes no count**: each row keeps the posts and the time of its last good read, and the failure is noted beside them (`error` and `errorAt` on the `githubPosts` rows of the [export](#get-apiagentexport)). Once no read has succeeded for 2 hours, the count falls back to the `posted` events. `503` means `GITHUB_TOKEN` is not set, or `GITHUB_LOGIN` is not a GitHub login.
+
+`scripts/giveback refresh` prints this response as `posts` in its output. When it failed, the script also writes a warning to standard error, and still exits 0 if the links were refreshed: its exit status is the links' alone.
+
+A fine-grained `GITHUB_TOKEN` with read-only access to public repositories is enough. GitHub answers such a token with no results, and no error, for a search that does not say `is:pr` or `is:issue`; every search here says one, and the request also counts the repository's PRs as a control. If that control finds none, the read fails with "this token cannot search it" instead of storing a count of nothing.
 
 ## Enumerations
 
@@ -834,7 +888,7 @@ Labels are in `shared/enums.ts`.
 
 The server records `stage_changed`, `ask_opened`, `ask_closed` and the `upstream_*`, `dependency_*`, `ci_failing`, `rebase_requested` and `closing_notice` types itself. You may also send any of them.
 
-`posted` is counted: every event of this type is one upstream post in [`GET /api/agent/capacity`](#get-apiagentcapacity). Send one for each PR, issue, comment or discussion posted upstream, and for nothing else.
+Send a `posted` event for each PR, issue, comment, review or discussion post that goes upstream, and for nothing else. It is the item's own record of the post. [The post count](#the-post-count) is taken from GitHub; when GitHub cannot be read, it is taken from these events instead, one post each.
 
 ### Follow-up state
 
@@ -856,6 +910,7 @@ The numbers are in `shared/limits.ts`.
 | Rows per export response | 500 |
 | Links per watch list response | 500 |
 | Links per refresh call | 20 |
+| Posts kept per repository by `POST /api/refresh/posts` | 600 |
 | Items in the dashboard | 350 |
 | Queue rank | 1 to 999 |
 | Queued items whose text approval is read | 10 |
