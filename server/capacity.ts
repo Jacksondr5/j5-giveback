@@ -10,36 +10,61 @@ import type { CapacityRepo, CapacityResponse, PostCountsView } from "../shared/a
 import type { ChangeKind, GhCi, GhState, Stage } from "../shared/enums";
 import { isItemNumber, itemIdOf } from "../shared/itemId";
 import { LIMITS } from "../shared/limits";
-import { POSTING_CAPS, closingClock, countNewThreads, countPosts, postsWindowStart } from "../shared/upstreamRules";
+import { POSTING_CAPS, closingClock, countNewThreads, countPosts, githubPosts, postsWindowStart } from "../shared/upstreamRules";
 import { checkBearer } from "./auth";
 import { linkView, readSlotData } from "./read";
 import type { ReadDb } from "./schema";
 
 /**
- * Upstream posts over the last seven days and the last eight weeks. Every
- * upstream post is recorded as an event of type "posted"; this counts them on
- * every item, public or not, so the result is private.
+ * Our upstream posts over the last seven days and the last eight weeks. Private.
  *
- * One index scan, over the posts of the window alone, newest first: when more
- * fell in it than one read takes, the oldest weeks count low and the result says so.
+ * Counted from GitHub when every repository with rules has a stored read no
+ * older than two hours (see server/posts.ts): that covers the whole account,
+ * posts made outside the agents included. `login` is the GITHUB_LOGIN secret;
+ * without it nothing is read from GitHub, so what is stored is not used.
+ *
+ * Otherwise counted from the events of type "posted", on every item, public or
+ * not: one index scan over the window, newest first. That count misses every
+ * post nobody recorded, so it is marked incomplete.
  */
-export async function readPostCounts(db: ReadDb, now: number): Promise<PostCountsView> {
-  const rows = await db.events
-    .withIndex("by_type_at", (q) => q.eq("type", "posted").gte("at", postsWindowStart(now)))
-    .order("desc")
-    .take(LIMITS.maxPostsRead + 1);
-  const counted = rows.slice(0, LIMITS.maxPostsRead);
-  return {
-    ...countPosts(
-      counted.map((row) => row.at),
-      now
-    ),
-    ...countNewThreads(counted, now),
+export async function readPostCounts(db: ReadDb, now: number, login: string | undefined): Promise<PostCountsView> {
+  const caps = {
     cap: POSTING_CAPS.perWeek,
     dailyCap: POSTING_CAPS.perDay,
     newPrCap: POSTING_CAPS.newPrsPerWeek,
-    newIssueCap: POSTING_CAPS.newIssuesPerWeek,
-    incomplete: rows.length > LIMITS.maxPostsRead
+    newIssueCap: POSTING_CAPS.newIssuesPerWeek
+  };
+  const stored = login?.trim() ? githubPosts(await db.githubPosts.withIndex("by_creation").take(LIMITS.maxPostRows), now) : null;
+  if (stored) {
+    return {
+      source: "github",
+      countedAt: stored.countedAt,
+      ...countPosts(
+        stored.posts.map((post) => post.at),
+        now
+      ),
+      ...countNewThreads(stored.posts, now),
+      ...caps,
+      incomplete: stored.incomplete
+    };
+  }
+  const rows = await db.events
+    .withIndex("by_type_at", (q) => q.eq("type", "posted").gte("at", postsWindowStart(now)))
+    .order("desc")
+    .take(LIMITS.maxPostsRead);
+  return {
+    source: "events",
+    countedAt: null,
+    ...countPosts(
+      rows.map((row) => row.at),
+      now
+    ),
+    ...countNewThreads(
+      rows.map((row) => ({ at: row.at, url: row.url })),
+      now
+    ),
+    ...caps,
+    incomplete: true
   };
 }
 
@@ -48,8 +73,9 @@ export async function readPostCounts(db: ReadDb, now: number): Promise<PostCount
  *
  * Budget, of a handler's 100 index scans and 1,000 rows returned: the items
  * (one scan, at most LIMITS.maxItems rows), the PR slots (11 scans and 71 rows
- * at most, see readSlotData) and the posts (one scan, at most LIMITS.maxPostsRead
- * rows and one more). 13 scans and 722 rows at most.
+ * at most, see readSlotData) and the posts (two scans: the stored GitHub reads, at
+ * most LIMITS.maxPostRows rows, and on the fallback the events, at most
+ * LIMITS.maxPostsRead rows). 14 scans and 741 rows at most.
  */
 export async function handleCapacity(ctx: QueryServerContext, req: EndpointRequest): Promise<EndpointResponse> {
   const denied = checkBearer(ctx.env, req, "AGENT_SECRET");
@@ -99,6 +125,6 @@ export async function handleCapacity(ctx: QueryServerContext, req: EndpointReque
     }))
   }));
 
-  const response: CapacityResponse = { ok: true, generatedAt: now, repos, posts: await readPostCounts(db, now) };
+  const response: CapacityResponse = { ok: true, generatedAt: now, repos, posts: await readPostCounts(db, now, ctx.env.GITHUB_LOGIN) };
   return json(response);
 }

@@ -1,4 +1,4 @@
-// Checks for the pure helpers in this folder. Not part of the app: nothing imports
+// Checks for the pure helpers in this folder, in shared/ and in server/postsQuery.ts. Not part of the app: nothing imports
 // this file, so Lakebed does not bundle it. It has no test runner to install. Run:
 //
 //   npx esbuild client/lib/lib.check.ts --bundle --format=esm | node --input-type=module
@@ -18,15 +18,21 @@ import {
   WAITING_ON_LABELS
 } from "../../shared/enums";
 import {
+  GITHUB_POSTS_MAX_AGE,
+  POST_KINDS,
   POST_WEEKS,
   RULES_REPOS,
   closingClock,
   countNewThreads,
   countPosts,
+  formatPosts,
+  githubPosts,
+  parsePosts,
   postStarts,
   fillsSlot,
   nextSweepAt,
   postsWindowStart,
+  type Post,
   queueOrder,
   rulesFor,
   sweepTimeUtc,
@@ -50,6 +56,7 @@ import {
   type ListAsk,
   type ListItem
 } from "./derive";
+import { buildPostsQuery, postsFrom } from "../../server/postsQuery";
 import { ITEM_ID_PREFIX, formatItemId, isItemNumber, itemIdOf, parseItemId } from "../../shared/itemId";
 import { applyFilters, filtersToSearch, hasFilters, itemsHref, parseFilters, searchedNumber } from "./filters";
 import { DAY, HOUR, MINUTE, WEEK, YEAR, formatAgo, formatCountdown, formatDayMonth, formatSpan, originRefUrl, shortRef } from "./format";
@@ -795,6 +802,196 @@ equal(
   "new threads in the last 7 days"
 );
 equal(countPosts([], NOW).weeks.every((week) => week.count === 0), true, "no posts in any week");
+
+// Posts read from GitHub. A post is a time and a kind; the times below are invented.
+const githubRead: Post[] = [
+  { at: NOW, kind: "comment" }, // now: in the last 24 hours and the last 7 days
+  { at: NOW - DAY + 1, kind: "review" }, // just inside the last 24 hours
+  { at: NOW - DAY, kind: "discussion_comment" }, // exactly 24 hours ago: outside them
+  { at: NOW - 2 * DAY, kind: "pr" },
+  { at: NOW - 2 * DAY + HOUR, kind: "reopen" }, // the same PR opened again
+  { at: NOW - 3 * DAY, kind: "issue" },
+  { at: NOW - 3 * DAY, kind: "discussion" },
+  { at: NOW - WEEK + 1, kind: "pr" }, // just inside the last 7 days
+  { at: NOW - WEEK, kind: "pr" }, // exactly 7 days ago: outside them
+  { at: MONDAY - 7 * WEEK, kind: "issue" }, // the first moment of the window
+  { at: MONDAY - 7 * WEEK - 1, kind: "comment" }, // before it
+  { at: NOW + 1, kind: "pr" } // ahead of the clock
+];
+const githubCount = countPosts(githubRead.map((post) => post.at), NOW);
+equal(githubCount.last7Days, 8, "every kind is a post, a reopen included; the 7-day edge and a future post are out");
+equal(githubCount.last24Hours, 2, "the 24-hour edge is out");
+equal(githubCount.weeks.map((week) => week.count), [1, 0, 0, 0, 0, 0, 4, 5], "GitHub posts counted into their weeks: Sunday belongs to the week before");
+equal(
+  countNewThreads(githubRead, NOW),
+  { newPrsLast7Days: 2, newIssuesLast7Days: 1 },
+  "a reopened PR is not a new PR, and a thread counts once, at its creation"
+);
+equal(
+  POST_KINDS.map((kind) => countNewThreads([{ at: NOW, kind }], NOW)).map((count) => count.newPrsLast7Days + count.newIssuesLast7Days),
+  [1, 1, 0, 0, 0, 0, 0],
+  "only the kinds pr and issue start a thread"
+);
+equal(countNewThreads([{ at: NOW, kind: "reopen", url: "https://github.com/pingdotgg/t3code/pull/1" }], NOW).newPrsLast7Days, 0, "the kind decides, not the URL");
+const onePerKind: Post[] = POST_KINDS.map((kind) => ({ at: NOW - HOUR, kind }));
+equal(countPosts(onePerKind.map((post) => post.at), NOW).last24Hours, POST_KINDS.length, "each kind counts toward the totals");
+
+// The stored form: one post per line.
+const storedPosts = formatPosts(githubRead);
+equal(storedPosts.split("\n")[0], `${NOW} comment`, "a line is a time and a kind");
+equal(storedPosts.includes("http"), false, "no URL is stored");
+equal(parsePosts(storedPosts), githubRead, "the stored form reads back as written");
+equal(parsePosts(""), [], "an empty string holds no posts");
+equal(parsePosts(null), [], "and so does a missing one");
+equal(
+  parsePosts(`${NOW} pr\nnot a line\n${NOW} retweet\n\n ${NOW} pr\n${NOW}  pr\n${NOW} pr extra\n-5 pr\n${NOW - 1} discussion_comment\r\n${NOW - 2} issue`),
+  [
+    { at: NOW, kind: "pr" },
+    { at: NOW - 2, kind: "issue" }
+  ],
+  "a malformed line is skipped: an unknown kind, stray spaces, a trailing word, a carriage return"
+);
+
+// Which source is counted. GitHub's, while every repository with rules has a good read no older than two hours.
+const repoRow = { repo: "pingdotgg/t3code", readAt: NOW - HOUR, incomplete: false, posts: storedPosts };
+equal(GITHUB_POSTS_MAX_AGE, 2 * HOUR, "a read is good for two hours");
+equal(githubPosts([repoRow], NOW)?.posts, githubRead, "a fresh read is counted");
+equal(githubPosts([repoRow], NOW)?.countedAt, NOW - HOUR, "and says when it was read");
+equal(githubPosts([repoRow], NOW)?.incomplete, false, "a complete read");
+equal(githubPosts([{ ...repoRow, incomplete: true }], NOW)?.incomplete, true, "an incomplete read says so");
+equal(githubPosts([{ ...repoRow, repo: "PingDotGG/T3Code" }], NOW) !== null, true, "repository names are not case-sensitive");
+equal(githubPosts([{ ...repoRow, readAt: NOW - 2 * HOUR }], NOW) !== null, true, "exactly two hours old is still counted");
+equal(githubPosts([{ ...repoRow, readAt: NOW - 2 * HOUR - 1 }], NOW), null, "older than two hours: the events are counted instead");
+equal(githubPosts([{ ...repoRow, readAt: null }], NOW), null, "a row whose read never succeeded is not counted");
+equal(githubPosts([{ repo: "pingdotgg/t3code" }], NOW), null, "nor one that holds only a failure");
+equal(githubPosts([], NOW), null, "no row: the events");
+equal(githubPosts([{ ...repoRow, repo: "someone/else" }], NOW), null, "a row for another repository does not stand in");
+equal(githubPosts([repoRow], NOW, ["pingdotgg/t3code", "example/second"]), null, "every repository with rules needs a good read");
+const twoRepos = githubPosts(
+  [repoRow, { repo: "example/second", readAt: NOW - 90 * MINUTE, incomplete: true, posts: `${NOW - HOUR} review` }],
+  NOW,
+  ["pingdotgg/t3code", "example/second"]
+);
+equal(twoRepos?.posts.length, githubRead.length + 1, "the posts of every repository are counted together");
+equal(twoRepos?.countedAt, NOW - 90 * MINUTE, "the count is as old as the oldest read");
+equal(twoRepos?.incomplete, true, "and incomplete when any read was");
+equal(githubPosts([{ ...repoRow, posts: "" }], NOW)?.posts, [], "a read that found nothing is a count of zero, not a fallback");
 console.log("ok  upstream rules");
+
+// --- Reading our account's posts out of GitHub's answer ------------------------------------------
+// Every response below is invented. The account is "octo"; the window starts at SINCE.
+
+const SINCE = postsWindowStart(NOW);
+const iso = (at: number) => new Date(at).toISOString().replace(".000Z", "Z");
+const found = (list: unknown[], issueCount = list.length) => ({ issueCount, nodes: list });
+const commentsBy = (...entries: [string | null, number][]) => ({
+  comments: { nodes: entries.map(([login, at]) => ({ author: login === null ? null : { login }, createdAt: iso(at) })) }
+});
+const reopenedBy = (...entries: [string, number][]) => ({
+  timelineItems: { nodes: entries.map(([login, at]) => ({ createdAt: iso(at), actor: { login } })) }
+});
+const inRepo = (repo: string) => ({ repository: { nameWithOwner: repo } });
+type Answer = Record<string, unknown> & { user: Record<string, unknown> };
+function answer(patch: Record<string, unknown> = {}, user: Record<string, unknown> = {}): Answer {
+  return {
+    rateLimit: { remaining: 4000 },
+    p0: found([]),
+    i0: found([]),
+    r0: found([]),
+    c0: found([]),
+    m0: found([]),
+    k0: { issueCount: 900 },
+    ...patch,
+    user: { d: { nodes: [] }, f: { nodes: [] }, l: { nodes: [] }, ...user }
+  };
+}
+const REPO = ["pingdotgg/t3code"];
+function readOne(data: Answer, login = "octo") {
+  const read = postsFrom(data, REPO, login, SINCE);
+  if (typeof read === "string") throw new Error(`the read failed: ${read}`);
+  const entry = read.get(REPO[0] as string);
+  if (!entry) throw new Error("no entry for the repository");
+  return { incomplete: entry.incomplete, posts: entry.posts.map((post) => `${(NOW - post.at) / HOUR}h ${post.kind}`) };
+}
+
+equal(readOne(answer()), { incomplete: false, posts: [] }, "nothing posted: a complete read of no posts");
+const everyKind = answer(
+  {
+    p0: found([
+      { createdAt: iso(NOW - 1 * HOUR), ...reopenedBy() },
+      // Opened before the window and reopened inside it, once by us and once by a maintainer.
+      { createdAt: iso(SINCE - DAY), ...reopenedBy(["Octo", NOW - 2 * HOUR], ["maintainer", NOW - 3 * HOUR], ["octo", SINCE - HOUR]) }
+    ]),
+    i0: found([{ createdAt: iso(NOW - 4 * HOUR) }, { createdAt: iso(SINCE - 1) }]),
+    r0: found([{ reviews: { nodes: [{ submittedAt: iso(NOW - 5 * HOUR) }, { submittedAt: iso(NOW - 6 * HOUR) }, { submittedAt: null }] } }]),
+    c0: found([commentsBy(["octo", NOW - 7 * HOUR], ["someone", NOW - 7 * HOUR], [null, NOW - 7 * HOUR])]),
+    m0: found([commentsBy(["OCTO", NOW - 8 * HOUR], ["octo", SINCE - 1], ["octo-bot", NOW - 8 * HOUR])])
+  },
+  {
+    d: { nodes: [{ createdAt: iso(NOW - 9 * HOUR), ...inRepo("PingDotGG/T3Code") }, { createdAt: iso(NOW - 9 * HOUR), ...inRepo("someone/else") }] },
+    f: { nodes: [{ id: "a", createdAt: iso(NOW - 10 * HOUR), discussion: inRepo("pingdotgg/t3code") }] },
+    // The same comment from the other end, and one in another repository.
+    l: { nodes: [{ id: "a", createdAt: iso(NOW - 10 * HOUR), discussion: inRepo("pingdotgg/t3code") }, { id: "b", createdAt: iso(NOW - 11 * HOUR), discussion: inRepo("someone/else") }] }
+  }
+);
+equal(
+  readOne(everyKind),
+  {
+    incomplete: false,
+    posts: ["1h pr", "2h reopen", "4h issue", "5h review", "6h review", "7h comment", "8h comment", "9h discussion", "10h discussion_comment"]
+  },
+  "each kind, newest first: our own only, inside the window only, logins and repositories without regard to case"
+);
+equal(
+  readOne(everyKind, "someone").posts.filter((post) => /comment$|reopen/.test(post)),
+  ["7h comment", "10h discussion_comment"],
+  "comments and reopenings are kept by their author; the rest is the account's by the query that found it"
+);
+
+// Incomplete reads keep what they found.
+equal(readOne(answer({ p0: found([{ createdAt: iso(NOW) }], 2) })), { incomplete: true, posts: ["0h pr"] }, "a search that found more than it returned");
+equal(readOne(answer({ m0: found([], 51) })).incomplete, true, "the same for any of the searches");
+const fullPage = (size: number, oldest: number) => Array.from({ length: size }, (_, index) => (index === 0 ? oldest : NOW - HOUR));
+const theirs = (times: number[]) => commentsBy(...times.map((at): [string, number] => ["someone", at]));
+equal(readOne(answer({ c0: found([theirs(fullPage(100, SINCE))]) })).incomplete, true, "100 comments, all inside the window: older ones may be cut off");
+equal(readOne(answer({ c0: found([theirs(fullPage(100, SINCE - 1))]) })).incomplete, false, "100 comments reaching back past the window: nothing of the window is cut off");
+equal(readOne(answer({ c0: found([theirs(fullPage(99, SINCE))]) })).incomplete, false, "99 comments: the page is not full");
+const reviewsAt = (times: number[]) => ({ reviews: { nodes: times.map((at) => ({ submittedAt: iso(at) })) } });
+equal(readOne(answer({ r0: found([reviewsAt(fullPage(50, SINCE))]) })).incomplete, true, "50 reviews, all inside the window");
+equal(readOne(answer({ r0: found([reviewsAt(fullPage(50, SINCE - 1))]) })).incomplete, false, "50 reviews reaching back past it");
+const discussionsAt = (times: number[]) => ({ d: { nodes: times.map((at) => ({ createdAt: iso(at), ...inRepo("someone/else") })) } });
+equal(readOne(answer({}, discussionsAt(fullPage(20, SINCE)))).incomplete, true, "20 discussions, all inside the window, wherever they are");
+equal(readOne(answer({}, discussionsAt(fullPage(20, SINCE - 1)))).incomplete, false, "20 discussions reaching back past it");
+// Discussion comments come from both ends, in whichever order GitHub keeps them.
+const discussionComment = (id: number, at: number) => ({ id: `c${id}`, createdAt: iso(at), discussion: inRepo("pingdotgg/t3code") });
+const older = Array.from({ length: 50 }, (_, index) => discussionComment(index, SINCE - (50 - index) * HOUR));
+const newerInside = Array.from({ length: 50 }, (_, index) => discussionComment(100 + index, NOW - (50 - index) * MINUTE));
+const newerReachingBack = [discussionComment(100, SINCE - 1), ...newerInside.slice(1)];
+equal(readOne(answer({}, { f: { nodes: older }, l: { nodes: newerInside } })), { incomplete: true, posts: readOne(answer({}, { f: { nodes: [] }, l: { nodes: newerInside } })).posts }, "two full ends with a gap between them, the newer all inside the window");
+equal(readOne(answer({}, { f: { nodes: newerInside }, l: { nodes: older } })).incomplete, true, "the same with the ends the other way round");
+equal(readOne(answer({}, { f: { nodes: older }, l: { nodes: newerReachingBack } })).incomplete, false, "the newer end reaches back past the window: the gap is older still");
+equal(readOne(answer({}, { f: { nodes: newerInside }, l: { nodes: newerInside } })), { incomplete: false, posts: readOne(answer({}, { f: { nodes: newerInside } })).posts }, "both ends hold the same 50: that is all of them, counted once");
+
+// Reads that must fail whole.
+equal(postsFrom(answer({ k0: { issueCount: 0 } }), REPO, "octo", SINCE), "GitHub's search found no PR in pingdotgg/t3code: this token cannot search it.", "the control search found nothing");
+equal(typeof postsFrom(answer({ c0: null }), REPO, "octo", SINCE), "string", "a search is missing");
+equal(typeof postsFrom(answer({ i0: { nodes: [] } }), REPO, "octo", SINCE), "string", "a search without its count");
+equal(typeof postsFrom({ ...answer(), user: null }, REPO, "octo", SINCE), "string", "no user");
+equal(typeof postsFrom(answer(), [...REPO, "example/second"], "octo", SINCE), "string", "a second repository with no answer");
+
+// More posts than a row keeps: the newest are kept.
+const many = Array.from({ length: 601 }, (_, index) => ({ createdAt: iso(NOW - index * MINUTE) }));
+const capped = postsFrom(answer({ i0: found(many) }), REPO, "octo", SINCE);
+equal(typeof capped !== "string" && capped.get("pingdotgg/t3code")?.posts.length, 600, "600 posts are kept");
+equal(typeof capped !== "string" && capped.get("pingdotgg/t3code")?.incomplete, true, "and the read is incomplete");
+equal(typeof capped !== "string" && capped.get("pingdotgg/t3code")?.posts[0]?.at, NOW, "the newest first");
+
+const postsQuery = buildPostsQuery(["pingdotgg/t3code", "example/second"], "octo", SINCE);
+equal((postsQuery.match(/search\(/g) ?? []).length, 12, "six searches for each repository");
+equal((postsQuery.match(/is:(pr|issue) /g) ?? []).length + (postsQuery.match(/is:pr"/g) ?? []).length, 12, "every search says is:pr or is:issue");
+equal(postsQuery.includes(`repo:example/second is:issue commenter:octo updated:>=${iso(SINCE).slice(0, 10)} sort:updated-desc`), true, "a search names the repository, the account and the window's first day");
+equal(/fragment /.test(postsQuery), false, "no fragment is defined, so none can go unused");
+equal((postsQuery.match(/user\(login:"octo"\)/g) ?? []).length, 1, "the discussion posts are read once");
+console.log("ok  posts from GitHub");
 
 console.log("all checks passed");

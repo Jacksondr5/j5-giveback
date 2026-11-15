@@ -211,6 +211,68 @@ export const POSTING_CAPS = {
   newIssuesPerWeek: 2
 } as const;
 
+/**
+ * What a post read from GitHub is. "pr" and "issue" are a thread's creation.
+ * "reopen" is a PR of ours opened again: a post, and not a new PR.
+ * "review" is one submitted review, however many inline comments it carries.
+ */
+export const POST_KINDS = ["pr", "issue", "reopen", "review", "comment", "discussion", "discussion_comment"] as const;
+export type PostKind = (typeof POST_KINDS)[number];
+export type Post = { at: number; kind: PostKind };
+
+/** The stored form of a repository's posts: one per line, "<epoch milliseconds> <kind>". */
+export function formatPosts(posts: readonly Post[]): string {
+  return posts.map((post) => `${post.at} ${post.kind}`).join("\n");
+}
+
+/** Reads the stored form back. A line that is not a time and a known kind is skipped. */
+export function parsePosts(text: string | null | undefined): Post[] {
+  const posts: Post[] = [];
+  for (const line of (text ?? "").split("\n")) {
+    const match = /^([0-9]{1,15}) ([a-z_]+)$/.exec(line);
+    const kind = POST_KINDS.find((known) => known === match?.[2]);
+    if (match && kind) posts.push({ at: Number(match[1]), kind });
+  }
+  return posts;
+}
+
+/** Posts read from GitHub are counted while the read is no older than this. After it, the recorded events are. */
+export const GITHUB_POSTS_MAX_AGE = 2 * HOUR;
+
+/** What the count reads of a stored row: one repository's posts, as GitHub last gave them. */
+export type StoredPosts = {
+  repo: string;
+  /** The last read that succeeded. A failed read leaves it, and the posts, as they were. */
+  readAt?: number | null;
+  incomplete?: boolean | null;
+  posts?: string | null;
+};
+
+/**
+ * The posts to count from GitHub, or null when the recorded events must be
+ * counted instead: some repository with rules has no row, or its last good
+ * read is older than `GITHUB_POSTS_MAX_AGE`.
+ */
+export function githubPosts(
+  rows: readonly StoredPosts[],
+  now: number,
+  repos: readonly string[] = RULES_REPOS
+): { posts: Post[]; countedAt: number; incomplete: boolean } | null {
+  if (repos.length === 0) return null;
+  const posts: Post[] = [];
+  let countedAt = Infinity;
+  let incomplete = false;
+  for (const repo of repos) {
+    const row = rows.find((candidate) => candidate.repo.toLowerCase() === repo.toLowerCase());
+    if (!row || typeof row.readAt !== "number" || now - row.readAt > GITHUB_POSTS_MAX_AGE) return null;
+    posts.push(...parsePosts(row.posts));
+    // The count is as old as the repository read longest ago.
+    countedAt = Math.min(countedAt, row.readAt);
+    incomplete ||= row.incomplete === true;
+  }
+  return { posts, countedAt, incomplete };
+}
+
 /** What a post's URL says it started: a PR, an issue, or neither (a comment, a reply, a discussion post, or no URL). */
 export function postStarts(url: string | null | undefined): "pr" | "issue" | null {
   if (typeof url !== "string") return null;
@@ -246,16 +308,20 @@ export function countPosts(times: readonly number[], now: number): PostCounts {
   return { last7Days, last24Hours, weeks };
 }
 
-/** New PRs and new issues among the posts of the 7 days up to now. */
+/**
+ * New PRs and new issues among the posts of the 7 days up to now. A thread
+ * counts once, at its creation: a post read from GitHub says what it is by its
+ * kind, so a reopened PR is no new PR. A recorded event says it by its URL.
+ */
 export function countNewThreads(
-  posts: readonly { at: number; url?: string | null }[],
+  posts: readonly { at: number; url?: string | null; kind?: PostKind }[],
   now: number
 ): { newPrsLast7Days: number; newIssuesLast7Days: number } {
   let newPrsLast7Days = 0;
   let newIssuesLast7Days = 0;
   for (const post of posts) {
     if (post.at > now || post.at <= now - WEEK) continue;
-    const starts = postStarts(post.url);
+    const starts = post.kind === undefined ? postStarts(post.url) : post.kind;
     if (starts === "pr") newPrsLast7Days += 1;
     else if (starts === "issue") newIssuesLast7Days += 1;
   }

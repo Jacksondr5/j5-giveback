@@ -1,0 +1,133 @@
+// The GitHub query that reads our account's own posts, and the reading of its answer.
+// Pure: no fetch, no database, no Lakebed. client/lib/lib.check.ts checks it.
+
+import { LIMITS } from "../shared/limits";
+import type { Post, PostKind } from "../shared/upstreamRules";
+import { isObj, nodes, time } from "./github";
+
+type Obj = Record<string, unknown>;
+
+// Page sizes. A full page may have cut posts off: see `page` in postsFrom.
+const COMMENTS = 100;
+const REVIEWS = 50;
+const REOPENS = 10;
+const DISCUSSIONS = 20;
+const DISCUSSION_COMMENTS = 50;
+
+// The comment connection has no author filter: a thread's last comments are read and ours kept.
+const COMMENTS_OF = (type: string) => `...on ${type}{comments(last:${COMMENTS}){nodes{author{login} createdAt}}}`;
+const DISCUSSION_COMMENT_FIELDS = "{nodes{id createdAt discussion{repository{nameWithOwner}}}}";
+
+/**
+ * One query. Per repository, six searches: the PRs (p<n>) and issues (i<n>) the
+ * account opened, the PRs it reviewed (r<n>), the PRs (c<n>) and issues (m<n>)
+ * it commented on, and every PR there is (k<n>), as a control. Then, once, the
+ * account's discussion posts.
+ *
+ * Every search says `is:pr` or `is:issue`. Without one, GitHub answers a
+ * fine-grained token with no results and no error, for a repository the token
+ * was not granted. The control catches that if it ever comes back: see postsFrom.
+ *
+ * `repositoryDiscussions` is newest first by default. `repositoryDiscussionComments`
+ * states no order, so both ends are read (f, l).
+ */
+export function buildPostsQuery(repos: readonly string[], login: string, since: number): string {
+  const day = new Date(since).toISOString().slice(0, 10);
+  const user = JSON.stringify(login);
+  const parts = repos.flatMap((repo, n) => {
+    const search = (alias: string, first: number, what: string, fields: string) =>
+      `${alias}${n}:search(type:ISSUE,first:${first},query:"repo:${repo} ${what}"){issueCount ${fields}}`;
+    const mine = (alias: string, first: number, what: string, fields: string) =>
+      search(alias, first, `${what}:${login} updated:>=${day} sort:updated-desc`, `nodes{${fields}}`);
+    return [
+      mine(
+        "p",
+        100,
+        "is:pr author",
+        `...on PullRequest{createdAt timelineItems(itemTypes:[REOPENED_EVENT],last:${REOPENS}){nodes{...on ReopenedEvent{createdAt actor{login}}}}}`
+      ),
+      mine("i", 100, "is:issue author", "...on Issue{createdAt}"),
+      mine("r", 50, "is:pr reviewed-by", `...on PullRequest{reviews(author:${user},last:${REVIEWS}){nodes{submittedAt}}}`),
+      mine("c", 50, "is:pr commenter", COMMENTS_OF("PullRequest")),
+      mine("m", 50, "is:issue commenter", COMMENTS_OF("Issue")),
+      search("k", 1, "is:pr", "")
+    ];
+  });
+  return `query{rateLimit{remaining}
+${parts.join("\n")}
+user(login:${user}){d:repositoryDiscussions(first:${DISCUSSIONS}){nodes{createdAt repository{nameWithOwner}}} f:repositoryDiscussionComments(first:${DISCUSSION_COMMENTS})${DISCUSSION_COMMENT_FIELDS} l:repositoryDiscussionComments(last:${DISCUSSION_COMMENTS})${DISCUSSION_COMMENT_FIELDS}}}`;
+}
+
+export type PostsRead = { posts: Post[]; incomplete: boolean };
+
+/**
+ * Each repository's posts inside the window, newest first. Or, as a string, why
+ * the read fails whole: a part of the response is missing, or the control search
+ * found no PR at all in a repository. A count built on either would be low.
+ *
+ * Incomplete: a search found more threads than it returned, a page came back
+ * full with nothing in it older than the window, or more posts were found than a row keeps.
+ */
+export function postsFrom(data: Obj, repos: readonly string[], login: string, since: number): Map<string, PostsRead> | string {
+  const user = data.user;
+  if (!isObj(user)) return `GitHub has no user ${login}.`;
+  const mine = (actor: unknown) => isObj(actor) && typeof actor.login === "string" && actor.login.toLowerCase() === login.toLowerCase();
+  const inWindow = (list: Obj[], field: string) => list.every((node) => (time(node[field]) ?? since) >= since);
+  const newest = (list: Obj[]) => Math.max(0, ...list.map((node) => time(node.createdAt) ?? 0));
+
+  // Discussion comments, from both ends. Two full pages with no overlap leave a gap between
+  // them; the gap can hold posts of the window only if the newer page is all inside it.
+  const ends = [nodes(user.f), nodes(user.l)] as const;
+  const discussionComments = new Map(ends.flat().map((comment) => [comment.id, comment]));
+  const newer = newest(ends[0]) >= newest(ends[1]) ? ends[0] : ends[1];
+  const gap = discussionComments.size >= 2 * DISCUSSION_COMMENTS && inWindow(newer, "createdAt");
+
+  const out = new Map<string, PostsRead>();
+  for (const [n, repo] of repos.entries()) {
+    const posts: Post[] = [];
+    let incomplete = gap;
+    const add = (kind: PostKind, value: unknown) => {
+      const at = time(value);
+      if (at !== null && at >= since) posts.push({ at, kind });
+    };
+    const page = (connection: unknown, size: number, field: string): Obj[] => {
+      const list = nodes(connection);
+      if (list.length >= size && inWindow(list, field)) incomplete = true;
+      return list;
+    };
+    const searched = (alias: string): Obj[] | null => {
+      const result = data[alias + n];
+      if (!isObj(result) || !Array.isArray(result.nodes) || typeof result.issueCount !== "number") return null;
+      if (result.issueCount > result.nodes.length) incomplete = true;
+      return result.nodes.filter(isObj);
+    };
+    const here = (holder: unknown) =>
+      isObj(holder) && isObj(holder.repository) && String(holder.repository.nameWithOwner).toLowerCase() === repo.toLowerCase();
+    const control = data[`k${n}`];
+    if (!isObj(control) || !control.issueCount) return `GitHub's search found no PR in ${repo}: this token cannot search it.`;
+    const prs = searched("p");
+    const issues = searched("i");
+    const reviewed = searched("r");
+    const onPrs = searched("c");
+    const onIssues = searched("m");
+    if (!prs || !issues || !reviewed || !onPrs || !onIssues) return `GitHub's answer for ${repo} lacks a search.`;
+
+    for (const pr of prs) {
+      // A PR the limit bot closed as it opened is found too, and counts.
+      add("pr", pr.createdAt);
+      for (const event of page(pr.timelineItems, REOPENS, "createdAt")) if (mine(event.actor)) add("reopen", event.createdAt);
+    }
+    for (const issue of issues) add("issue", issue.createdAt);
+    // One review is one post, whatever it carries. A reply in a review thread arrives as a review.
+    for (const pr of reviewed) for (const review of page(pr.reviews, REVIEWS, "submittedAt")) add("review", review.submittedAt);
+    for (const thread of [...onPrs, ...onIssues]) {
+      for (const comment of page(thread.comments, COMMENTS, "createdAt")) if (mine(comment.author)) add("comment", comment.createdAt);
+    }
+    for (const discussion of page(user.d, DISCUSSIONS, "createdAt")) if (here(discussion)) add("discussion", discussion.createdAt);
+    for (const comment of discussionComments.values()) if (here(comment.discussion)) add("discussion_comment", comment.createdAt);
+
+    posts.sort((a, b) => b.at - a.at);
+    out.set(repo, { posts: posts.slice(0, LIMITS.maxPostsStored), incomplete: incomplete || posts.length > LIMITS.maxPostsStored });
+  }
+  return out;
+}

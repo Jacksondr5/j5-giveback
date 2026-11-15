@@ -25,6 +25,7 @@ import { isOwner, requireOwner } from "./auth";
 import { handleCapacity, readPostCounts } from "./capacity";
 import { ownerItemDetail, ownerItems, ownerOverview } from "./owner";
 import { askView, dependenciesOf, eventView, itemView, linkView, readItemDetail, readItemList, readOverview } from "./read";
+import { handleRefreshPosts } from "./posts";
 import { handleRefresh } from "./refresh";
 import { schema, type PublicDb, type ReadDb } from "./schema";
 
@@ -99,10 +100,10 @@ export default capsule({
       return ownerItemDetail(ctx.db as unknown as ReadDb, ref);
     }),
 
-    /** Upstream posts per week, on every item, public or not. A handler of its own, so it has its own read budget. */
+    /** Our upstream posts per week, from GitHub or from every item's events. A handler of its own, so it has its own read budget. */
     ownerPosts: query(async (ctx): Promise<PostCountsView> => {
       requireOwner(ctx.auth, ctx.env);
-      return readPostCounts(ctx.db as unknown as ReadDb, Date.now());
+      return readPostCounts(ctx.db as unknown as ReadDb, Date.now(), ctx.env.GITHUB_LOGIN);
     })
   },
 
@@ -118,6 +119,7 @@ export default capsule({
     agentItemAgents: endpoint({ method: "GET", path: "/api/agent/item-agents", readOnly: true }, handleItemAgents),
     agentWatchlist: endpoint({ method: "GET", path: "/api/agent/watchlist", readOnly: true }, handleWatchlist),
     agentCapacity: endpoint({ method: "GET", path: "/api/agent/capacity", readOnly: true }, handleCapacity),
-    refresh: endpoint({ method: "POST", path: "/api/refresh" }, handleRefresh)
+    refresh: endpoint({ method: "POST", path: "/api/refresh" }, handleRefresh),
+    refreshPosts: endpoint({ method: "POST", path: "/api/refresh/posts" }, handleRefreshPosts)
   }
 });

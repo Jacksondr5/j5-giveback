@@ -102,21 +102,21 @@ export type Snapshot = {
 
 type Obj = Record<string, unknown>;
 
-function isObj(value: unknown): value is Obj {
+export function isObj(value: unknown): value is Obj {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function str(value: unknown): string | null {
+export function str(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function time(value: unknown): number | null {
+export function time(value: unknown): number | null {
   if (typeof value !== "string") return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function nodes(value: unknown): Obj[] {
+export function nodes(value: unknown): Obj[] {
   if (!isObj(value) || !Array.isArray(value.nodes)) return [];
   return value.nodes.filter(isObj);
 }
@@ -249,7 +249,14 @@ export function snapshotFrom(node: unknown, selfLogin: string, closingLabel: str
 }
 
 export type GithubResult =
-  | { ok: true; data: Obj; errorsByAlias: Map<string, string>; rateLimitRemaining: number | null }
+  | {
+      ok: true;
+      data: Obj;
+      errorsByAlias: Map<string, string>;
+      /** The first error GitHub reported beside the data, whatever it was about. Null when there was none. */
+      firstError: string | null;
+      rateLimitRemaining: number | null;
+    }
   | { ok: false; message: string };
 
 /**
@@ -297,7 +304,10 @@ export async function fetchGithub(token: string, query: string, url: string = GI
     let firstError: string | null = null;
     if (Array.isArray(payload.errors)) {
       for (const error of payload.errors) {
-        if (!isObj(error)) continue;
+        if (!isObj(error)) {
+          firstError ??= "GitHub error ERROR.";
+          continue;
+        }
         const type = str(error.type) ?? "ERROR";
         const message = type === "NOT_FOUND" ? "Not found on GitHub." : `GitHub error ${type}.`;
         firstError ??= message;
@@ -312,7 +322,7 @@ export async function fetchGithub(token: string, query: string, url: string = GI
     }
     const rateLimit = payload.data.rateLimit;
     const remaining = isObj(rateLimit) && typeof rateLimit.remaining === "number" ? rateLimit.remaining : null;
-    return { ok: true, data: payload.data, errorsByAlias, rateLimitRemaining: remaining };
+    return { ok: true, data: payload.data, errorsByAlias, firstError, rateLimitRemaining: remaining };
   } catch (error) {
     const aborted = isObj(error) && (error.name === "AbortError" || error.name === "TimeoutError");
     return {

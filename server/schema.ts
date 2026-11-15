@@ -2,7 +2,7 @@ import { boolean, id, number, string, table } from "lakebed/server";
 import type { ReadDatabaseOf, WriteDatabaseOf } from "lakebed/server";
 
 // Public tables: items, links, asks, events, syncState.
-// Private tables: itemPrivate, askPrivate. Public queries get a database type
+// Private tables: itemPrivate, askPrivate, githubPosts. Public queries get a database type
 // that does not contain them (see PublicDb), so they cannot read them.
 //
 // All times are Unix epoch milliseconds in number() fields.
@@ -143,6 +143,22 @@ export const schema = {
     draftPointer: string().optional()
   }).index("by_ask", ["askId"]),
 
+  // Our account's own posts in a repository with rules, as GitHub last gave them. One row per repository.
+  // Private: it says when Jackson posted, on any thread, whether or not an item here is about it.
+  githubPosts: table({
+    // "owner/name", as written in the rules map.
+    repo: string(),
+    // The last read that succeeded. A failed read leaves it, and `posts`, as they were.
+    readAt: number().optional(),
+    // True when GitHub held more than the read took, so the count may be low.
+    incomplete: boolean().optional(),
+    // One post per line, newest first: "<epoch milliseconds> <kind>". No URL and no title is stored.
+    posts: string().optional(),
+    // The last read's failure, and when it failed. Cleared by the next read that succeeds.
+    error: string().optional(),
+    errorAt: number().optional()
+  }).index("by_repo", ["repo"]),
+
   // One row.
   syncState: table({
     lastGithubSyncAt: number().optional(),
@@ -177,3 +193,4 @@ export type EventRow = RowOfTable<ReadDb["events"]>;
 export type ItemPrivateRow = RowOfTable<ReadDb["itemPrivate"]>;
 export type AskPrivateRow = RowOfTable<ReadDb["askPrivate"]>;
 export type SyncStateRow = RowOfTable<ReadDb["syncState"]>;
+export type GithubPostsRow = RowOfTable<ReadDb["githubPosts"]>;

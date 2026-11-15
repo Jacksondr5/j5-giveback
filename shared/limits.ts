@@ -62,7 +62,11 @@ export const LIMITS = {
   // Queued items whose text approval is read: one index scan and one row each.
   queueTextChecks: 10,
   // "Posted" events read for the count of upstream posts over the last eight weeks.
-  maxPostsRead: 300
+  maxPostsRead: 300,
+  // Posts read from GitHub that one repository's row keeps, newest first. About 22 bytes each.
+  maxPostsStored: 600,
+  // Rows of GitHub posts one read takes: one per repository with rules, and room for strays.
+  maxPostRows: 20
 } as const;
 
 /** Substrings that mark a local filesystem path. No stored string may contain one. */

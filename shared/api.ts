@@ -324,15 +324,23 @@ export type CapacityRepo = {
   queue: CapacityQueueEntry[];
 };
 
-/** Upstream posts counted from events of type "posted", on every item, public or not. */
+/**
+ * Our upstream posts. Counted from GitHub, for the whole account in the
+ * repositories with rules, when a read no older than two hours is stored.
+ * Otherwise counted from events of type "posted", on every item, public or not.
+ */
 export type PostCountsView = {
+  /** Where the count comes from. "events" is the fallback: it misses every post nobody recorded. */
+  source: "github" | "events";
+  /** When GitHub was read for this count. Null when the source is the events. */
+  countedAt: number | null;
   /** Posts in the 7 days up to `generatedAt`. */
   last7Days: number;
   /** The last eight weeks, oldest first. A week starts on Monday 00:00 UTC. The last entry is the current week. */
   weeks: { start: number; count: number }[];
   /** Posts in the 24 hours up to `generatedAt`. */
   last24Hours: number;
-  /** Among the last 7 days' posts: those that opened a PR, and those that filed an issue, by their URL. */
+  /** Among the last 7 days' posts: those that opened a PR, and those that filed an issue. A reopened PR is not a new one. */
   newPrsLast7Days: number;
   newIssuesLast7Days: number;
   /** Jackson's cap on posts in 7 days. A guide to stay near. Null when none is set. */
@@ -341,7 +349,10 @@ export type PostCountsView = {
   dailyCap: number | null;
   newPrCap: number | null;
   newIssueCap: number | null;
-  /** True when more posts fell in the window than one read takes. The oldest weeks then count low. */
+  /**
+   * True when the count may be low: always when the source is the events, and
+   * from GitHub when it held more than the read took.
+   */
   incomplete: boolean;
 };
 
@@ -354,7 +365,8 @@ export type CapacityResponse = {
   posts: PostCountsView;
 };
 
-export const EXPORT_TABLES = ["items", "links", "asks", "events", "itemPrivate", "askPrivate", "syncState"] as const;
+// New tables go at the end: a cursor names a table by its place in this list.
+export const EXPORT_TABLES = ["items", "links", "asks", "events", "itemPrivate", "askPrivate", "syncState", "githubPosts"] as const;
 export type ExportTable = (typeof EXPORT_TABLES)[number];
 
 /** One page of `GET /api/agent/export`. Rows are raw table rows. Follow `nextCursor` until it is null. */
@@ -367,6 +379,19 @@ export type ExportResponse = {
   itemIdPrefix: string;
   tables: Partial<Record<ExportTable, Record<string, unknown>[]>>;
   nextCursor: string | null;
+};
+
+/** `POST /api/refresh/posts`. It carries no count: the count is for the owner and the agents. */
+export type RefreshPostsResponse = {
+  ok: boolean;
+  /** False when the server secret GITHUB_LOGIN is not set. Nothing was read, and the count comes from the recorded events. */
+  configured: boolean;
+  /** The repositories read. Empty when the read failed or nothing was read. */
+  repos: { repo: string; incomplete: boolean }[];
+  /** Present when the read failed. Every repository keeps the posts of its last good read. */
+  error?: string;
+  message?: string;
+  rateLimitRemaining?: number | null;
 };
 
 export type RefreshResponse = {
