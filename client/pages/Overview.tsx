@@ -63,7 +63,7 @@ import {
 } from "../lib/derive";
 import { itemsHref } from "../lib/filters";
 import { WEEK, formatAge, formatAgo, formatDateTime, formatDayMonth, formatSpan, plural } from "../lib/format";
-import { askAction, listThreads, slotWords, stageWaitsOnJackson } from "../lib/present";
+import { askAction, listThreads, postSourceWords, slotWords, stageWaitsOnJackson } from "../lib/present";
 
 const OFFERED_SHOWN = 12;
 const CLOSED_SHOWN = 8;
@@ -364,17 +364,18 @@ function OfCap({ count, cap }: { count: number; cap: number | null }) {
 }
 
 /**
- * How many posts went upstream lately, on every item, public or not, against
- * Jackson's own caps. Only the owner is sent this.
+ * How many posts our account made upstream lately, against Jackson's own caps,
+ * and where the count comes from. Only the owner is sent this.
  */
 function PostCounts({ posts }: { posts: PostCountsView }) {
+  const now = useNowValue();
   const last = posts.weeks.length - 1;
   return (
     <PrivateBlock>
       <p>
         <span className={cx(SERIF, "text-base font-bold tabular-nums")}>{posts.last7Days}</span>{" "}
         {posts.last7Days === 1 ? "upstream post" : "upstream posts"} in the last 7 days
-        {posts.cap !== null ? `, of about ${posts.cap}` : null}
+        {posts.cap !== null ? `, of about ${posts.cap}` : null}. <span className={TEXT_DIM}>{postSourceWords(posts, now)}</span>
       </p>
       <p className={cx("flex flex-wrap items-baseline gap-x-3", TEXT_DIM)}>
         <span>
@@ -400,7 +401,7 @@ function PostCounts({ posts }: { posts: PostCountsView }) {
             </span>
           ))}
         </span>
-        <span>so far this week{posts.incomplete ? "; the oldest weeks count low" : ""}</span>
+        <span>so far this week</span>
       </p>
     </PrivateBlock>
   );

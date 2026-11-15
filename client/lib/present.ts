@@ -17,7 +17,7 @@ import type {
 import { itemIdOf } from "../../shared/itemId";
 import { closingClock, nextSweepAt, rulesFor, sweepTimeUtc, type ClosingClock, type TextApproval } from "../../shared/upstreamRules";
 import type { ListItem } from "./derive";
-import { formatCountdown, formatDateTime, formatDayMonth } from "./format";
+import { formatAgo, formatCountdown, formatDateTime, formatDayMonth } from "./format";
 
 /**
  * The address of an item's page: its slug. An undisclosed item has no slug, so
@@ -419,4 +419,14 @@ export function groupByStage(items: readonly ListItem[]): { stage: Stage; items:
     else groups.push({ stage: item.stage, items: [item] });
   }
   return groups;
+}
+
+/** Where the owner's post count comes from, and whether to trust it as a full count. */
+export function postSourceWords(
+  posts: { source: "github" | "events"; countedAt: number | null; incomplete: boolean },
+  now: number
+): string {
+  if (posts.source !== "github" || posts.countedAt === null) return "Counted from recorded posts, so it may be low.";
+  const read = `Counted from GitHub ${formatAgo(posts.countedAt, now)}`;
+  return posts.incomplete ? `${read}; not all of it was read, so it may be low.` : `${read}.`;
 }

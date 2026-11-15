@@ -71,6 +71,7 @@ import {
   listThreads,
   macroscopeSignal,
   outcomeMark,
+  postSourceWords,
   roleWord,
   slotWords,
   stageCounts,
@@ -876,6 +877,15 @@ equal(twoRepos?.posts.length, githubRead.length + 1, "the posts of every reposit
 equal(twoRepos?.countedAt, NOW - 90 * MINUTE, "the count is as old as the oldest read");
 equal(twoRepos?.incomplete, true, "and incomplete when any read was");
 equal(githubPosts([{ ...repoRow, posts: "" }], NOW)?.posts, [], "a read that found nothing is a count of zero, not a fallback");
+
+equal(postSourceWords({ source: "github", countedAt: NOW - 4 * MINUTE, incomplete: false }, NOW), "Counted from GitHub 4 min ago.", "the source: GitHub");
+equal(postSourceWords({ source: "github", countedAt: NOW, incomplete: false }, NOW), "Counted from GitHub just now.", "read this minute");
+equal(
+  postSourceWords({ source: "github", countedAt: NOW - HOUR, incomplete: true }, NOW),
+  "Counted from GitHub 1 h ago; not all of it was read, so it may be low.",
+  "an incomplete read"
+);
+equal(postSourceWords({ source: "events", countedAt: null, incomplete: true }, NOW), "Counted from recorded posts, so it may be low.", "the fallback");
 console.log("ok  upstream rules");
 
 // --- Reading our account's posts out of GitHub's answer ------------------------------------------
