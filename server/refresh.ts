@@ -292,6 +292,10 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
 
     // Raise the marker. The stage is the agent's to change.
     for (const [itemId, { note }] of marked) {
+      // A closed item has nothing left to act on. Its links are read once more after it
+      // closes, and what that read finds goes into its history as an event, not onto a marker.
+      const item = await db.items.get(itemId);
+      if (!item || item.stage === "closed") continue;
       await db.items.update(itemId, { upstreamChangedAt: now, upstreamChangeNote: note });
     }
   }

@@ -789,7 +789,7 @@ A link is read through its `repo`, `number` and `kind`, not its URL. A `comment`
 
 When `nextCursor` is not null, call `POST /api/refresh?cursor=<nextCursor>` for the next batch. `scripts/giveback refresh` does this, and then calls [`POST /api/refresh/posts`](#post-apirefreshposts) once.
 
-**The refresh never changes an item's stage.** When a link merges, closes, reopens, or (for our own open PR) begins failing CI, is put on a [closing clock](#closing-clocks) or gets a new [takeover pipeline](#takeover-pipeline) state, it records an event with actor `github` and sets the item's `upstreamChangedAt` and `upstreamChangeNote`. That marker means "something happened upstream that you have not acted on". Read it in the export, decide what the item's stage should be, and send `clearUpstreamChange: true` with your change.
+**The refresh never changes an item's stage.** When a link merges, closes, reopens, or (for our own open PR) begins failing CI, is put on a [closing clock](#closing-clocks) or gets a new [takeover pipeline](#takeover-pipeline) state, it records an event with actor `github` and sets the item's `upstreamChangedAt` and `upstreamChangeNote`. That marker means "something happened upstream that you have not acted on". Read it in the export, decide what the item's stage should be, and send `clearUpstreamChange: true` with your change. A closed item gets the event and no marker: there is nothing left to act on.
 
 | Event type | When |
 |---|---|
