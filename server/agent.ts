@@ -377,7 +377,8 @@ async function replaceLinks(
         if (row[field] !== undefined) patch[field] = null;
       }
     }
-    const syncDue = active || retargeted || closing || row.syncedAt === undefined;
+    // A read already asked for stands until the refresh has made it: a second upsert must not cancel it.
+    const syncDue = active || retargeted || closing || row.syncedAt === undefined || row.syncDue === true;
     if (row.syncDue !== syncDue) patch.syncDue = syncDue;
     if (link.triageBucket !== undefined && (row.triageBucket ?? null) !== link.triageBucket) {
       patch.triageBucket = link.triageBucket;

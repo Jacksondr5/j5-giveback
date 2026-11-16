@@ -543,10 +543,10 @@ Response:
 - A URL can sit on more than one item. Every link with that URL is patched, and `matched` says how many there were.
 - `status` is `updated` when at least one link changed, `unchanged` when every match already had those values, and `not_found` when no link has the URL. `not_found` is not an error. A retry returns `unchanged`.
 - The URL must match the stored one exactly, `#issuecomment-…` included.
-- Only `triageBucket` and `triageRank` can be set here. Any other field is refused with a 400; change a link's kind, ownership or role through `links` on `POST /api/agent/items`.
+- Only `triageBucket`, `triageRank` and `reread` can be sent here. Any other field is refused with a 400; change a link's kind, ownership or role through `links` on `POST /api/agent/items`.
 - `"reread": true` asks the next refresh to read the thread again, whatever its item's stage. Use it when a closed item's link shows a state GitHub no longer has. It can be sent alone, without a triage field, and it does not move the item's "last updated". With the script: `scripts/giveback link reread --url URL`, or `scripts/giveback link reread-closed` for every link on a closed item that was last read before its item closed.
-- An entry with neither field is refused, and a URL may appear once in a request.
-- An item whose link changed gets a new "last updated" time, as it does when the same change arrives through an upsert.
+- An entry with neither triage field and no `reread` is refused, and a URL may appear once in a request. `reread` is `true` or absent; any other value is refused.
+- An item whose link's triage fields changed gets a new "last updated" time, as it does when the same change arrives through an upsert. A `reread` alone does not move it.
 - A URL carried by more than 10 items is refused. Set it through each item instead.
 
 With the script: `scripts/giveback link triage --url URL [--bucket TEXT | --no-bucket] [--rank N | --no-rank]`, or `scripts/giveback link apply links.json`.
