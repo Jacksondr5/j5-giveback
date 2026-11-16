@@ -58,7 +58,7 @@ export const schema = {
     // True while the item is not closed.
     active: boolean(),
     // True when the refresh should read this link: the item is not closed, or the
-    // link has never been read. A link on a closed item is read once and then left.
+    // link has never been read. A link on a closed item is read once more after the close, and then left.
     syncDue: boolean(),
     triageBucket: string().optional(),
     triageRank: number().optional(),

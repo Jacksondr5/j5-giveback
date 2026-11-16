@@ -337,7 +337,9 @@ async function replaceLinks(
   itemId: string,
   existing: LinkRow[],
   wanted: ParsedLink[],
-  active: boolean
+  active: boolean,
+  /** True when this write closes the item: every link is read once more, after the close. */
+  closing = false
 ): Promise<boolean> {
   let changed = false;
   const byUrl = new Map(existing.map((row) => [row.url, row]));
@@ -375,7 +377,7 @@ async function replaceLinks(
         if (row[field] !== undefined) patch[field] = null;
       }
     }
-    const syncDue = active || retargeted || row.syncedAt === undefined;
+    const syncDue = active || retargeted || closing || row.syncedAt === undefined;
     if (row.syncDue !== syncDue) patch.syncDue = syncDue;
     if (link.triageBucket !== undefined && (row.triageBucket ?? null) !== link.triageBucket) {
       patch.triageBucket = link.triageBucket;
@@ -516,10 +518,13 @@ export async function handleItems(ctx: ServerContext, req: EndpointRequest): Pro
     if (existing && (input.links !== undefined || activeFlipped)) {
       const rows = await db.links.withIndex("by_item", (q) => q.eq("itemId", itemId)).take(LIMITS.linksPerItem * 2);
       if (input.links !== undefined) {
-        if (await replaceLinks(db, itemId, rows, input.links, active)) changed = true;
+        if (await replaceLinks(db, itemId, rows, input.links, active, activeFlipped && !active)) changed = true;
       } else {
+        // Closing or reopening. Either way every link is due a read: an item is often closed
+        // the moment its thread merges, so the last read before the close shows the thread
+        // still open. The read after the close is the one a closed item keeps.
         for (const row of rows) {
-          await db.links.update(row.id, { active, syncDue: active || row.syncedAt === undefined });
+          await db.links.update(row.id, { active, syncDue: true });
         }
       }
     } else if (!existing && input.links !== undefined) {
@@ -934,7 +939,9 @@ export async function handlePatchLinks(ctx: ServerContext, req: EndpointRequest)
     const rows = matches[index] ?? [];
     let updated = false;
     for (const row of rows) {
-      const patch: { triageBucket?: string | null; triageRank?: number | null } = {};
+      const patch: { triageBucket?: string | null; triageRank?: number | null; syncDue?: boolean } = {};
+      // Asks for one more read of the thread, whatever the item's stage.
+      if (input.reread === true && row.syncDue !== true) patch.syncDue = true;
       if (input.triageBucket !== undefined && (row.triageBucket ?? null) !== input.triageBucket) {
         patch.triageBucket = input.triageBucket;
       }
@@ -943,7 +950,8 @@ export async function handlePatchLinks(ctx: ServerContext, req: EndpointRequest)
       }
       if (Object.keys(patch).length === 0) continue;
       await db.links.update(row.id, patch);
-      touchedItems.add(row.itemId);
+      // Asking for a read changes nothing an agent recorded, so it does not move the item's "last updated".
+      if (patch.triageBucket !== undefined || patch.triageRank !== undefined) touchedItems.add(row.itemId);
       updated = true;
     }
     results.push({

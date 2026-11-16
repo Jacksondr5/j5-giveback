@@ -36,7 +36,10 @@ Usage:
                                       the server's own "auto:" events included. The export lists every key.
   giveback link triage --url URL [--bucket TEXT | --no-bucket] [--rank N | --no-rank]
                                       Set or clear the triage fields of every link with this URL.
-  giveback link apply <file|->        JSON: {"links":[{"url":...,"triageBucket":...,"triageRank":...}]} or an array.
+  giveback link reread --url URL      Ask the next refresh to read this thread again, whatever its item's stage.
+  giveback link reread-closed         The same for every link on a closed item that was last read before its
+                                      item closed. A repair: closing an item asks for this read by itself.
+  giveback link apply <file|->        JSON: {"links":[{"url":...,"triageBucket":...,"triageRank":...,"reread":true}]} or an array.
   giveback watchlist                  Every link on an item that is not closed, with its item and GitHub state.
   giveback agents                     Every item that is not closed, with the agent that owns it (or none).
                                       Also prints the dispatcher's address, which takes items with no agent.
@@ -364,8 +367,30 @@ async function link(args) {
       usageError("say at least one of --bucket, --no-bucket, --rank or --no-rank.");
     }
     links = [entry];
+  } else if (action === "reread") {
+    const o = parseOptions(rest, ["url"], []);
+    requireOptions(o, ["url"]);
+    links = [{ url: o.url, reread: true }];
+  } else if (action === "reread-closed") {
+    if (rest.length > 0) usageError("link reread-closed takes no arguments.");
+    // A closed item's links are read once more after it closes. This finds the ones that
+    // were last read before their item closed, or never, and asks for that read.
+    const data = nest(await exportRaw());
+    const urls = new Set();
+    for (const item of data.items) {
+      if (item.stage !== "closed") continue;
+      for (const entry of item.links || []) {
+        const stale = entry.syncedAt === undefined || entry.syncedAt === null || (typeof item.closedAt === "number" && entry.syncedAt < item.closedAt);
+        if (stale) urls.add(entry.url);
+      }
+    }
+    links = [...urls].map((url) => ({ url, reread: true }));
+    if (links.length === 0) {
+      print({ ok: true, results: [], note: "No link on a closed item was last read before its item closed." });
+      return;
+    }
   } else {
-    usageError('use "link triage" or "link apply".');
+    usageError('use "link triage", "link reread", "link reread-closed" or "link apply".');
   }
   print({ ok: true, results: await postBatches("/api/agent/links", "links", links, LINK_PATCHES_PER_BATCH) });
 }

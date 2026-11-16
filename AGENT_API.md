@@ -544,6 +544,7 @@ Response:
 - `status` is `updated` when at least one link changed, `unchanged` when every match already had those values, and `not_found` when no link has the URL. `not_found` is not an error. A retry returns `unchanged`.
 - The URL must match the stored one exactly, `#issuecomment-…` included.
 - Only `triageBucket` and `triageRank` can be set here. Any other field is refused with a 400; change a link's kind, ownership or role through `links` on `POST /api/agent/items`.
+- `"reread": true` asks the next refresh to read the thread again, whatever its item's stage. Use it when a closed item's link shows a state GitHub no longer has. It can be sent alone, without a triage field, and it does not move the item's "last updated". With the script: `scripts/giveback link reread --url URL`, or `scripts/giveback link reread-closed` for every link on a closed item that was last read before its item closed.
 - An entry with neither field is refused, and a URL may appear once in a request.
 - An item whose link changed gets a new "last updated" time, as it does when the same change arrives through an upsert.
 - A URL carried by more than 10 items is refused. Set it through each item instead.
@@ -769,7 +770,7 @@ Each call counts against Lakebed's limit of 1,000 writes a day, and one call han
 
 It reads GitHub state for a batch of at most 15 links and stores it on each link: state (`open`, `closed`, `merged`), draft flag, merged and closed times, CI rollup, review decision, labels, head SHA, last activity time (the thread's `updatedAt`), when the `triage:closing` label was last applied (for a PR that carries it), the last marker of the [takeover pipeline](#takeover-pipeline) (for a PR in a repository with rules), the last comment or review by someone other than `Jacksondr5` that is not from a bot, and Macroscope's approvability verdict.
 
-It covers every link on an item that is not closed, `held` items included. A link on a closed item is read once and then left alone.
+It covers every link on an item that is not closed, `held` items included. A link on a closed item is read once more after the item closes, and then left alone: an item is often closed the moment its thread merges, and the read before that still shows the thread open. So what a closed item shows is its threads as they were shortly after it closed. To have one read again later, send `"reread": true` for it to [`POST /api/agent/links`](#post-apiagentlinks).
 
 A link is read through its `repo`, `number` and `kind`, not its URL. A `comment` link therefore gets the state of the thread it is on.
 

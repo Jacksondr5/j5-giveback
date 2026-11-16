@@ -790,9 +790,9 @@ export function parseEventsDeleteRequest(body: unknown): { keys: string[]; issue
 // Link patches
 // ---------------------------------------------------------------------------
 
-export type ParsedLinkPatch = { url: string; triageBucket?: string | null; triageRank?: number | null };
+export type ParsedLinkPatch = { url: string; triageBucket?: string | null; triageRank?: number | null; reread?: true };
 
-const LINK_PATCH_KEYS = ["url", "triageBucket", "triageRank"] as const;
+const LINK_PATCH_KEYS = ["url", "triageBucket", "triageRank", "reread"] as const;
 
 function parseLinkPatch(issues: Issues, value: unknown, path: string): ParsedLinkPatch | undefined {
   if (!isObject(value)) {
@@ -806,13 +806,17 @@ function parseLinkPatch(issues: Issues, value: unknown, path: string): ParsedLin
       ? (issues.push({ path: `${path}.url`, message: "Required." }), undefined)
       : checkGithubUrl(issues, value.url, `${path}.url`);
   const { triageBucket, triageRank } = parseTriage(issues, value, path);
-  if (value.triageBucket === undefined && value.triageRank === undefined) {
-    issues.push({ path, message: "Send triageBucket, triageRank or both. Use null to clear one." });
+  if (value.reread !== undefined && value.reread !== true) {
+    issues.push({ path: `${path}.reread`, message: "Must be true when present." });
+  }
+  if (value.triageBucket === undefined && value.triageRank === undefined && value.reread === undefined) {
+    issues.push({ path, message: "Send triageBucket or triageRank (null clears one), or reread: true." });
   }
   if (issues.length !== before || url === undefined) return undefined;
   const patch: ParsedLinkPatch = { url };
   if (triageBucket !== undefined) patch.triageBucket = triageBucket;
   if (triageRank !== undefined) patch.triageRank = triageRank;
+  if (value.reread === true) patch.reread = true;
   return patch;
 }
 
