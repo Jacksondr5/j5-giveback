@@ -678,9 +678,9 @@ Bearer `AGENT_SECRET`. Read-only. Whether a [PR slot](#pr-slots) is free, which 
     "last24Hours": 1,
     "newPrsLast7Days": 0,
     "newIssuesLast7Days": 0,
-    "cap": 10,
-    "dailyCap": 3,
-    "newPrCap": 2,
+    "cap": 15,
+    "dailyCap": 5,
+    "newPrCap": 8,
     "newIssueCap": 2,
     "incomplete": false
   }

@@ -315,17 +315,17 @@ export function postsWindowStart(now: number): number {
 }
 
 /**
- * Our own limits on how much goes upstream, set by Jackson on 2026-11-14. They
+ * Our own limits on how much goes upstream, set by Jackson on 2026-11-14 and raised on 2026-11-17. They
  * are his, not upstream's: upstream has sanctioned only bursts far above these.
  * "About" for the week: it is a guide to stay near, and the day's limit is firm.
  */
 export const POSTING_CAPS = {
   /** All upstream posts together, in 7 days. */
-  perWeek: 10,
+  perWeek: 15,
   /** All upstream posts together, in 24 hours. */
-  perDay: 3,
+  perDay: 5,
   /** New PRs opened in 7 days. */
-  newPrsPerWeek: 2,
+  newPrsPerWeek: 8,
   /** New issues filed in 7 days. */
   newIssuesPerWeek: 2
 } as const;
