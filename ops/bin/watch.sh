@@ -281,8 +281,10 @@ thread_events() {
   issue="$(gh api "repos/$repo/issues/$n")"
   jq -r '.title' <<<"$issue" >"$work/title"
   # For the pipeline wait (see the main loop): the PR's state, when it was opened, and its pipeline label.
-  jq -r --arg prefix "$PIPELINE_PREFIX" 'select(.pull_request != null)
-    | [.state, .created_at, (([.labels[].name | select(startswith($prefix))] | first) // "-")] | @tsv' <<<"$issue" >"$work/pipeline"
+  # Of two pipeline labels, the run in progress is the one that counts.
+  jq -r --arg prefix "$PIPELINE_PREFIX" --arg running "$PIPELINE_RUNNING" 'select(.pull_request != null)
+    | [.labels[].name | select(startswith($prefix))] as $labels
+    | [.state, .created_at, (if ($labels | index($running)) != null then $running else ($labels | first) // "-" end)] | @tsv' <<<"$issue" >"$work/pipeline"
   gh api "repos/$repo/issues/$n/comments?since=$since&per_page=100" --jq '
     .[] | select(.created_at > "'"$since"'") | select(.user.type != "Bot" and .user.login != "'"$ME"'")
     | '"$COMMENT_LINE"
@@ -432,12 +434,30 @@ while IFS=$'\t' read -r -u 3 key repo n discussion scope ownpr ghstate; do
       [ -z "$pipe_label" ] || pipe_seen=true
       wait_limit=$((PIPELINE_HOURS * 3600))
       now_s="$(date -u -d "$now" +%s)"
+      # A time that does not parse starts the count again. It must never stop the run.
+      since_s="$(date -u -d "$pipe_since" +%s 2>/dev/null || true)"
+      if [[ ! "$since_s" =~ ^[0-9]+$ ]]; then
+        pipe_since="$now"
+        since_s="$now_s"
+        pipe_flagged=false
+      fi
+      opened_s="$(date -u -d "$pr_opened" +%s 2>/dev/null || true)"
+      [[ "$opened_s" =~ ^[0-9]+$ ]] || opened_s="$now_s"
       pipe_note=""
       if [ "$pipe_flagged" != "true" ]; then
-        if [ "$pipe_label" = "$PIPELINE_RUNNING" ] && [ $((now_s - $(date -u -d "$pipe_since" +%s))) -ge "$wait_limit" ]; then
+        if [ "$pipe_label" = "$PIPELINE_RUNNING" ] && [ $((now_s - since_s)) -ge "$wait_limit" ]; then
           pipe_note="$PIPELINE_RUNNING has been on this PR for more than $PIPELINE_HOURS hours (seen since $pipe_since). The pipeline's runs finish well inside that, or not at all."
-        elif [ -z "$pipe_label" ] && [ "$pipe_seen" != "true" ] && [ $((now_s - $(date -u -d "$pr_opened" +%s))) -ge "$wait_limit" ]; then
-          pipe_note="open for more than $PIPELINE_HOURS hours with no $PIPELINE_PREFIX label (opened $pr_opened). The pipeline labels a PR within minutes, or not at all."
+        elif [ -z "$pipe_label" ] && [ "$pipe_seen" != "true" ] && [ $((now_s - opened_s)) -ge "$wait_limit" ]; then
+          # This script may not have been watching when a label came and went, so the PR's
+          # own history decides. If it cannot be read, nothing is said and the next run asks again.
+          had="$(gh api "repos/$repo/issues/$n/timeline?per_page=100" --paginate --jq \
+            '[.[] | select(.event == "labeled" and ((.label.name // "") | startswith("'"$PIPELINE_PREFIX"'")))] | length' 2>/dev/null |
+            awk '{ total += $1 } END { if (NR > 0) print total }' || true)"
+          if [ "$had" = "0" ]; then
+            pipe_note="open for more than $PIPELINE_HOURS hours with no $PIPELINE_PREFIX label (opened $pr_opened). The pipeline labels a PR within minutes, or not at all."
+          elif [[ "$had" =~ ^[0-9]+$ ]]; then
+            pipe_seen=true
+          fi
         fi
       fi
       if [ -n "$pipe_note" ]; then

@@ -149,7 +149,7 @@ How closely a thread is watched depends on its links:
 
 When one of our own PRs closes or merges, the dispatcher gets a note of its own as well: upstream limits how many PRs we may have open, so a close frees a slot for the next item in the queue.
 
-For an open PR of ours in a repository with a landing pipeline, the watcher also reports two waits, once each: the PR has carried `takeover:in-progress` for more than 3 hours, or it has been open for more than 3 hours with no `takeover:` label at all. Neither leaves a trace on GitHub, so the watcher counts from when it first saw the label.
+For an open PR of ours in a repository with a landing pipeline, the watcher also reports two waits, once each: the PR has carried `takeover:in-progress` for more than 3 hours, or it has been open for more than 3 hours with no `takeover:` label at all. The first is counted from when the watcher first saw the label, the second from when the PR was opened, and a PR that has ever carried a `takeover:` label is not reported as never picked up.
 
 A thread of ours stays watched for 14 days after its item closes, because a reply or a reopening often follows a close. The watcher remembers those threads itself, since the watch list no longer names them.
 
