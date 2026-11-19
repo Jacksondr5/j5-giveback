@@ -108,7 +108,7 @@ export async function handleCapacity(ctx: QueryServerContext, req: EndpointReque
       labels: link.ghLabels ? link.ghLabels.split("\n") : [],
       lastActivityAt: link.ghLastActivityAt ?? null,
       closingClock: closingClock(linkView(link), now),
-      takeover: takeoverState(linkView(link)),
+      takeover: takeoverState(linkView(link), now),
       syncedAt: link.syncedAt ?? null
     })),
     queue: queue.map(({ item, text }, index) => ({

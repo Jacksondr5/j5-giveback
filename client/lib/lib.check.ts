@@ -119,6 +119,7 @@ function link(patch: Partial<LinkView> = {}): LinkView {
     mergeable: null,
     pipelineMarker: null,
     pipelineMarkerAt: null,
+    pipelineLabelAt: null,
     lastOtherActivityAt: null,
     lastOtherActivityBy: null,
     triageBucket: null,
@@ -729,6 +730,15 @@ const read = (entry: LinkView) => {
 };
 equal(read(taken("in-progress")), ["in-progress", true, true, "takeover:in-progress"], "in progress: the label as it is, and nothing may be pushed");
 equal(read(taken("ready")), ["ready", true, true, "takeover:ready"], "ready: nothing may be pushed");
+// Stuck: the pipeline has been working on the PR for longer than a run takes.
+const running = (since: number | null) => takeoverState(taken("in-progress", { pipelineLabelAt: since }), NOW);
+equal([running(NOW - 3 * HOUR - 1)?.stuck, running(NOW - 3 * HOUR - 1)?.since], [true, NOW - 3 * HOUR - 1], "in progress for more than 3 hours is stuck");
+equal(running(NOW - 3 * HOUR)?.stuck, false, "exactly 3 hours is not yet stuck");
+equal(running(null)?.stuck, false, "the label's time was not read: not called stuck");
+equal(takeoverState(taken("in-progress", { pipelineLabelAt: NOW - DAY }))?.stuck, false, "without the time now, nothing is stuck");
+equal(takeoverState(taken("needs-julius", { pipelineLabelAt: NOW - 5 * DAY }), NOW)?.stuck, false, "waiting on a maintainer for days is not stuck");
+equal(takeoverState(taken("blocked", { pipelineLabelAt: NOW - 5 * DAY }), NOW)?.stuck, false, "a stopped pipeline is not stuck");
+equal(takeoverState(taken("in-progress", { pipelineLabelAt: NOW - DAY }), NOW)?.text, "takeover:in-progress", "the label is still shown as it is");
 equal(read(taken("needs-julius")), ["needs-julius", true, false, "takeover:needs-julius"], "waiting on a maintainer");
 equal(read(taken("blocked")), ["blocked", true, false, "takeover:blocked"], "stopped, with no reason read");
 equal(
@@ -740,7 +750,9 @@ equal(
     noPush: false,
     stopped: true,
     reason: "no-bug-on-base",
-    text: "takeover:blocked (no-bug-on-base)"
+    text: "takeover:blocked (no-bug-on-base)",
+    since: null,
+    stuck: false
   },
   "stopped: the marker's reason sits beside the label, as the pipeline wrote it"
 );
@@ -749,7 +761,7 @@ equal(takeoverState(taken("blocked", { pipelineMarker: "stopped-" }))?.text, "ta
 equal(takeoverState(taken("in-progress", { pipelineMarker: "stopped-moved" }))?.reason, null, "only a stopped state has a reason");
 equal(
   takeoverState(taken("on-fire")),
-  { label: "takeover:on-fire", state: "on-fire", known: false, noPush: false, stopped: false, reason: null, text: "takeover:on-fire" },
+  { label: "takeover:on-fire", state: "on-fire", known: false, noPush: false, stopped: false, reason: null, text: "takeover:on-fire", since: null, stuck: false },
   "an unknown state is shown as its label"
 );
 equal(takeoverState(taken("constructor"))?.known, false, "a name every object has is no known state");

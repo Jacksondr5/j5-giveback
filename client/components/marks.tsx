@@ -17,7 +17,7 @@ import {
   type WaitingOn
 } from "../../shared/enums";
 import { closingClock, takeoverState, type TextApproval } from "../../shared/upstreamRules";
-import { fullRef, shortRef } from "../lib/format";
+import { formatSpan, fullRef, shortRef } from "../lib/format";
 import {
   ciSignal,
   clockWords,
@@ -194,7 +194,8 @@ export function ClosingClockMark({ link }: { link: LinkView }) {
  * Renders nothing when the PR carries no pipeline label.
  */
 export function TakeoverMark({ link }: { link: LinkView }) {
-  const state = takeoverState(link);
+  const now = useNowValue();
+  const state = takeoverState(link, now);
   if (!state) return null;
   const mark = takeoverWords(state, link.pipelineMarker);
   return (
@@ -206,7 +207,11 @@ export function TakeoverMark({ link }: { link: LinkView }) {
       title={mark.title}
     >
       <Icon className={cx("mt-[0.1875rem]", TONE_TEXT[mark.tone])} name={mark.icon} size={14} />
-      <span className="min-w-0 break-words">{state.text}</span>
+      <span className="min-w-0 break-words">
+        {state.text}
+        {/* A run that has outlasted any that finished: how long the label has been on. */}
+        {state.stuck && state.since !== null ? ` · ${formatSpan(now - state.since)}` : null}
+      </span>
     </span>
   );
 }

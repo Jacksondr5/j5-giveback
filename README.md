@@ -149,6 +149,8 @@ How closely a thread is watched depends on its links:
 
 When one of our own PRs closes or merges, the dispatcher gets a note of its own as well: upstream limits how many PRs we may have open, so a close frees a slot for the next item in the queue.
 
+For an open PR of ours in a repository with a landing pipeline, the watcher also reports two waits, once each: the PR has carried `takeover:in-progress` for more than 3 hours, or it has been open for more than 3 hours with no `takeover:` label at all. Neither leaves a trace on GitHub, so the watcher counts from when it first saw the label.
+
 A thread of ours stays watched for 14 days after its item closes, because a reply or a reopening often follows a close. The watcher remembers those threads itself, since the watch list no longer names them.
 
 Settings, in `~/.config/j5-giveback/env`:
@@ -162,6 +164,8 @@ Settings, in `~/.config/j5-giveback/env`:
 | `GIVEBACK_GITHUB_LOGIN` | Our own login, whose activity is not news. Default: the login `gh` is signed in with. |
 | `GIVEBACK_MAINTAINERS` | Free text naming the upstream maintainers. It is added to each message. |
 | `GIVEBACK_OWNER_NAME` | Who approves what is posted upstream, as the messages name them. Default: "the owner". |
+| `GIVEBACK_PIPELINE_REPOS` | Repositories whose maintainers land outside PRs through a pipeline that labels them `takeover:...`. Default `pingdotgg/t3code`. |
+| `GIVEBACK_PIPELINE_HOURS` | After this many hours, a PR of ours still labelled `takeover:in-progress`, or with no `takeover:` label at all, is reported once. Default 3. |
 | `GIVEBACK_WATCH_LINGER_DAYS` | Days a thread of ours stays watched after its item closes. Default 14. |
 
 `ops/bin/watch.sh --dry-run` prints what it would send, and sends and remembers nothing.

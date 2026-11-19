@@ -255,6 +255,8 @@ export async function handleRefresh(ctx: ServerContext, req: EndpointRequest): P
         // Null clears it: the time is kept only while the PR carries the closing label.
         ghClosingNoticeAt: snapshot.closingNoticeAt,
         ghMergeable: snapshot.mergeable,
+        // Null clears it: the time belongs to the label the PR carries now.
+        ghPipelineLabelAt: snapshot.pipelineLabelAt,
         // The query reads only recent comments and reviews. When none of them is by
         // another person, an older stored value still stands.
         ...(snapshot.otherActivityAt !== null && snapshot.otherActivityBy !== null

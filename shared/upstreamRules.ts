@@ -44,7 +44,9 @@ export type TakeoverRules = {
    * words of its own, so a state here carries only what the code acts on.
    * `noPush`: a push by anyone else stops the pipeline. `stopped`: its last marker is the reason.
    */
-  states: readonly { state: string; noPush?: true; stopped?: true }[];
+  states: readonly { state: string; noPush?: true; stopped?: true; running?: true }[];
+  /** A `running` state that has lasted this many hours is stuck: runs finish well inside it, or never. */
+  stuckAfterHours: number;
   /** A pipeline comment ends with "<!-- <markerName>:<value> -->". */
   markerName: string;
   /** A marker value with this prefix says why the pipeline stopped. */
@@ -65,11 +67,12 @@ export const UPSTREAM_RULES: Readonly<Record<string, UpstreamRules>> = {
     takeover: {
       labelPrefix: "takeover:",
       states: [
-        { state: "in-progress", noPush: true },
+        { state: "in-progress", noPush: true, running: true },
         { state: "ready", noPush: true },
         { state: "needs-julius" },
         { state: "blocked", stopped: true }
       ],
+      stuckAfterHours: 3,
       markerName: "factory",
       stopPrefix: "stopped-"
     }
@@ -193,6 +196,8 @@ export function takeoverLabel(labels: readonly string[], takeover: TakeoverRules
 export type TakeoverLink = Pick<ClockLink, "repo" | "kind" | "ownership" | "state" | "labels"> & {
   /** The value of the pipeline's last marker, such as "stopped-moved". */
   pipelineMarker: string | null;
+  /** When the present pipeline label was put on. */
+  pipelineLabelAt?: number | null;
 };
 
 export type TakeoverState = {
@@ -209,6 +214,10 @@ export type TakeoverState = {
   reason: string | null;
   /** What the site shows: the label as GitHub has it, and the reason beside it when there is one. */
   text: string;
+  /** When the label was put on, where that was read. */
+  since: number | null;
+  /** True when the pipeline has been working on the PR for longer than a run takes. Needs `now`. */
+  stuck: boolean;
 };
 
 /**
@@ -216,14 +225,15 @@ export type TakeoverState = {
  * ours in a repository with rules, carrying a pipeline label, has a state.
  * A stopped PR's last marker is its reason, whenever it was written.
  */
-export function takeoverState(link: TakeoverLink): TakeoverState | null {
+export function takeoverState(link: TakeoverLink, now?: number): TakeoverState | null {
   const takeover = rulesFor(link.repo)?.takeover;
   if (!takeover || link.kind !== "pr" || link.ownership !== "ours" || link.state !== "open") return null;
   const label = takeoverLabel(link.labels, takeover);
   if (label === null) return null;
   const state = label.slice(takeover.labelPrefix.length);
   const known = takeover.states.find((candidate) => candidate.state === state);
-  if (!known) return { label, state, known: false, noPush: false, stopped: false, reason: null, text: label };
+  const since = link.pipelineLabelAt ?? null;
+  if (!known) return { label, state, known: false, noPush: false, stopped: false, reason: null, text: label, since, stuck: false };
   const marker = link.pipelineMarker ?? "";
   const reason =
     known.stopped && marker.startsWith(takeover.stopPrefix)
@@ -236,7 +246,9 @@ export function takeoverState(link: TakeoverLink): TakeoverState | null {
     noPush: known.noPush === true,
     stopped: known.stopped === true,
     reason,
-    text: reason ? `${label} (${reason})` : label
+    text: reason ? `${label} (${reason})` : label,
+    since,
+    stuck: known.running === true && now !== undefined && since !== null && now - since > takeover.stuckAfterHours * HOUR
   };
 }
 

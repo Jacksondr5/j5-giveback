@@ -113,6 +113,8 @@ export type Snapshot = {
   pipelineMarkerAt: number | null;
   /** True when a marker was read and set aside as an earlier run's. A stored one is then stale too. */
   pipelineMarkerStale: boolean;
+  /** When the PR's present pipeline label was put on. Null when it has none or the time was not read. */
+  pipelineLabelAt: number | null;
 };
 
 type Obj = Record<string, unknown>;
@@ -259,14 +261,16 @@ export function snapshotFrom(node: unknown, selfLogin: string, rules: UpstreamRu
   // was put on, or after. When the label's own time cannot be read, it is not attributed.
   let markerStale = false;
   const pipelineLabel = isPr && rules?.takeover ? takeoverLabel(labels, rules.takeover) : null;
-  if (marker && pipelineLabel !== null) {
-    let labelledAt: number | null = null;
+  // When the present pipeline label was put on. Null when the PR carries none, and
+  // when its label event is not among those read.
+  let labelledAt: number | null = null;
+  if (pipelineLabel !== null) {
     for (const event of nodes(node.labelEvents)) {
       const at = time(event.createdAt);
       if (at === null || !isObj(event.label) || event.label.name !== pipelineLabel) continue;
       if (labelledAt === null || at > labelledAt) labelledAt = at;
     }
-    markerStale = labelledAt === null || marker.at === null || marker.at < labelledAt - MARKER_SLACK_MS;
+    if (marker) markerStale = labelledAt === null || marker.at === null || marker.at < labelledAt - MARKER_SLACK_MS;
   }
 
   return {
@@ -288,7 +292,8 @@ export function snapshotFrom(node: unknown, selfLogin: string, rules: UpstreamRu
     macroscopeVerdict,
     pipelineMarker: markerStale ? null : (marker?.marker ?? null),
     pipelineMarkerAt: markerStale ? null : (marker?.at ?? null),
-    pipelineMarkerStale: markerStale
+    pipelineMarkerStale: markerStale,
+    pipelineLabelAt: labelledAt
   };
 }
 

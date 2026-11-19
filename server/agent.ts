@@ -327,6 +327,7 @@ const SNAPSHOT_FIELDS = [
   "macroscopeVerdict",
   "ghPipelineMarker",
   "ghPipelineMarkerAt",
+  "ghPipelineLabelAt",
   "syncedAt",
   "syncError"
 ] as const satisfies readonly (keyof LinkRow)[];

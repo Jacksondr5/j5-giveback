@@ -450,6 +450,8 @@ export type LinkView = {
   /** The last marker of upstream's takeover pipeline on a PR, such as "stopped-moved", and its time. */
   pipelineMarker: string | null;
   pipelineMarkerAt: number | null;
+  /** When the PR's present takeover label was put on. Null when it has none or the time was not read. */
+  pipelineLabelAt: number | null;
   /** Last comment or review by someone other than the fork owner, bots excluded. */
   lastOtherActivityAt: number | null;
   lastOtherActivityBy: string | null;

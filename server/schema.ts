@@ -86,6 +86,8 @@ export const schema = {
     // The last marker of upstream's takeover pipeline on a PR ("stopped-moved") and its comment's time. Never the comment's text.
     ghPipelineMarker: string().optional(),
     ghPipelineMarkerAt: number().optional(),
+    // When the PR's present takeover label was put on.
+    ghPipelineLabelAt: number().optional(),
     syncedAt: number().optional(),
     syncError: string().optional()
   })

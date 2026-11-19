@@ -324,6 +324,8 @@ export type TakeoverMarkWords = { icon: "alert" | "xCircleFill" | "hourglass"; t
 export function takeoverWords(state: TakeoverState, marker: string | null): TakeoverMarkWords {
   // The tooltip says where the words come from, and nothing about what to do.
   const title = `A label on the PR, set by upstream's pipeline.${marker ? ` The pipeline's last comment marker: ${marker}.` : ""}`;
+  // Stuck: the label has been on longer than a run takes. Drawn like a failing check.
+  if (state.stuck) return { icon: "xCircleFill", tone: "closed", strong: true, title };
   if (state.noPush) return { icon: "alert", tone: "pending", strong: true, title };
   if (state.stopped) return { icon: "xCircleFill", tone: "closed", strong: false, title };
   if (state.known) return { icon: "hourglass", tone: "dim", strong: false, title };

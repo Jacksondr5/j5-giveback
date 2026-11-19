@@ -47,6 +47,12 @@
 #                                each message so an agent can tell whose word counts.
 #   GIVEBACK_OWNER_NAME          who approves what is posted upstream, as the messages
 #                                name them. Default: "the owner".
+#   GIVEBACK_PIPELINE_REPOS      repositories whose maintainers land outside PRs through an
+#                                automated pipeline that labels them "takeover:...".
+#                                Default: pingdotgg/t3code. Separate several with spaces.
+#   GIVEBACK_PIPELINE_HOURS      after this many hours, a PR of ours still labelled
+#                                takeover:in-progress, or with no takeover label at
+#                                all, is reported once. Default: 3.
 #   GIVEBACK_WATCH_LINGER_DAYS   days a thread of ours stays watched after its item
 #                                closes. Default: 14.
 #   GIVEBACK_WATCH_DIR           where state.json lives.
@@ -100,6 +106,15 @@ ME="$(setting GIVEBACK_GITHUB_LOGIN)"
 MAINTAINERS="$(setting GIVEBACK_MAINTAINERS)"
 OWNER_NAME="$(setting GIVEBACK_OWNER_NAME)"
 [ -n "$OWNER_NAME" ] || OWNER_NAME="the owner"
+PIPELINE_REPOS="$(setting GIVEBACK_PIPELINE_REPOS)"
+[ -n "$PIPELINE_REPOS" ] || PIPELINE_REPOS="pingdotgg/t3code"
+PIPELINE_HOURS="$(setting GIVEBACK_PIPELINE_HOURS)"
+case "$PIPELINE_HOURS" in
+  '' | *[!0-9]*) PIPELINE_HOURS=3 ;;
+esac
+# The pipeline's labels. A run in progress carries the second one.
+PIPELINE_PREFIX="takeover:"
+PIPELINE_RUNNING="takeover:in-progress"
 LINGER_DAYS="$(setting GIVEBACK_WATCH_LINGER_DAYS)"
 case "$LINGER_DAYS" in
   '' | *[!0-9]*) LINGER_DAYS=14 ;;
@@ -111,6 +126,10 @@ state="$STATE_DIR/state.json"
 # { "<thread>": "<ISO time up to which its activity has been read>",
 #   "fail:<thread>": "<failing check names last seen>",       our PRs
 #   "state:<thread>": "<state last seen on the dashboard>",
+#   "pipe:<thread>": { "label", "since", "flagged", "seen" },
+#       an open PR of ours in a repository with a landing pipeline: its pipeline label
+#       ("" for none), since when this script has seen it, whether the wait was
+#       reported, and whether the PR ever carried a pipeline label
 #   "linger:<thread>": { "ownpr", "items": [{ "item", "short", "to", "listed" }] },
 #       the items a thread of ours belongs to, when the dashboard last said so,
 #       and whether the thread is a PR of our own
@@ -261,6 +280,9 @@ thread_events() {
   local repo="$1" n="$2" since="$3" key="$4" issue
   issue="$(gh api "repos/$repo/issues/$n")"
   jq -r '.title' <<<"$issue" >"$work/title"
+  # For the pipeline wait (see the main loop): the PR's state, when it was opened, and its pipeline label.
+  jq -r --arg prefix "$PIPELINE_PREFIX" 'select(.pull_request != null)
+    | [.state, .created_at, (([.labels[].name | select(startswith($prefix))] | first) // "-")] | @tsv' <<<"$issue" >"$work/pipeline"
   gh api "repos/$repo/issues/$n/comments?since=$since&per_page=100" --jq '
     .[] | select(.created_at > "'"$since"'") | select(.user.type != "Bot" and .user.login != "'"$ME"'")
     | '"$COMMENT_LINE"
@@ -364,7 +386,7 @@ while IFS=$'\t' read -r -u 3 key repo n discussion scope ownpr ghstate; do
 
   # Saved before the check, so a thread whose first check fails is still read from this moment.
   set_state "$key" "$since"
-  rm -f "$work/title" "$work/fail"
+  rm -f "$work/title" "$work/fail" "$work/pipeline"
   # Not in an "if" or "||": errexit is switched off inside those, and a failed
   # request has to stop this thread's check.
   set +e
@@ -387,6 +409,47 @@ while IFS=$'\t' read -r -u 3 key repo n discussion scope ownpr ghstate; do
     continue
   fi
   found="$(sed '/^$/d' "$work/events" | sort)"
+
+  # The landing pipeline's waits. A run that is still "in progress" after a few hours has
+  # never been seen to finish, and a PR the pipeline has not labelled within a few hours
+  # was not picked up. Each is said once. Nothing on GitHub marks either, so this
+  # script keeps the time itself, from when it first saw the label.
+  if [ "$ownpr" = "true" ] && [ -s "$work/pipeline" ] && [[ " $PIPELINE_REPOS " == *" $repo "* ]]; then
+    IFS=$'\t' read -r pr_state pr_opened pipe_label <"$work/pipeline"
+    [ "$pipe_label" != "-" ] || pipe_label=""
+    if [ "$pr_state" != "open" ]; then
+      newstate="$(jq --arg k "pipe:$key" 'del(.[$k])' <<<"$newstate")"
+    else
+      before="$(jq -c --arg k "pipe:$key" '(.[$k] // {}) | objects' <<<"$oldstate")"
+      [ -n "$before" ] || before='{}'
+      pipe_since="$(jq -r '.since // ""' <<<"$before")"
+      pipe_flagged="$(jq -r '.flagged == true' <<<"$before")"
+      pipe_seen="$(jq -r '.seen == true' <<<"$before")"
+      if [ -z "$pipe_since" ] || [ "$(jq -r '.label // ""' <<<"$before")" != "$pipe_label" ]; then
+        pipe_since="$now"
+        pipe_flagged=false
+      fi
+      [ -z "$pipe_label" ] || pipe_seen=true
+      wait_limit=$((PIPELINE_HOURS * 3600))
+      now_s="$(date -u -d "$now" +%s)"
+      pipe_note=""
+      if [ "$pipe_flagged" != "true" ]; then
+        if [ "$pipe_label" = "$PIPELINE_RUNNING" ] && [ $((now_s - $(date -u -d "$pipe_since" +%s))) -ge "$wait_limit" ]; then
+          pipe_note="$PIPELINE_RUNNING has been on this PR for more than $PIPELINE_HOURS hours (seen since $pipe_since). The pipeline's runs finish well inside that, or not at all."
+        elif [ -z "$pipe_label" ] && [ "$pipe_seen" != "true" ] && [ $((now_s - $(date -u -d "$pr_opened" +%s))) -ge "$wait_limit" ]; then
+          pipe_note="open for more than $PIPELINE_HOURS hours with no $PIPELINE_PREFIX label (opened $pr_opened). The pipeline labels a PR within minutes, or not at all."
+        fi
+      fi
+      if [ -n "$pipe_note" ]; then
+        pipe_flagged=true
+        found="$(printf '%s\n%s' "$found" "$pipe_note" | sed '/^$/d')"
+      fi
+      newstate="$(jq --arg k "pipe:$key" --arg label "$pipe_label" --arg since "$pipe_since" \
+        --argjson flagged "$pipe_flagged" --argjson seen "$pipe_seen" \
+        '.[$k] = { label: $label, since: $since, flagged: $flagged, seen: $seen }' <<<"$newstate")"
+    fi
+  fi
+
   if [ -n "$found" ]; then
     events_of[$key]="$found"
     title_of[$key]="$(cat "$work/title" 2>/dev/null || true)"
