@@ -327,17 +327,16 @@ export function postsWindowStart(now: number): number {
 }
 
 /**
- * Our own limits on how much goes upstream, set by Jackson on 2026-11-14 and raised on 2026-11-17. They
- * are his, not upstream's: upstream has sanctioned only bursts far above these.
- * "About" for the week: it is a guide to stay near, and the day's limit is firm.
+ * Our own limits on how much goes upstream, set by Jackson on 2026-11-14, raised on 2026-11-17, and on
+ * 2026-11-21 left to upstream's own 3-open-PR rule for PRs. They are his, not upstream's. Null is no cap.
  */
-export const POSTING_CAPS = {
-  /** All upstream posts together, in 7 days. */
-  perWeek: 15,
+export const POSTING_CAPS: Record<"perWeek" | "perDay" | "newPrsPerWeek" | "newIssuesPerWeek", number | null> = {
+  /** All upstream posts together, in 7 days. None since 2026-11-21: the day's limit and the open-PR limit pace us. */
+  perWeek: null,
   /** All upstream posts together, in 24 hours. */
   perDay: 5,
-  /** New PRs opened in 7 days. */
-  newPrsPerWeek: 8,
+  /** New PRs opened in 7 days. None since 2026-11-21: upstream's 3-open-PR rule is the PR limit. */
+  newPrsPerWeek: null,
   /** New issues filed in 7 days. */
   newIssuesPerWeek: 2
 } as const;
