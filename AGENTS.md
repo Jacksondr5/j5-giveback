@@ -73,6 +73,7 @@ Checked on Lakebed 0.0.41. Re-check them after a Lakebed upgrade.
 - **The 1 MiB limit is on `JSON.stringify(artifact)`,** the `artifact` object in the build output (`lakebed/dist/anonymous/validate.js`). The file `npx lakebed build --out <path>` writes also holds the client bundle and is about 300 KB larger; measure `d.artifact` with `node -e`. Server source is expensive: unminified, base64-encoded and with an inline source map, a kilobyte of `server/` or `shared/` TypeScript costs about 4 KB of artifact.
 - **Transactions are cancelled after 5,000 ms,** which is tighter than the 1,000-write limit for a loop of single-row updates.
 - **Tailwind 4 breakpoint order:** an arbitrary pixel variant such as `min-[1800px]:` sorts before `xl:` and loses to it. Write it in rem (`min-[112.5rem]:`). Container queries work.
+
 ## Deploy and verify
 
 After local checks pass, deploy from another terminal:
